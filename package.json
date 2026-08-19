@@ -1,6 +1,7 @@
 {
 	"name": "schackal",
 	"private": true,
+	"license": "GPL-3.0-or-later",
 	"version": "0.1.0",
 	"type": "module",
 	"description": "Offbook — a chess trainer that drills the seam between book moves and what your opponent actually plays",

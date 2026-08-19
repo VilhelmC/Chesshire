@@ -9,6 +9,7 @@ import { Quiz } from './views/Quiz';
 import type { TrainHandoff } from './views/Train';
 import { DebugCorner } from './components/DebugCorner';
 import { InstallBar } from './components/InstallBar';
+import { Footer } from './components/Footer';
 import { useViewport } from './components/useViewport';
 
 type Tab = 'train' | 'quiz' | 'review' | 'progress' | 'coverage' | 'drills' | 'checks';
@@ -99,6 +100,8 @@ export default function App() {
 			{tab === 'coverage' && <Coverage />}
 			{tab === 'drills' && <Drills />}
 			{tab === 'checks' && <Build />}
+
+			<Footer />
 
 			<DebugCorner />
 		</div>

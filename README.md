@@ -81,3 +81,44 @@ src/
 - **Truncation is never silent.** `truncateByCoverage` returns what it dropped
   so the coverage audit can report it. A trainer that hides its gaps is worse
   than no trainer.
+
+## Licence
+
+**GPL-3.0-or-later.** Full text in [`LICENSE`](./LICENSE).
+
+    Schackal — an offbook chess trainer
+    Copyright (C) 2026 Will (@VilhelmC)
+
+    This program is free software: you can redistribute it and/or modify it
+    under the terms of the GNU General Public License as published by the Free
+    Software Foundation, either version 3 of the License, or (at your option)
+    any later version.
+
+    This program is distributed in the hope that it will be useful, but
+    WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General
+    Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with this program. If not, see <https://www.gnu.org/licenses/>.
+
+Not a free choice: `chessground`, `chessops` and `stockfish` are all GPL and all
+shipped to the browser, so the combined work has to be GPL-compatible. See
+SPEC.md §12 for the reasoning, including why AGPL was considered and deferred.
+
+### Third-party components
+
+| Component | Licence |
+|---|---|
+| [chessground](https://github.com/lichess-org/chessground) | GPL-3.0-or-later |
+| [chessops](https://github.com/niklasf/chessops) | GPL-3.0-or-later |
+| [Stockfish](https://github.com/official-stockfish/Stockfish) | GPL-3.0-or-later |
+| [Dexie](https://dexie.org/) | Apache-2.0 |
+| [ts-fsrs](https://github.com/open-spaced-repetition/ts-fsrs) | MIT |
+| [React](https://react.dev/) | MIT |
+| Opening names from [chess-eco-codes](https://github.com/hayatbiralem/eco.json) | MIT |
+
+Opening statistics come from the [Lichess opening explorer](https://lichess.org/api)
+and evaluations from [Lichess cloud eval](https://lichess.org/api), both used
+under the Lichess API terms. No game data leaves your browser except the
+positions sent to those two endpoints.

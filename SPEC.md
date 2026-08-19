@@ -1,10 +1,11 @@
 # Offbook — Project Specification
 
 **Working name:** Offbook
-**Owner:** Will (`vilhelm.carlstrom@gmail.com`)
+**Owner:** Will ([@VilhelmC](https://github.com/VilhelmC))
 **Target user:** one — the author. Rating band <1400.
 **Doc path:** `offbook/SPEC.md`
 **Status:** v0.1, pre-implementation
+**Licence:** GPL-3.0-or-later (see `LICENSE`, and §12 for why it is not a free choice)
 **Date:** 2026-08-18
 
 ---
@@ -1232,6 +1233,26 @@ Recommended play format while using the app: **rapid 10+0 / 15+10** (§2).
 - Local: `C:\Users\vilhe\Documents\GitHub\Schackal`
 - Remote: `https://github.com/VilhelmC/Schackal`
 - Toolchain on device: node v22.22.3, npm 10.9.8
+- Licence: **GPL-3.0-or-later** (`LICENSE`, verbatim FSF text)
+
+### Why the licence was not a free choice
+
+Three dependencies are shipped to the browser, and all three are GPL:
+
+| Package | Licence | What it does here |
+|---|---|---|
+| `chessground` | GPL-3.0-or-later | The board |
+| `chessops` | GPL-3.0-or-later | Legal moves, FEN, SAN, PGN |
+| `stockfish` | GPL-3.0-or-later | The engine, as WASM in `public/engine/` |
+
+Serving the site **is** distribution — the bundle is downloaded and executed on the visitor's machine — so the combined work has to be GPL-compatible. MIT or Apache-2.0 were never available without replacing all three, which would mean giving up the board, the rules engine and the evaluation in one go.
+
+Chosen as `-or-later` rather than `-only` to match what the dependencies themselves grant, so nothing downstream is narrower than what came in.
+
+**AGPL was considered and deferred.** Its one added clause covers running a modified version as a network service without distributing it — which reaches only code that lives on a server and is never sent to the browser. No such code exists yet. Lichess itself makes exactly this split: `lila` (the server) is AGPL, `chessground` and `chessops` (the client libraries) are GPL. If the deferred sync backend is ever built, it can be AGPL then; sole authorship is what keeps that option open, and it closes the moment outside contributions arrive.
+
+**What this obliges of the deploy.** GPL §6 requires the corresponding source to accompany the object code. A public repository satisfies it, but a visitor arriving at the Pages URL never sees the README — so the app carries its own footer link to the source. The offer has to travel with the thing being distributed, not with the thing the author happens to be looking at.
+
 
 Note: neither the build container nor the device sandbox can reach `lichess.org` / `explorer.lichess.ovh`. All Lichess API calls are therefore validated **in your browser** at dev time — `Build.tsx` ships with a smoke-test panel that hits the explorer once and renders the raw response, so the client can be verified on first run.
 
