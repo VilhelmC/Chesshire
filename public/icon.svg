@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#1a1a19"/>
+  <g transform="translate(61.44 61.44) scale(3.5374545454545454)">
+    <!-- The drawing's own bounding box is x 40..94, y 16..93; the inner
+         translate recentres it in the 110 box so the padding is even. -->
+    <g transform="translate(-12 0.5)">
+      <path d="M 46 78 C 46 66 52 58 62 52 C 56 50 52 46 52 40 L 46 44 L 42 36 L 52 30 C 54 22 60 16 70 16 C 84 16 94 26 94 42 C 94 62 82 68 74 74 C 70 77 68 80 68 84 L 46 84 Z" fill="#f2f1ee"/>
+      <circle cx="82" cy="34" r="4" fill="#1a1a19"/>
+      <rect x="40" y="84" width="54" height="9" rx="3" fill="#1565c0"/>
+    </g>
+  </g>
+</svg>
