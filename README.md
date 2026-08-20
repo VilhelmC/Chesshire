@@ -132,6 +132,11 @@ SPEC.md §12 for the reasoning, including why AGPL was considered and deferred.
 | [React](https://react.dev/) | MIT |
 | Opening names from [chess-eco-codes](https://github.com/hayatbiralem/eco.json) | MIT |
 
+The app icon (`assets/chesshire.svg`) was drawn for this project and is covered
+by the same GPL-3.0-or-later licence as the rest of it. `npm run icons`
+regenerates the PNGs from it; the source lives in `assets/`, not `dist/`, which
+`vite build` empties on every run.
+
 Opening statistics come from the [Lichess opening explorer](https://lichess.org/api)
 and evaluations from [Lichess cloud eval](https://lichess.org/api), both used
 under the Lichess API terms. No game data leaves your browser except the

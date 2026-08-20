@@ -1327,6 +1327,25 @@ They were imported before moves were kept, so nothing can tell whether they reac
 
 Repair re-fetches far enough back to reach the oldest of them, with `force`, because those rows are marked analysed and an ordinary run skips precisely the games that need fixing. The reach is bounded, and some may be older than the API will return — which is counted and reported afterwards ("recovered 14 of 20, the remaining 6 are beyond the API window") rather than left as a quietly smaller number.
 
+
+### M11.1 — The icon
+
+Replaced the placeholder knight with **Chesshire** (`assets/chesshire.svg`), drawn for the project: a Cheshire grin whose teeth are chessboard squares. It earns the slot the knight did not — the grin is simultaneously a cat's smile and a rank of alternating light and dark squares, which is the app's subject rather than merely a chess-adjacent object, and it survives being shrunk in a way a horse's head does not.
+
+**It was saved into `dist/`, which would have destroyed it.** `vite build` empties the output directory on every run and the deploy script clears the published branch before copying into it — so the drawing was one `npm run build` away from being gone, with no copy in git because `dist/` is gitignored. It now lives in `assets/`.
+
+Three things in the generator worth keeping:
+
+**The bounding box is measured, not assumed.** Padding a source by a guessed fraction pads whatever margin the artist happened to leave, so the maskable icon's safe zone would mean something different for every drawing. The renderer is asked for `getBBox()` and the padding is applied to that, which makes 15% mean 15% regardless of how the file was drawn.
+
+**The artwork is recoloured without being edited.** The paths carry `fill="#000000"` as a presentation attribute, and a CSS rule outranks a presentation attribute — so one `#art path { fill: … }` inverts the whole drawing to light-on-ink while the source file stays byte-for-byte as delivered. Re-exporting from the drawing tool never has to account for how this app happens to use it.
+
+**Maskable padding came down from 21% to 15%.** The safe zone is the middle 80%, so 10% each side is the requirement; 21% cleared it by so much that the mark became a speck in the middle of a tile, which is the other way to fail an adaptive icon.
+
+#### An honest limit
+
+It reads as a face down to about 48px. At 32px — a browser tab — the checkered teeth fall below one pixel each and the grin becomes texture. That is a property of the drawing, not of the pipeline, and the fix would be a separate simplified mark for small sizes rather than anything the generator can do. The primary target is a phone home screen at 192 and 512, where it is at its best, so this is recorded rather than solved.
+
 ---
 
 ## 10. Risks

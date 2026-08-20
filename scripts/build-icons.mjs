@@ -1,12 +1,19 @@
-// Generate the app icons from one SVG.
+// Generate the app icons from one drawing.
 //
 //   npm i -D playwright && node scripts/build-icons.mjs
 //
-// Playwright is not a dependency and the output PNGs are committed — the icons
-// change roughly never. Same reasoning as the openings index and board-check.
-// (Chromium is the rasteriser because ImageMagick's SVG delegate is not
-// installed everywhere, and a browser is the one renderer guaranteed to agree
-// with what the phone will actually show.)
+// Playwright is not a dependency and the output is committed — the icons change
+// roughly never. Same reasoning as the openings index and board-check. Chromium
+// is the rasteriser because it is the one renderer guaranteed to agree with
+// what the phone will actually show.
+//
+// THE SOURCE
+//
+// assets/chesshire.svg — a Cheshire grin whose teeth are chessboard squares,
+// drawn for this app. It lives in assets/ and NOT in dist/, which is generated
+// output: `vite build` empties dist on every run and the deploy script clears
+// the published branch, so anything kept there is deleted by the next command
+// you type.
 //
 // Two shapes are produced because Android needs both:
 //
@@ -17,64 +24,102 @@
 // A maskable icon that ignores the safe zone gets its edges shaved off, which
 // is why it is a separate file rather than the same one declared twice.
 
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const INK = '#1a1a19';
 const LIGHT = '#f2f1ee';
-const ACCENT = '#1565c0';
+
+const SOURCE = join(ROOT, 'assets', 'chesshire.svg');
+const raw = readFileSync(SOURCE, 'utf8');
+
+/** The drawing itself, without its own <svg> wrapper. */
+const inner = raw.replace(/^[\s\S]*?<svg[^>]*>/i, '').replace(/<\/svg>\s*$/i, '');
+const viewBox = (raw.match(/viewBox="([^"]+)"/i) ?? [])[1];
+if (!viewBox) throw new Error(`No viewBox in ${SOURCE}`);
+
+const browser = await chromium.launch(
+	process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {},
+);
+const page = await browser.newPage();
+
+// ---------------------------------------------------------------------------
+// Measure the drawing's real extent.
+//
+// Padding a source by a guessed fraction pads its own margins along with it,
+// and the maskable icon's safe zone then means whatever the artwork happened to
+// leave around the edges. Asking the renderer for the bounding box makes the
+// padding mean the same thing regardless of how the source was drawn.
+// ---------------------------------------------------------------------------
+
+await page.setContent(
+	`<svg id="s" xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}"><g id="art">${inner}</g></svg>`,
+);
+const box = await page.evaluate(() => {
+	const g = document.getElementById('art');
+	const b = g.getBBox();
+	return { x: b.x, y: b.y, width: b.width, height: b.height };
+});
 
 /**
- * A knight, because it is the piece that moves where the others cannot — which
- * is the whole subject of the app — and because it is the one chess glyph that
- * is still legible at 48px.
+ * The finished icon as standalone SVG.
+ *
+ * `pad` is the fraction of the canvas left as margin on each side, applied to
+ * the MEASURED drawing rather than to the source's own coordinate box.
  */
-const KNIGHT =
-	'M 46 78 C 46 66 52 58 62 52 C 56 50 52 46 52 40 L 46 44 L 42 36 L 52 30 ' +
-	'C 54 22 60 16 70 16 C 84 16 94 26 94 42 C 94 62 82 68 74 74 C 70 77 68 80 68 84 ' +
-	'L 46 84 Z';
+function icon({ pad, shape, ink = INK, mark = LIGHT }) {
+	const S = 512;
+	const inset = S * pad;
+	const avail = S - inset * 2;
+	const scale = Math.min(avail / box.width, avail / box.height);
+	// Centre what is left over, so the mark sits in the middle of the tile even
+	// when it is wider than it is tall.
+	const dx = inset + (avail - box.width * scale) / 2 - box.x * scale;
+	const dy = inset + (avail - box.height * scale) / 2 - box.y * scale;
 
-function svg({ pad, bg }) {
-	// pad is the fraction of the canvas left as margin on each side.
-	const scale = 1 - pad * 2;
-	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" rx="${bg === 'square' ? 0 : 96}" fill="${INK}"/>
-  <g transform="translate(${512 * pad} ${512 * pad}) scale(${(512 * scale) / 110})">
-    <!-- The drawing's own bounding box is x 40..94, y 16..93; the inner
-         translate recentres it in the 110 box so the padding is even. -->
-    <g transform="translate(-12 0.5)">
-      <path d="${KNIGHT}" fill="${LIGHT}"/>
-      <circle cx="82" cy="34" r="4" fill="${INK}"/>
-      <rect x="40" y="84" width="54" height="9" rx="3" fill="${ACCENT}"/>
-    </g>
-  </g>
+	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${S} ${S}" width="${S}" height="${S}">
+  <style>
+    /* The drawing is black on nothing. A CSS rule beats the fill="#000000"
+       presentation attribute on every path, so the artwork is recoloured
+       without being edited — the source file stays exactly as drawn. */
+    #art path, #art polygon, #art circle, #art rect { fill: ${mark}; stroke: none; }
+  </style>
+  <rect width="${S}" height="${S}" rx="${shape === 'square' ? 0 : 96}" fill="${ink}"/>
+  <g id="art" transform="translate(${dx.toFixed(3)} ${dy.toFixed(3)}) scale(${scale.toFixed(5)})">${inner}</g>
 </svg>`;
 }
 
 const targets = [
-	{ file: 'public/icon-512.png', size: 512, pad: 0.12, bg: 'rounded' },
-	{ file: 'public/icon-192.png', size: 192, pad: 0.12, bg: 'rounded' },
-	// Maskable: the mark sits inside the middle 80%, so cropping cannot clip it.
-	{ file: 'public/icon-maskable-512.png', size: 512, pad: 0.22, bg: 'square' },
-	{ file: 'public/apple-touch-icon.png', size: 180, pad: 0.12, bg: 'square' },
+	{ file: 'public/icon-512.png', size: 512, pad: 0.1, shape: 'rounded' },
+	{ file: 'public/icon-192.png', size: 192, pad: 0.1, shape: 'rounded' },
+	// Maskable: the safe zone is the middle 80%, so the padding only has to
+	// exceed 10% on each side. 15% leaves a margin of error for the more
+	// aggressive launcher masks without shrinking the mark to a speck, which is
+	// the other way to fail this.
+	{ file: 'public/icon-maskable-512.png', size: 512, pad: 0.15, shape: 'square' },
+	{ file: 'public/apple-touch-icon.png', size: 180, pad: 0.1, shape: 'square' },
 ];
 
-const browser = await chromium.launch();
-const page = await browser.newPage();
-
 for (const t of targets) {
-	// Render at the target size directly rather than downscaling from 512: a
-	// browser re-runs the vector at whatever size you give it, so 192px is a
-	// fresh render rather than a resampled one.
+	// Rendered at the target size rather than downscaled from 512: a browser
+	// re-runs the vector at whatever size it is given, so 192px is a fresh
+	// render rather than a resampled one.
 	await page.setViewportSize({ width: t.size, height: t.size });
 	await page.setContent(
-		`<style>html,body{margin:0;padding:0;background:transparent}svg{display:block;width:${t.size}px;height:${t.size}px}</style>${svg(t)}`,
+		`<style>html,body{margin:0;padding:0}svg{display:block;width:${t.size}px;height:${t.size}px}</style>` +
+			icon(t),
 	);
-	await page.screenshot({ path: t.file, omitBackground: true });
+	await page.screenshot({ path: join(ROOT, t.file), omitBackground: true });
 	console.log(`${t.file} (${t.size}px)`);
 }
 
-await browser.close();
-
-writeFileSync('public/icon.svg', svg({ pad: 0.12, bg: 'rounded' }));
+// The favicon and the manifest's scalable entry. Genuinely vector, because the
+// source is.
+writeFileSync(join(ROOT, 'public/icon.svg'), icon({ pad: 0.1, shape: 'rounded' }));
 console.log('public/icon.svg');
+
+await browser.close();
