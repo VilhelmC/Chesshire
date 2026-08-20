@@ -17,7 +17,7 @@
 // branch -> `gh-pages` / `(root)`.
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { writeFileSync, rmSync, mkdirSync, cpSync, readdirSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, rmSync, mkdirSync, cpSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -81,9 +81,61 @@ if (build.status !== 0) process.exit(build.status ?? 1);
 const DIST = join(ROOT, 'dist');
 if (!existsSync(join(DIST, 'index.html'))) throw new Error('Build produced no dist/index.html');
 
+verifyBase(DIST, BASE_PATH);
+
 // Pages runs Jekyll over the branch unless told not to, and Jekyll drops files
 // and directories whose names begin with an underscore.
 writeFileSync(join(DIST, '.nojekyll'), '');
+
+/**
+ * Refuse to publish a build whose asset URLs point somewhere else.
+ *
+ * ---------------------------------------------------------------------------
+ * THE FAILURE THIS EXISTS TO PREVENT
+ *
+ * After the repository was renamed, a deploy ran while `git remote get-url`
+ * still said the old name. BASE_PATH came out as the old path, so every asset
+ * URL in index.html was prefixed with a directory that no longer existed.
+ * GitHub Pages answered those requests with its 404 PAGE, which is HTML, and
+ * the browser refused to execute HTML as a JavaScript module. The site was
+ * blank.
+ *
+ * The script printed "Pushed. Live shortly." It had verified that the app was
+ * DEPLOYED and never that it WORKS — the same omission as the Stockfish 404 in
+ * §M9, in a different file.
+ *
+ * Two things are checked, and they catch different mistakes:
+ *   1. every root-absolute URL starts with the base being deployed under
+ *      — catches a stale or mismatched BASE_PATH
+ *   2. every one of them resolves to a file that is actually in dist/
+ *      — catches a missing copy step, or a public/ file nobody generated
+ * ---------------------------------------------------------------------------
+ */
+export function verifyBase(dist, base) {
+	const html = readFileSync(join(dist, 'index.html'), 'utf8');
+	const urls = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map((m) => m[1]);
+	const local = urls.filter((u) => u.startsWith('/'));
+
+	const wrongBase = local.filter((u) => !u.startsWith(base));
+	if (wrongBase.length) {
+		throw new Error(
+			`Built for a different base. index.html asks for:\n` +
+				wrongBase.map((u) => `  ${u}`).join('\n') +
+				`\nbut this deploy is for ${base}.\n` +
+				`BASE_PATH comes from the git remote — check \`git remote get-url origin\`.`,
+		);
+	}
+
+	const missing = local.filter((u) => !existsSync(join(dist, u.slice(base.length))));
+	if (missing.length) {
+		throw new Error(
+			`index.html references files that are not in dist/:\n` +
+				missing.map((u) => `  ${u}`).join('\n'),
+		);
+	}
+
+	console.log(`  ok  ${local.length} asset URLs all under ${base} and present`);
+}
 
 // ---------------------------------------------------------------------------
 // 3. Put dist/ on the branch, through a worktree

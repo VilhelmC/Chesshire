@@ -106,7 +106,13 @@ export const text = {
 export const TOUCH = 40;
 
 export const mono = 'ui-monospace, SFMono-Regular, Menlo, monospace';
-export const sans = 'system-ui, -apple-system, sans-serif';
+
+/**
+ * The system stack stays as the fallback, and it matters more than it looks:
+ * `font-display: swap` means the first paint of a cold load uses it, so the
+ * fallback is what a new visitor reads for a few hundred milliseconds.
+ */
+export const sans = "'Source Sans 3 Variable', system-ui, -apple-system, sans-serif";
 
 /** Colour for a judgement, so the mapping lives in one place. */
 export function verdictColor(kind: 'good' | 'warn' | 'bad' | 'neutral'): string {

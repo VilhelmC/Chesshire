@@ -19,22 +19,53 @@
 // ---------------------------------------------------------------------------
 
 import { engine, toWhitePov } from './stockfish';
+import { winPercent, JUDGEMENT } from '../domain/accuracy';
 import { applySan, applyUci, sideToMove, INITIAL_FEN } from '../domain/chess';
 import type { ImportedGame } from '../data/games';
 
 const DEPTH = 12;
 const MOVETIME_MS = 220;
 
-/** Below this the move is not worth a flashcard. */
+/**
+ * Below this the move is not worth a flashcard — as a drop in WIN PERCENTAGE.
+ *
+ * ---------------------------------------------------------------------------
+ * This used to be 150 centipawns, which is the model Lichess abandoned and for
+ * a demonstrable reason: +900 to +600 is 300 centipawns and almost no change in
+ * the outcome, while 150 either side of level decides the game. A centipawn
+ * threshold therefore mines cards out of positions that were already won and
+ * misses the moves that actually mattered.
+ *
+ * 20 points of win chance is Lichess's own "mistake" threshold. It is a
+ * stricter filter than 150cp near equality and a far looser one in a decided
+ * position, which is the whole point. See METRICS.md §3.
+ * ---------------------------------------------------------------------------
+ */
+export const MISTAKE_WIN_DROP = JUDGEMENT.mistake;
+
+/**
+ * Retained for the settings UI, which still asks in centipawns.
+ *
+ * Kept as the equivalent near equality rather than deleted, so an existing
+ * stored preference keeps roughly its old meaning.
+ */
 export const MISTAKE_CP = 150;
+
 /**
  * Positions this lopsided are skipped.
  *
  * A blunder in a position already winning or already lost teaches nothing that
- * transfers — the game was decided before the move. What is worth drilling is a
- * mistake made while the game was still live.
+ * transfers — the game was decided before the move. Now largely redundant,
+ * because a win-percentage threshold already declines to care about swings in
+ * decided positions; kept as a hard floor for the extremes where the logistic
+ * is flat enough that even a huge centipawn move registers as nothing.
  */
 export const DECIDED_CP = 800;
+
+/** A centipawn threshold expressed as the win-percentage drop it means at level. */
+export function winDropFor(cp: number): number {
+	return winPercent(0) - winPercent(-cp);
+}
 
 export type GameMistake = {
 	/** Position before the move, i.e. where the card starts. */
@@ -83,13 +114,27 @@ export type GameAnalysis = {
 	measured: number;
 	/** Positions that could not be evaluated, so were skipped. */
 	unmeasured: number;
+	/**
+	 * Evaluation after each ply, WHITE's point of view. Index i is the position
+	 * after ply i. Null where nothing evaluated it.
+	 *
+	 * Returned rather than discarded because it is the whole basis of every
+	 * measurable thing about a game — accuracy, ACPL, judgement counts — and it
+	 * cannot be recovered later without analysing the game a second time.
+	 *
+	 * Note this walk covers nearly every ply, not only ours: evaluating the
+	 * positions either side of each of our moves visits i and i+1 for every one
+	 * of our plies, and those interleave to cover the whole game.
+	 */
+	evals: (number | null)[];
 };
 
 export async function findMistakes(
 	game: ImportedGame,
 	opts: AnalyseOptions = {},
 ): Promise<GameAnalysis> {
-	const minLoss = opts.minLoss ?? MISTAKE_CP;
+	// The caller still speaks centipawns; convert once, at the edge.
+	const minWinDrop = opts.minLoss === undefined ? MISTAKE_WIN_DROP : winDropFor(opts.minLoss);
 	const ourColour = game.ourColour;
 
 	// Replay once, keeping every position.
@@ -165,7 +210,10 @@ export async function findMistakes(
 		if (Math.abs(before.cp) > DECIDED_CP) continue;
 
 		const loss = before.cp - after.cp;
-		if (loss < minLoss) continue;
+		// The judgement is on win percentage, not centipawns: how much the move
+		// changed the likely OUTCOME, which is the thing worth a flashcard.
+		const winDrop = winPercent(before.cp) - winPercent(after.cp);
+		if (winDrop < minWinDrop) continue;
 
 		// The card needs a move to ask for. Site evaluations do not carry one, so
 		// this is the only place a second search is unavoidable — and it happens
@@ -204,7 +252,17 @@ export async function findMistakes(
 		});
 	}
 
-	return { mistakes: out, measured, unmeasured };
+	// White's point of view, dropping index 0 — the starting position, which is
+	// a known constant rather than a measurement.
+	const evals: (number | null)[] = positions
+		.slice(1)
+		.map((_, i) => {
+			const v = evalCache.get(i + 1);
+			if (!v) return null;
+			return ourColour === 'w' ? v.cp : -v.cp;
+		});
+
+	return { mistakes: out, measured, unmeasured, evals };
 }
 
 function pov(cpWhite: number, colour: 'w' | 'b'): number {

@@ -30,13 +30,16 @@ import {
 	type SessionConfig,
 } from '../engine/session';
 import { applyUci, replayLine } from '../domain/chess';
-import { getToken } from '../data/explorer';
+import { getToken, fetchExplorer } from '../data/explorer';
+import { distributionOf, type Distribution } from '../domain/distribution';
+import { DistributionList } from '../components/Distribution';
+import { ShareMenu, canShareNatively } from '../components/ShareMenu';
 import { markTraining } from '../data/autoImport';
 import { Empty, Button } from '../ui/primitives';
 import type { ToolbarAction } from '../components/Toolbar';
 import { BoardPanel } from '../components/BoardPanel';
 import { Move, MoveLine } from '../components/Move';
-import { other, colourAtPly } from '../domain/notation';
+import { other, colourAtPly, colourOfFen } from '../domain/notation';
 import { MoveList, MoveListLegend, type MoveChip } from '../components/MoveList';
 import {
 	candidateMoves,
@@ -152,7 +155,6 @@ export function Train({
 			lastMoveCost: { ...lastCost.current },
 		})),
 	);
-	const [copied, setCopied] = useState(false);
 	const [memory, setMemory] = useState<MemoryStore>(() => new Map());
 	const [memoryReady, setMemoryReady] = useState(false);
 	const busyRef = useRef(false);
@@ -480,6 +482,28 @@ export function Train({
 	 * nearly equal and one loses a piece teaches the shape of the choice, which
 	 * is the thing that transfers. It counts as a reveal for scoring.
 	 */
+	/**
+	 * What players at this band actually play here.
+	 *
+	 * Deliberately NOT scored as help. Seeing the engine's ranked options tells
+	 * you the answer, so it retires the item; seeing how often each move gets
+	 * played tells you what you will meet, which is the subject rather than the
+	 * solution. The explorer response is already cached from the run itself, so
+	 * this is usually not even a request.
+	 */
+	const [distribution, setDistribution] = useState<Distribution | null>(null);
+	const [sharing, setSharing] = useState(false);
+	async function showDistribution() {
+		if (!state) return;
+		if (distribution) return setDistribution(null);
+		try {
+			const data = await fetchExplorer(state.fen);
+			setDistribution(distributionOf(data, colourOfFen(state.fen)));
+		} catch (e) {
+			setError((e as Error).message);
+		}
+	}
+
 	async function showOptions() {
 		if (!state || busyRef.current || !yourTurn) return;
 		busyRef.current = true;
@@ -831,10 +855,26 @@ export function Train({
 			},
 			{
 				id: 'options',
-				title: 'Show every option, weighted by how good it is',
+				title: 'Show every option, weighted by how good it is (stops this move counting)',
 				icon: 'options',
 				onClick: showOptions,
 				disabled: !yourTurn || busy,
+			},
+			{
+				id: 'stats',
+				title: 'What players at your rating actually play here — frequency and score',
+				icon: 'stats',
+				onClick: showDistribution,
+				accent: !!distribution,
+				disabled: !state || busy,
+			},
+			{
+				id: 'share',
+				title: 'Copy or share this position',
+				icon: 'share',
+				onClick: () => setSharing((v) => !v),
+				accent: sharing,
+				disabled: !state?.path.length,
 			},
 			{
 				id: 'resign',
@@ -959,42 +999,38 @@ export function Train({
 						</div>
 					)}
 
-					{state?.lastOpponent && !state.finished && (
-						<div style={{ fontSize: 14, marginTop: 8 }}>
-							{state.lastOpponent.kind === 'mistake' ? (
-								<span style={{ color: '#c62828' }}>
-									<Move
-										san={state.lastOpponent.san}
-										colour={other(state.ourColour)}
-										bold
-										size={14}
-									/>{' '}
-									—{' '}
-									{state.lastOpponent.severity === 'blunder' ? 'a mistake' : 'loose'},{' '}
-									{(state.lastOpponent.frequency * 100).toFixed(0)}% play it here. Punish it.
-								</span>
-							) : (
-								<span style={{ opacity: 0.75 }}>
-									<Move
-										san={state.lastOpponent.san}
-										colour={other(state.ourColour)}
-										bold
-										size={14}
-									/>
-									{state.lastOpponent.lineName ? ` — ${state.lastOpponent.lineName}` : ''}
-								</span>
-							)}
-						</div>
-					)}
+					{/* ---------------------------------------------------------------
+						Two different things were sharing one paragraph, in the wrong
+						order: commentary on the CURRENT position sat above the verdict
+						on the move you had just played, so "Correct" appeared underneath
+						a sentence about something else and the two read as one run-on
+						remark.
 
+						They are separate blocks now, each captioned, and in the order
+						they happened — your move, then their reply. Chronology is the
+						only ordering a reader does not have to be taught.
+					--------------------------------------------------------------- */}
 					{feedback && (
 						<div
 							style={{
 								marginTop: 8,
 								fontSize: 14,
 								color: feedback.correct ? '#2e7d32' : '#c62828',
+								borderLeft: `3px solid ${feedback.correct ? '#2e7d32' : '#c62828'}`,
+								paddingLeft: 8,
 							}}
 						>
+							<div
+								style={{
+									fontSize: 11,
+									textTransform: 'uppercase',
+									letterSpacing: '0.06em',
+									opacity: 0.7,
+									marginBottom: 1,
+								}}
+							>
+								Your move
+							</div>
 							{feedback.message}
 							{!feedback.correct && feedback.explanation && (
 								<div style={{ opacity: 0.9, marginTop: 2 }}>{feedback.explanation}</div>
@@ -1040,9 +1076,107 @@ export function Train({
 						</div>
 					)}
 
+					{/* Their reply, second, because it happened second. */}
+					{state?.lastOpponent && !state.finished && (
+						<div
+							style={{
+								fontSize: 14,
+								marginTop: 8,
+								borderLeft: `3px solid ${
+									state.lastOpponent.kind === 'mistake' ? '#c62828' : '#e6e5e2'
+								}`,
+								paddingLeft: 8,
+							}}
+						>
+							<div
+								style={{
+									fontSize: 11,
+									textTransform: 'uppercase',
+									letterSpacing: '0.06em',
+									opacity: 0.7,
+									marginBottom: 1,
+								}}
+							>
+								They played
+							</div>
+							{state.lastOpponent.kind === 'mistake' ? (
+								<span style={{ color: '#c62828' }}>
+									<Move
+										san={state.lastOpponent.san}
+										colour={other(state.ourColour)}
+										bold
+										size={14}
+									/>{' '}
+									—{' '}
+									{state.lastOpponent.severity === 'blunder' ? 'a mistake' : 'loose'},{' '}
+									{(state.lastOpponent.frequency * 100).toFixed(0)}% play it here. Punish it.
+								</span>
+							) : (
+								<span style={{ opacity: 0.75 }}>
+									<Move
+										san={state.lastOpponent.san}
+										colour={other(state.ourColour)}
+										bold
+										size={14}
+									/>
+									{state.lastOpponent.lineName ? ` — ${state.lastOpponent.lineName}` : ''}
+								</span>
+							)}
+						</div>
+					)}
+
 					{state?.finished && (
 						<div style={{ marginTop: 8, fontWeight: 600, color: '#2e7d32' }}>
 							{state.finished === 'line-complete' ? 'Line complete.' : state.note}
+						</div>
+					)}
+
+					{sharing && state && (
+						<ShareMenu
+							items={[
+								{
+									id: 'pgn',
+									label: 'Copy PGN',
+									note: 'The whole run, for pasting into a board or an analysis tool.',
+									kind: 'copy',
+									value: toPgn(state, state.opening ? [state.opening.name] : []),
+								},
+								{
+									id: 'fen',
+									label: 'Copy FEN',
+									note: 'Just this position.',
+									kind: 'copy',
+									value: state.fen,
+								},
+								{
+									id: 'lichess',
+									label: 'Analyse on Lichess',
+									note: 'Opens this position in their analysis board.',
+									kind: 'open',
+									value: `https://lichess.org/analysis/${state.fen.replace(/ /g, '_')}`,
+								},
+								...(canShareNatively()
+									? [
+											{
+												id: 'native',
+												label: 'Share…',
+												note: 'Your device\u2019s own share sheet.',
+												kind: 'copy' as const,
+												value: toPgn(state, state.opening ? [state.opening.name] : []),
+											},
+										]
+									: []),
+							]}
+							onClose={() => setSharing(false)}
+						/>
+					)}
+
+					{distribution && state && (
+						<div style={{ marginTop: 10 }}>
+							<DistributionList
+								distribution={distribution}
+								mover={colourOfFen(state.fen)}
+							/>
 						</div>
 					)}
 
@@ -1057,22 +1191,6 @@ export function Train({
 				share a width that is already scarce. On a 768px tablet, splitting
 				gave a SMALLER board than a 393px phone got. */}
 			<div style={{ flex: vp.stacked ? '1 1 100%' : '1 1 300px', minWidth: 0 }}>
-				<div style={{ marginBottom: 12 }}>
-					<button
-						onClick={async () => {
-							if (!state) return;
-							await navigator.clipboard.writeText(
-								toPgn(state, state.opening ? [state.opening.name] : []),
-							);
-							setCopied(true);
-							setTimeout(() => setCopied(false), 2000);
-						}}
-						disabled={!state?.path.length}
-					>
-						{copied ? 'Copied ✓' : 'Copy PGN'}
-					</button>
-				</div>
-
 				<h3 style={{ marginTop: 0 }}>Session</h3>
 				<div style={{ fontSize: 15 }}>
 					{stats.moves === 0 ? (
@@ -1158,7 +1276,12 @@ export function Train({
 						style={{ fontSize: 14 }}
 					>
 						<option value="auto">
-							Match me{rating.confident ? ` (~${bot.elo})` : ' (default until measured)'}
+							{/* "(default until measured)" said what the app was doing and
+								not what it would do. The number is the answer. */}
+							Match me{' '}
+							{rating.confident
+								? `(~${bot.elo}, from your play)`
+								: `(~${bot.elo} until you have played enough to measure)`}
 						</option>
 						{BOT_LEVELS.map((l) => (
 							<option key={l.level} value={l.level}>

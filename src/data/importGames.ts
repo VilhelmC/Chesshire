@@ -213,6 +213,10 @@ export async function importGames(req: ImportRequest): Promise<ImportResult> {
 			mistakes: worst.length,
 			moves: [...g.moves],
 			ourColour: g.ourColour,
+			// Site evaluations when the game was analysed on Lichess, otherwise
+			// the ones the local walk just produced. Either way they are kept:
+			// re-deriving them means re-analysing the game.
+			evals: mergeEvals(g.evals, analysis.evals),
 		});
 	}
 
@@ -228,6 +232,27 @@ export async function importGames(req: ImportRequest): Promise<ImportResult> {
 	});
 
 	return { sources, analysed: todo.length, skipped, cards, mistakes: found, measured, unmeasured };
+}
+
+/**
+ * Prefer the site's evaluation, fall back to ours.
+ *
+ * Lichess's numbers come from a deeper search than a phone can run in 220ms, so
+ * where they exist they are simply better. Ours fill the gaps rather than
+ * replacing them, which also means a game analysed on the site costs us almost
+ * nothing to measure.
+ */
+export function mergeEvals(
+	site: (number | null)[] | undefined,
+	local: (number | null)[],
+): (number | null)[] {
+	const length = Math.max(site?.length ?? 0, local.length);
+	const out: (number | null)[] = [];
+	for (let i = 0; i < length; i++) {
+		const s = site?.[i];
+		out.push(s !== undefined && s !== null ? s : (local[i] ?? null));
+	}
+	return out;
 }
 
 async function cardFor(m: GameMistake, g: ImportedGame): Promise<void> {

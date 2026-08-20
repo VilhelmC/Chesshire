@@ -5,7 +5,7 @@
 // move. Getting it wrong puts the card straight back in the queue rather than
 // moving on, which is what "repeat until correct" means.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { BoardPanel } from '../components/BoardPanel';
 import type { ToolbarAction } from '../components/Toolbar';
 import { analysePosition, toColourPov } from '../data/cloudEval';
@@ -21,8 +21,9 @@ import {
 	RETIRE_STREAK,
 	type MistakeCard,
 } from '../domain/mistakes';
-import { applyUci, sameMove } from '../domain/chess';
-import { Empty, Button } from '../ui/primitives';
+import { applyUci, sameMove, replayLine } from '../domain/chess';
+import { Empty, Button, Panel } from '../ui/primitives';
+import { MoveList } from '../components/MoveList';
 import { Move } from '../components/Move';
 import { withGlyph } from '../domain/notation';
 import { nameForPath } from '../domain/openings';
@@ -146,8 +147,66 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		}
 	}
 
+	/**
+	 * The moves that led to this position, replayed.
+	 *
+	 * A card used to appear as a position with no history — you were asked what
+	 * you should have played without being shown what had just happened, which
+	 * for a mistake mined from a real game is most of the information. The path
+	 * is already stored on every card; nothing has to be fetched.
+	 */
+	const line = useMemo(() => (current?.path?.length ? replayLine(current.path) : []), [current]);
+
+	// replayLine returns the START position at index 0 and the position AFTER
+	// ply i at index i, so the last entry is the card's own position and there
+	// is one more entry than there are moves.
+	const lastPly = Math.max(0, line.length - 1);
+
+	/** Which position is on the board. `null` means the card itself. */
+	const [previewPly, setPreviewPly] = useState<number | null>(null);
+	const atCard = previewPly === null || previewPly >= lastPly;
+	const boardFen = atCard ? current?.fen : line[previewPly as number]?.fen;
+
+	/**
+	 * The move that produced the position being shown.
+	 *
+	 * On the card itself this is the OPPONENT'S last move — which is exactly the
+	 * thing you need to see in order to know what you are being asked.
+	 */
+	const lastMove = ((): [string, string] | undefined => {
+		const uci = line[atCard ? lastPly : (previewPly as number)]?.uci;
+		return uci ? [uci.slice(0, 2), uci.slice(2, 4)] : undefined;
+	})();
+
+	function step(delta: number) {
+		const at = previewPly === null ? lastPly : previewPly;
+		const to = Math.max(0, Math.min(lastPly, at + delta));
+		setPreviewPly(to >= lastPly ? null : to);
+	}
+
 	function actions(): ToolbarAction[] {
 		return [
+			{
+				id: 'first',
+				title: 'Back to the start of the game',
+				icon: 'first',
+				onClick: () => setPreviewPly(0),
+				disabled: !lastPly || previewPly === 0,
+			},
+			{
+				id: 'back',
+				title: 'Step back through the moves that led here',
+				icon: 'back',
+				onClick: () => step(-1),
+				disabled: !lastPly || previewPly === 0,
+			},
+			{
+				id: 'forward',
+				title: 'Step forward, back towards the position you have to answer',
+				icon: 'forward',
+				onClick: () => step(1),
+				disabled: !lastPly || atCard,
+			},
 			{
 				id: 'options',
 				title: 'Show every legal move, weighted by how good it is (stops this card counting)',
@@ -165,7 +224,7 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 			{
 				id: 'skip',
 				title: 'Skip — put this card to the back of the queue',
-				icon: 'forward',
+				icon: 'playon',
 				onClick: () => next([...queue.slice(1), queue[0]]),
 				disabled: queue.length < 2,
 			},
@@ -178,6 +237,9 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		setFeedback(null);
 		setReveal(false);
 		setCandidates(null);
+		// Back to the position being asked about. Carrying a preview across cards
+		// would show one card's history under another card's question.
+		setPreviewPly(null);
 		// Always, not just on rejection. Two cards can share a position (same slip,
 		// two candidate answers), and then `fen` does not change between them —
 		// the board would keep the dests it consumed on the last move, i.e. none.
@@ -253,10 +315,14 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 			>
 				{current ? (
 					<BoardPanel
-						fen={current.fen}
+						fen={boardFen ?? current.fen}
 						ourColour={current.ourColour}
 						evalCp={evalCp}
-						interactive={!busy}
+						lastMove={lastMove}
+						// Only the card's own position accepts a move. Stepping back is
+						// for looking; answering somewhere else in the game would be
+						// answering a different question.
+						interactive={!busy && atCard}
 						onMove={onMove}
 						version={boardVersion}
 						actions={actions()}
@@ -376,6 +442,33 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 										</li>
 									))}
 								</ol>
+							)}
+
+							{/* The run-up to the position. A mistake from a real game
+								without the moves that produced it is a puzzle with the
+								premise removed — and every card already stores the path,
+								so nothing is fetched to show this. */}
+							{lastPly > 0 && (
+								<div style={{ marginTop: 10 }}>
+									<MoveList
+										// Index 0 is the starting position, not a move.
+										chips={line.slice(1).map((m, i) => ({
+											san: m.san ?? '',
+											ply: i + 1,
+											mistake: false,
+											suboptimal: false,
+											white: i % 2 === 0,
+										}))}
+										currentPly={atCard ? lastPly : (previewPly as number)}
+										onJump={(ply) => setPreviewPly(ply >= lastPly ? null : ply)}
+									/>
+									{!atCard && (
+										<Panel tone="accent" style={{ marginTop: 8, fontSize: 13 }}>
+											Looking back at move {Math.ceil(((previewPly ?? 0) + 1) / 2)}. Step
+											forward to answer the card.
+										</Panel>
+									)}
+								</div>
 							)}
 						</div>
 					</BoardPanel>

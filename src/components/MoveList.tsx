@@ -107,7 +107,14 @@ export function MoveList({
 				display: 'grid',
 				// Every pair gets the same three tracks, so the columns line up
 				// down the page regardless of how long any single move's text is.
-				gridTemplateColumns: `repeat(${per}, ${NUM_COL}px 1fr 1fr)`,
+				// minmax(0, 1fr), NOT 1fr. A grid track defaults to a minimum of
+				// min-content, so a single long move ("Qxd5+") forces its column
+				// wider than its share and pushes the whole grid past the panel —
+				// which is where the horizontal scrollbar came from. Zero as the
+				// minimum lets the track shrink and the cell clip instead.
+				gridTemplateColumns: `repeat(${per}, ${NUM_COL}px minmax(0, 1fr) minmax(0, 1fr))`,
+				// Belt and braces: nothing in a move list is worth a sideways scroll.
+				overflowX: 'hidden',
 				gap: '1px 2px',
 				alignItems: 'stretch',
 				minHeight: 30,
@@ -233,6 +240,10 @@ function Cell({
 				padding: '2px 5px',
 				cursor: onJump ? 'pointer' : 'default',
 				color: '#1a1a19',
+				// The cell may now be narrower than its text; clip rather than spill.
+				minWidth: 0,
+				overflow: 'hidden',
+				whiteSpace: 'nowrap',
 				// Left-aligned so the notation starts at the same x on every row —
 				// centring would undo the alignment the table exists for.
 				textAlign: 'left',

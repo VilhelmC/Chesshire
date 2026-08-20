@@ -26,6 +26,8 @@ export type ToolbarAction = {
 		| 'reveal'
 		| 'playon'
 		| 'options'
+		| 'stats'
+		| 'share'
 		| 'resign';
 	onClick: () => void;
 	disabled?: boolean;
@@ -42,6 +44,8 @@ const CAPTION: Record<ToolbarAction['icon'], string> = {
 	reveal: 'show',
 	playon: 'play on',
 	options: 'options',
+	stats: 'played',
+	share: 'share',
 	resign: 'resign',
 };
 
@@ -203,6 +207,28 @@ function Icon({ name }: { name: ToolbarAction['icon'] }) {
 					<line x1="4" y1="7" x2="18" y2="7" strokeWidth="3.2" />
 					<line x1="4" y1="12" x2="15" y2="12" strokeWidth="2" />
 					<line x1="4" y1="17" x2="12" y2="17" strokeWidth="1.2" />
+				</svg>
+			);
+		case 'stats':
+			// Three bars of falling height: a distribution, as opposed to the
+			// `options` ramp, which is arrows of falling weight.
+			return (
+				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
+					<rect x="4" y="9" width="4" height="11" fill="#333" stroke="none" />
+					<rect x="10" y="13" width="4" height="7" fill="#333" stroke="none" />
+					<rect x="16" y="16" width="4" height="4" fill="#333" stroke="none" />
+				</svg>
+			);
+		case 'share':
+			// Three nodes joined — the share glyph almost every platform uses, so
+			// it needs no learning.
+			return (
+				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
+					<circle cx="18" cy="5" r="2.6" />
+					<circle cx="6" cy="12" r="2.6" />
+					<circle cx="18" cy="19" r="2.6" />
+					<line x1="8.3" y1="10.8" x2="15.7" y2="6.2" />
+					<line x1="8.3" y1="13.2" x2="15.7" y2="17.8" />
 				</svg>
 			);
 		case 'playon':

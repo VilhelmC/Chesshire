@@ -131,6 +131,7 @@ SPEC.md §12 for the reasoning, including why AGPL was considered and deferred.
 | [Dexie](https://dexie.org/) | Apache-2.0 |
 | [ts-fsrs](https://github.com/open-spaced-repetition/ts-fsrs) | MIT |
 | [React](https://react.dev/) | MIT |
+| [Source Sans 3](https://github.com/adobe-fonts/source-sans) (bundled, self-hosted) | SIL Open Font Licence 1.1 |
 | Opening names from [chess-eco-codes](https://github.com/hayatbiralem/eco.json) | MIT |
 
 The app icon (`assets/chesshire.svg`) was drawn for this project and is covered

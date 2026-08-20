@@ -1,4 +1,26 @@
 /*
+ * THE TYPEFACE
+ *
+ * Source Sans 3, self-hosted rather than fetched from a font CDN: the app is
+ * offline-capable and a typeface arriving over the network is a typeface that
+ * sometimes does not arrive. Bundled, it is cached by the service worker with
+ * everything else.
+ *
+ * Chosen over the system stack for a reason that is not taste. The system fonts
+ * are wider, and this app is full of narrow things — stat tiles, grey subtitles
+ * under numbers, a move list in columns. At 393px, "move 11" wrapped onto two
+ * lines in a tile and pushed it taller than its neighbours. Source Sans 3 fits
+ * it on one.
+ *
+ * `wght.css` rather than `index.css`: the upright weight axis only, no italics,
+ * which this app never uses. Each script is a separate file behind a
+ * unicode-range, so a reader of English downloads exactly one 32KB woff2.
+ *
+ * SIL Open Font Licence 1.1 — see README.
+ */
+@import '@fontsource-variable/source-sans-3/wght.css';
+
+/*
  * The only global stylesheet. Everything else is inline styles on components.
  *
  * Two things force it to exist: keyframes, which cannot be written as an inline

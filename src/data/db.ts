@@ -88,6 +88,20 @@ export type ImportedGameRow = {
 	 * and are excluded from that measurement rather than assumed.
 	 */
 	moves?: string[];
+	/**
+	 * Evaluation after each ply, centipawns from WHITE's point of view.
+	 *
+	 * Kept because it is nearly free and unlocks everything measurable about a
+	 * game — accuracy, ACPL, per-phase breakdown, win-percentage judgements —
+	 * none of which can be reconstructed later without analysing the game again.
+	 * Lichess sends these with any game analysed on the site; for everything else
+	 * findMistakes computes them during import and used to discard them.
+	 *
+	 * Index i is the position AFTER ply i, matching ImportedGame.evals. Null
+	 * entries mean that ply was never evaluated, and a game with any gap is not
+	 * measurable — reported as such rather than interpolated.
+	 */
+	evals?: (number | null)[];
 	ourColour?: 'w' | 'b';
 };
 

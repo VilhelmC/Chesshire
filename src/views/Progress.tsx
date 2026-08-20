@@ -23,6 +23,13 @@ import {
 	type PlayedGame,
 } from '../domain/transfer';
 import { SyncStatus } from '../components/SyncStatus';
+import {
+	performanceReport,
+	accuracyByBand,
+	weakestBand,
+	MIN_MOVES_PER_BAND as MIN_BAND,
+	type MeasurableGame,
+} from '../domain/performance';
 import { accuracy, freeplayLosses, type AnswerRow, type RunRow } from '../domain/progress';
 import { color } from '../ui/theme';
 
@@ -42,6 +49,8 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 	const [loaded, setLoaded] = useState(false);
 	const [pinned, setPinned] = useState<string | null>(null);
 	const [played, setPlayed] = useState<PlayedGame[]>([]);
+	/** The same games, kept whole, for the accuracy measurement. */
+	const [rawGames, setRawGames] = useState<MeasurableGame[]>([]);
 
 	async function reload() {
 		const d = await loadProgress();
@@ -66,8 +75,18 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 					mistakePaths: byGame.get(g.id) ?? [],
 				})),
 			);
+			setRawGames(
+				games.map((g) => ({
+					id: g.id,
+					playedAt: g.playedAt,
+					ourColour: g.ourColour ?? 'w',
+					evals: g.evals,
+					moves: g.moves,
+				})),
+			);
 		} catch {
 			setPlayed([]);
+			setRawGames([]);
 		}
 		setLoaded(true);
 	}
@@ -99,6 +118,9 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 		.filter(Boolean)
 		.map((k) => k.split(' '));
 	const transfer = transferReport(candidates, played, drills).slice(0, 6);
+	const perf = performanceReport(rawGames);
+	const bands = accuracyByBand(rawGames);
+	const worst = weakestBand(bands);
 	const gameCoverage = dataCoverage(played);
 	const stillNeeded = gamesStillNeeded(transfer);
 
@@ -353,6 +375,96 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 							<p style={{ fontSize: 12, color: INK_2, marginTop: 8 }}>
 								{gameCoverage.unusable} imported games predate move recording and are left out
 								entirely rather than shrinking every denominator. Re-import to include them.
+							</p>
+						)}
+					</>
+				)}
+			</section>
+
+			<section
+				style={{ border: `1px solid ${GRID}`, borderRadius: 10, padding: 16, marginBottom: 16 }}
+			>
+				<h3 style={{ margin: '0 0 2px', color: INK }}>How well you actually play</h3>
+				<p style={{ fontSize: 13, color: INK_2, marginTop: 2 }}>
+					Accuracy over your imported games, by{' '}
+					<a href="https://lichess.org/page/accuracy" target="_blank" rel="noreferrer">
+						Lichess&apos;s published method
+					</a>{' '}
+					— so a game here should read the same as the same game does there. This moves
+					faster than the transfer measurement above and answers a different question:
+					not <em>is the training working</em>, but <em>what should you practise next</em>.
+				</p>
+
+				{perf.accuracy === null ? (
+					<p style={{ fontSize: 14, color: INK_2 }}>
+						No games with stored evaluations yet.
+						{perf.unmeasured > 0 &&
+							` ${perf.unmeasured} imported game${perf.unmeasured === 1 ? '' : 's'} predate them — re-import from Settings to measure them.`}
+					</p>
+				) : (
+					<>
+						<div
+							style={{
+								display: 'grid',
+								gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+								gap: 8,
+								margin: '10px 0',
+							}}
+						>
+							<Tile
+								label="Accuracy, last 10"
+								value={perf.recent === null ? '—' : `${perf.recent.toFixed(1)}%`}
+								note={`${Math.min(10, perf.scored.length)} most recent games`}
+							/>
+							<Tile
+								label="Accuracy, all games"
+								value={`${perf.accuracy.toFixed(1)}%`}
+								note={`${perf.scored.length} measured`}
+							/>
+							<Tile
+								label="Blunders per game"
+								value={perf.blundersPerGame === null ? '—' : perf.blundersPerGame.toFixed(2)}
+								note="a 30-point drop in win chance"
+							/>
+						</div>
+
+						{/* The band table is the diagnostic half: an overall number is a
+							scoreboard, "94% to move 10 and 61% after 20" is an instruction. */}
+						<table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+							<tbody>
+								{bands.map((b) => (
+									<tr key={b.label} style={{ borderTop: `1px solid ${GRID}` }}>
+										<td style={{ padding: '4px 8px 4px 0' }}>{b.label}</td>
+										<td
+											style={{
+												textAlign: 'right',
+												fontVariantNumeric: 'tabular-nums',
+												color: b.label === worst?.label ? CRITICAL : INK_2,
+												fontWeight: b.label === worst?.label ? 600 : 400,
+											}}
+										>
+											{b.accuracy === null
+												? `— (${b.moves} of ${MIN_BAND} moves)`
+												: `${b.accuracy.toFixed(1)}%`}
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+
+						{worst && (
+							<p style={{ fontSize: 13, color: INK, marginTop: 8 }}>
+								Weakest stretch: <strong>{worst.label}</strong>, at{' '}
+								{worst.accuracy?.toFixed(1)}%.
+							</p>
+						)}
+
+						{perf.unmeasured > 0 && (
+							<p style={{ fontSize: 12, color: INK_2, marginTop: 8 }}>
+								{perf.unmeasured} game{perf.unmeasured === 1 ? '' : 's'} could not be
+								measured — imported before evaluations were kept, or analysed with gaps.
+								Left out entirely rather than averaged over the moves that happen to have
+								been looked at.
 							</p>
 						)}
 					</>

@@ -11,8 +11,8 @@ import { Footer } from './components/Footer';
 import { completeSignIn, type SignInResult } from './data/lichessAuth';
 import { startBackgroundImport } from './data/autoImport';
 import { useViewport } from './components/useViewport';
-import { color } from './ui/theme';
-import { assetUrl } from './base';
+import { color, sans } from './ui/theme';
+import { Mark } from './ui/Mark';
 
 /**
  * Four destinations, down from seven.
@@ -62,7 +62,7 @@ export default function App() {
 	return (
 		<div
 			style={{
-				fontFamily: 'system-ui, -apple-system, sans-serif',
+				fontFamily: sans,
 				maxWidth: 1180,
 				margin: '0 auto',
 				padding: vp.phone ? 12 : 24,
@@ -80,16 +80,10 @@ export default function App() {
 						gap: vp.phone ? 10 : 14,
 					}}
 				>
-					{/* The mark, at the size it was drawn to survive. It is the same
-						file the home-screen icon is generated from, so the thing you
-						tap and the thing you land on agree. */}
-					<img
-						src={assetUrl('icon.svg')}
-						alt=""
-						width={vp.phone ? 34 : 46}
-						height={vp.phone ? 34 : 46}
-						style={{ borderRadius: 8, flexShrink: 0 }}
-					/>
+					{/* Inline rather than an <img>: the mark has to invert with the
+						theme, including a manual override, which no image can see.
+						Same drawing the home-screen icons come from. */}
+					<Mark size={vp.phone ? 34 : 46} />
 					<div>
 					<h1 style={{ margin: 0, fontSize: vp.phone ? 24 : undefined }}>Chesshire</h1>
 					{/* The tagline is the first thing to go when the screen is the

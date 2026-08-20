@@ -16,7 +16,22 @@
 		<title>Chesshire — offbook chess trainer</title>
 
 		<link rel="manifest" href="/manifest.webmanifest" />
-		<link rel="icon" href="/icon.svg" type="image/svg+xml" />
+		<!-- Two favicons, chosen by the browser. The tile takes the page colour
+			in each, so the tab icon is the face emerging from the background
+			rather than a dark sticker on a light page. -->
+		<link
+			rel="icon"
+			href="/icon.svg"
+			type="image/svg+xml"
+			media="(prefers-color-scheme: dark)"
+		/>
+		<link
+			rel="icon"
+			href="/icon-light.svg"
+			type="image/svg+xml"
+			media="(prefers-color-scheme: light)"
+		/>
+		<!-- Fallback for browsers that ignore `media` on an icon link. -->
 		<link rel="icon" href="/icon-192.png" sizes="192x192" />
 		<!-- iOS reads neither the manifest's icons nor its display mode. -->
 		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />

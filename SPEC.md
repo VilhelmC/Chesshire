@@ -48,6 +48,25 @@ These govern every interface decision in this app. They are written down because
 
 **Show the consequence, not just the correction.** Being told the right move teaches the move. Being shown what the wrong move loses teaches the pattern. Where the app can play out or annotate a consequence, it should, in preference to naming an answer.
 
+### A metric must tell you what to do next
+
+Transfer is the question the app exists to answer, and it is slow: four games either side of a drilled position, so weeks before it says anything about any one of them. **That slowness is a reason to have faster numbers, not a reason to trust them more.**
+
+The faster numbers earn their place by being *diagnostic*. "78% accuracy" is a scoreboard. "94% to move 10 and 61% after move 20" is an instruction. Anything that only reports how well it is going is gamification wearing the costume of feedback — the test to apply to a proposed metric is whether a reader could act differently tomorrow because of it.
+
+This also sets what NOT to build. A per-game strength estimate points nowhere, is expensive to calibrate, and is the single most distrusted number on the platform that ships it.
+
+### The repertoire should not have to be declared first
+
+Observed by using the competition: the trainers that quiz you on an opening require you to define your repertoire before they can ask you anything. That is a wall in front of the first useful minute, and it asks for the thing a weaker player is least equipped to supply — they are training openings *because* they do not yet have a settled repertoire.
+
+Chesshire takes the opposite position, and it is a load-bearing one rather than a convenience:
+
+- **Every opponent reply is in scope**, weighted by how often players at your band actually play it. Nothing has to be declared for the app to know what you will meet.
+- **Moves you answer correctly are suppressed**, so the repertoire emerges from what you keep getting wrong rather than from a form you filled in.
+
+The related failure mode, also observed: a course that *explains* a principle everyone already knows, with an anecdotal example, and never has you play it. Explanation is cheap and does not transfer. **If a principle cannot be turned into a position you have to answer, it does not belong in this app.**
+
 ## 2. Scope
 
 ### v1 — vertical slice (one opening, complete loop)
@@ -1439,6 +1458,96 @@ The header shows `icon.svg` — the same file the home-screen icons are generate
 #### Screenshots are half as useful in one palette
 
 `npm run shots` now takes every tab at both widths **and both colour schemes**. A palette nobody looks at is a palette nobody has checked, and the first pass through it found two real faults: inactive tab labels hardcoded to `#444`, which on a dark page reads as disabled rather than available, and white-on-white buttons.
+
+
+### M14 — Accuracy, by Lichess's method
+
+Research first — the landscape is written up in `METRICS.md`, which is worth reading before adding any metric. The two findings that shaped this milestone:
+
+**Nobody measures transfer.** Checked across Chessable, Chessbook, Aimchess, Chess Position Trainer, Listudy, Chess Tempo and DecodeChess. Every metric any of them shows is effort inside the app, a static property of the repertoire artifact, or a snapshot diagnostic of current play. The nearest miss — Chessbook checking your online games against your repertoire — measures *adherence*, not a delta. The gap looks structural: Chessable markets XP explicitly as a substitute for rating because rating moves slowly, which is the same problem sidestepped rather than solved.
+
+**Lichess's accuracy is fully open; Chess.com's is not.** So we implement Lichess's, exactly, and say so. That buys a property an in-house formula could not have: **a number here can be checked against the same game on Lichess.** A metric verifiable against an independent implementation is a different kind of claim from one that can only be trusted.
+
+#### The constants come from the source, not the page
+
+`src/domain/accuracy.ts`. The published documentation and the running code disagree, and the code is what produces the numbers people see:
+
+- the constants are rounded on the page (`103.1668` for `103.1668100711649`);
+- **a `+1` "uncertainty bonus" exists in the code and is absent from the page** — it means a swing must exceed about two thirds of a percentage point before accuracy drops below 100 at all;
+- evaluations are clamped to **±1000cp before** the logistic, so no position exceeds 97.54% win chance, and every mate is the same ±1000 — mate-in-1 and mate-in-20 are indistinguishable;
+- the chain starts at **+15cp**, not 0, because that is what Lichess scores the initial position.
+
+Game accuracy is the arithmetic mean of a volatility-weighted mean and a harmonic mean. The weighting says moves played while the game was actually swinging matter more; the harmonic mean is what stops one catastrophe being averaged away by forty quiet moves. Both are tested: a game with one blunder must score more than ten points below the same game without it.
+
+Worth knowing when reading the number: the win-percentage curve was fitted over 2300+ rated rapid games, and the accuracy curve to hand-chosen anchor points. It is a consistent yardstick, not an objective one, and not calibrated to a 1400 band.
+
+#### The evaluations are now kept
+
+This was the time-gated part. `ImportedGame.evals` already arrived from Lichess with per-ply site evaluations, and `findMistakes` already computed its own for nearly every ply — **and both were discarded at storage.** Every game imported without them is a game that has to be analysed a second time to measure.
+
+They are stored now, site values preferred and ours filling the gaps. One pleasant surprise while implementing: the local walk covers nearly the whole game rather than only our moves, because evaluating the positions either side of each of our plies visits `i` and `i+1`, and those interleave.
+
+#### What an unmeasurable game is allowed to contribute
+
+Nothing, and the rule is sharper than it looks. `isMeasurable` demands that **every** ply was evaluated. A game with a gap is not a smaller sample — skip the plies nobody looked at and the average silently describes the analysis rather than the play. Games imported before this change have no evaluations at all and land in the same bucket, which is right: they are not worse data, they are absent data. The count is reported.
+
+ACPL is kept alongside accuracy rather than instead of it, because the two fail differently — ACPL is an arithmetic mean and forgives one catastrophe among forty quiet moves, where accuracy's harmonic component does not. **Two numbers that disagree are saying something a single number would have hidden.**
+
+#### Bands, not phases
+
+Accuracy is broken down by move number — 1–10, 11–20, 21–30, 31+ — rather than by opening/middlegame/endgame. Every definition of where a phase begins is arguable; a move range is arbitrary too, but visibly so, and the question that matters here is specific: how far into a game does your play hold up. A band with fewer than ten of your moves in it reports no average.
+
+`weakestBand` names exactly one stretch. A list of six weaknesses is a list nobody acts on.
+
+#### Still to do
+
+`MISTAKE_CP = 150` remains centipawn-based — the model Lichess abandoned, for the reason `judge()` now demonstrates in a test: +900 to +600 is 300 centipawns and almost no change in win chance, while 150 either side of level is a real mistake. The conversion now exists, so switching the deck's threshold is small and would make it a better deck: fewer cards from positions already decided, more from moves that changed the game.
+
+
+### M15 — What gets played, and what counts as a mistake
+
+#### The threshold moved off centipawns
+
+`MISTAKE_CP = 150` is gone as the decision rule. Cards are now mined on a **drop in win percentage**, at Lichess's own 20-point "mistake" line.
+
+This is not a tuning tweak — the two rules disagree in opposite directions at the two ends of the scale, which is the defect:
+
+- **+700 → +400 is 300 centipawns and almost no change in outcome.** The old rule made a card out of it: a flashcard teaching you to play more precisely in a position you had already won.
+- **+150 → −150 is 300 centipawns and decides the game.** Same number, entirely different move.
+
+A win-percentage threshold is stricter near equality and looser when winning, which is exactly the discrimination the old one could not make. `DECIDED_CP` survives as a floor for the extremes where the logistic is flat enough that even a huge centipawn move registers as nothing.
+
+The settings UI still asks in centipawns, so `winDropFor()` converts once at the edge and an existing stored preference keeps roughly its old meaning near equality.
+
+**Expect the deck to change composition.** Fewer cards from won and lost positions, more from moves that actually turned a game — which is a better deck by the app's own thesis, and a change worth watching rather than assuming.
+
+#### What players at your band actually play
+
+A new control, next to the options ramp and answering a different question. The options list is the engine's: which moves are good. This is the human one: **which moves get played, and how they score when they are.**
+
+For this app the second is the more useful, because the premise is preparing for what an opponent will do rather than for what a 3500-rated engine would. A move played in one game in forty is not worth preparing for however good it is; a mediocre move played in one game in four is the one you meet on Saturday.
+
+Four decisions in it:
+
+- **Sorted by frequency, never by score.** The ordering is the message. Putting the best-scoring rarity on top would quietly turn it back into an engine list.
+- **Expected score, not win rate.** "Wins 48%" is ambiguous about draws, and in openings the draws are where most of the difference between two moves lives.
+- **It does not count as help.** Seeing the engine's ranked options tells you the answer, so it retires the item. Seeing how often each move is played tells you what you will *meet* — that is the subject, not the solution.
+- **`movesToCover`** answers the question a distribution is really being asked: how much do I have to know to be ready for most of this? Four moves covering 90% is an evening; fourteen is a different opening.
+
+The response is already fetched and cached by the run itself, so this usually costs a render rather than a request. And the truncation is stated — a list showing eight of thirty is otherwise claiming the other twenty-two do not exist.
+
+
+### M15.1 — Four things from using it
+
+**The move list scrolled sideways, and the cause is worth remembering.** The grid used `1fr` tracks. A CSS grid track's default minimum is `min-content`, so one long move — `Qxd5+` — forced its column wider than its share and pushed the whole grid past the panel. `minmax(0, 1fr)` lets the track shrink and the cell clip instead. **`1fr` does not mean "a fair share"; it means "a fair share, but never smaller than the contents".**
+
+**Two commentaries were sharing one paragraph, in the wrong order.** Remarks about the current position sat above the verdict on the move you had just played, so "Correct" appeared *underneath* a sentence about something else and the two read as one run-on note.
+
+They are separate blocks now, each with a small caption — **Your move**, then **They played** — with a coloured rule down the side. The ordering is chronological, which is the only ordering a reader never has to be taught. Nothing was said differently; the same words simply stopped being one paragraph.
+
+**Copy PGN became a share control in the strip.** It was a lone button sitting outside the row of controls, and sharing is a control like any other. Making it an icon also made room for the things a labelled button could not offer: PGN for the run, FEN for the position, an analysis link, and the platform's own share sheet *where one exists* — `navigator.share` is absent on most desktop browsers, and a button that does nothing is worse than an absent one. A refused clipboard now says so rather than looking like it worked.
+
+**"Default until measured" described the app rather than answering the question.** It said what the program was doing; the reader wanted the number. Now `(~1500 until you have played enough to measure)`, and `(~1500, from your play)` once it has. **When a control's label explains a mechanism instead of stating a value, the value is what was wanted.**
 
 ---
 

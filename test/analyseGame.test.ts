@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { findMistakes, DECIDED_CP, type PositionEval } from '../src/engine/analyseGame';
+import { winPercent } from '../src/domain/accuracy';
 import type { ImportedGame } from '../src/data/games';
 import { applySan, sideToMove, INITIAL_FEN } from '../src/domain/chess';
 
@@ -161,5 +162,49 @@ describe('findMistakes', () => {
 		expect(clean.mistakes).toEqual(dead.mistakes); // both empty...
 		expect(clean.measured).toBeGreaterThan(0); // ...but not the same thing
 		expect(dead.measured).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// The threshold is a win-percentage drop, not a centipawn one.
+//
+// This is the substantive change, and it is not a tuning tweak: the two rules
+// disagree about which moves deserve a card, in opposite directions at the two
+// ends of the scale.
+// ---------------------------------------------------------------------------
+
+describe('what counts as a mistake', () => {
+	const MOVES = ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5'];
+
+	it('ignores a large centipawn swing that changes nothing', async () => {
+		// +700 to +400 is 300 centipawns — twice the old threshold — and barely
+		// moves the likely outcome. Under the old rule this produced a card
+		// teaching you to play more accurately in a position you had already won.
+		expect(winPercent(700) - winPercent(400)).toBeLessThan(20);
+		const { analyse } = stubEngine(MOVES, { 4: 700, 5: 400 });
+		const { mistakes } = await findMistakes(game(MOVES), { analyse });
+		expect(mistakes).toEqual([]);
+	});
+
+	it('catches a swing across equality', async () => {
+		const { analyse } = stubEngine(MOVES, { 4: 120, 5: -160 });
+		const { mistakes } = await findMistakes(game(MOVES), { analyse });
+		expect(mistakes.length).toBe(1);
+		expect(mistakes[0].ply).toBe(4);
+	});
+
+	it('still skips positions already decided', async () => {
+		const big = DECIDED_CP + 200;
+		const { analyse } = stubEngine(MOVES, { 4: big, 5: big - 600 });
+		const { mistakes } = await findMistakes(game(MOVES), { analyse });
+		expect(mistakes).toEqual([]);
+	});
+
+	it('is stricter than the old rule near equality and looser when winning', async () => {
+		// The same 300cp swing, in two places on the scale. The old centipawn
+		// rule could not tell these apart; that was the defect.
+		const nearLevel = winPercent(150) - winPercent(-150);
+		const whenWinning = winPercent(700) - winPercent(400);
+		expect(nearLevel).toBeGreaterThan(whenWinning);
 	});
 });
