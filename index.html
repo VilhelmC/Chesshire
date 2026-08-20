@@ -16,7 +16,22 @@
 		<title>Chesshire — offbook chess trainer</title>
 
 		<link rel="manifest" href="/Chesshire/manifest.webmanifest" />
-		<link rel="icon" href="/Chesshire/icon.svg" type="image/svg+xml" />
+		<!-- Two favicons, chosen by the browser. The tile takes the page colour
+			in each, so the tab icon is the face emerging from the background
+			rather than a dark sticker on a light page. -->
+		<link
+			rel="icon"
+			href="/Chesshire/icon.svg"
+			type="image/svg+xml"
+			media="(prefers-color-scheme: dark)"
+		/>
+		<link
+			rel="icon"
+			href="/Chesshire/icon-light.svg"
+			type="image/svg+xml"
+			media="(prefers-color-scheme: light)"
+		/>
+		<!-- Fallback for browsers that ignore `media` on an icon link. -->
 		<link rel="icon" href="/Chesshire/icon-192.png" sizes="192x192" />
 		<!-- iOS reads neither the manifest's icons nor its display mode. -->
 		<link rel="apple-touch-icon" href="/Chesshire/apple-touch-icon.png" />
@@ -24,8 +39,8 @@
 		<meta name="apple-mobile-web-app-title" content="Chesshire" />
 		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 		<meta name="mobile-web-app-capable" content="yes" />
-		<script type="module" crossorigin src="/Chesshire/assets/index-D6oqDvel.js"></script>
-		<link rel="stylesheet" crossorigin href="/Chesshire/assets/index-rzNG4Rhp.css">
+		<script type="module" crossorigin src="/Chesshire/assets/index-CHdPb6Bd.js"></script>
+		<link rel="stylesheet" crossorigin href="/Chesshire/assets/index-C24zsopW.css">
 	</head>
 	<body>
 		<div id="root"></div>
