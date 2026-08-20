@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Board } from '../components/Board';
 import { engine } from '../engine/stockfish';
 import { smokeTest, probeEndpoints, getToken, setToken, type ProbeResult } from '../data/explorer';
+import { SignIn } from '../components/SignIn';
 import { applyUci, playSanLine, sideToMove, INITIAL_FEN } from '../domain/chess';
 import { CONFIG } from '../config';
 import type { ExplorerResponse } from '../domain/types';
@@ -165,6 +166,8 @@ export function Build() {
 					</button>
 				</CheckRow>
 
+				<SignIn />
+
 				<section style={{ borderTop: '1px solid #ddd', paddingTop: 16, marginTop: 8 }}>
 					<h3 style={{ margin: '0 0 4px' }}>Endpoint probe</h3>
 					<p style={{ fontSize: 13, opacity: 0.75, marginTop: 0 }}>
@@ -194,12 +197,14 @@ export function Build() {
 						</button>
 					</div>
 					<p style={{ fontSize: 12, opacity: 0.6 }}>
-						Token is stored in this browser&apos;s localStorage only — never committed, never
-						sent anywhere but lichess.org. Create one at{' '}
+						Pasting a token by hand still works and is kept for exactly that reason — signing
+						in above is the same credential obtained without leaving the app. Either way it is
+						stored in this browser&apos;s localStorage only, never committed, and never sent
+						anywhere but lichess.org. To make one by hand:{' '}
 						<a href="https://lichess.org/account/oauth/token" target="_blank" rel="noreferrer">
 							lichess.org/account/oauth/token
-						</a>{' '}
-						with no scopes ticked.
+						</a>
+						, no scopes ticked.
 					</p>
 
 					{probe && <ProbeTable results={probe} />}

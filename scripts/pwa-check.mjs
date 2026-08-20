@@ -182,6 +182,59 @@ try {
 	check('Mistakes tab renders offline', bodyText.length > 200, `${bodyText.length} chars`);
 
 	await context.setOffline(false);
+
+	// --- sign in with Lichess -------------------------------------------
+	//
+	// The entry point for every user who is not the author: without a token the
+	// explorer 401s and Train cannot check a single move. The redirect cannot be
+	// followed from here, so it is intercepted and its parameters inspected —
+	// which is the part that has to be right anyway.
+	//
+	// In its OWN context, and last. Playwright's request interception and the
+	// service worker do not coexist happily: registering a route on the main
+	// page made the later offline reload fail with ERR_INTERNET_DISCONNECTED,
+	// because the worker was no longer serving it. Isolating the interception
+	// keeps the offline result meaning what it says.
+	const authCtx = await browser.newContext();
+	const authPage = await authCtx.newPage();
+	let authorizeUrl = null;
+	await authPage.route('https://lichess.org/oauth**', (route) => {
+		authorizeUrl = route.request().url();
+		return route.abort();
+	});
+	try {
+		await authPage.goto(ORIGIN, { waitUntil: 'load' });
+		await authPage.locator('nav button', { hasText: 'Checks' }).click();
+		const signInButton = authPage.locator('button', { hasText: 'Sign in with Lichess' }).first();
+		check('sign-in button is offered', (await signInButton.count()) > 0);
+
+		if (await signInButton.count()) {
+			await signInButton.click();
+			await authPage.waitForTimeout(1500);
+			check('sign-in redirects to Lichess', !!authorizeUrl, authorizeUrl ? '' : 'no navigation');
+
+			if (authorizeUrl) {
+				const q = new URL(authorizeUrl).searchParams;
+				check('uses the authorization code flow', q.get('response_type') === 'code');
+				// S256 is the only method Lichess accepts; `plain` would be refused.
+				check('challenge method is S256', q.get('code_challenge_method') === 'S256');
+				check('sends a challenge', (q.get('code_challenge') ?? '').length >= 43);
+				check('sends a state', (q.get('state') ?? '').length >= 43);
+				// The redirect must come back to the app, subpath included, or the
+				// exchange is refused for a mismatch.
+				check(
+					'redirect_uri points at the app',
+					q.get('redirect_uri') === ORIGIN,
+					q.get('redirect_uri') ?? '',
+				);
+				// No scopes: the app cannot act on the account, and the consent
+				// screen should say so by being empty.
+				check('asks for no scopes', !q.get('scope'), q.get('scope') ?? '(none)');
+			}
+		}
+	} finally {
+		await authCtx.close();
+	}
 } finally {
 	await browser.close();
 	server.kill();

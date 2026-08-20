@@ -1254,6 +1254,42 @@ Both now derive the name from the path via `nameForPath`. In the tree the name i
 
 **A gap worth knowing about:** the bundled ECO list has no entry for the Italian junction itself (`e4 e5 Nf3 Nc6 Bc4`) — only for variations below it, and for `Two knights defence` one ply later. So that position labels as `King's knight opening`: the most specific named ancestor, which is honest but not what a player expects to read. Adding junction names means inventing them, so it is left as a known gap rather than silently patched.
 
+
+### M10 — Sign in with Lichess, and why that is not accounts
+
+The question that prompted it was whether two people sharing the app would interfere with each other. **They do not, and never could:** every byte of state is `localStorage` and IndexedDB, scoped per origin, per browser, per device. There is no server and nothing shared. Two people on two devices are independent by construction, and the only collision available is two people using the same browser profile — which is the same collision any website without login has.
+
+So isolation was never the problem. The problem was that a second user could not get past the first screen.
+
+#### The wall was the token, not the account
+
+Every explorer endpoint returns 401 anonymously (§8, verified by probe). Getting a token meant leaving the app, finding `lichess.org/account/oauth/token`, understanding what a scope is in order to decide to tick none of them, creating a token, copying it, and coming back. That is a wall for anyone who is not the person who built the app, and it is a much higher one than not having an account.
+
+**Lichess supports unregistered public OAuth clients** — no client secret, any unique string as the client id, `S256` as the only accepted challenge method. So the whole flow runs in the browser with no server anywhere, which means this is not a step towards a backend; it is the thing that makes a backend unnecessary for longer.
+
+`src/data/lichessAuth.ts`. The client id is the app's own URL, which doubles as documentation on the consent screen: whoever is approving can see where the request came from. The verifier lives in `sessionStorage`, not `localStorage` — it is single-use and must not outlive the tab, because a verifier left lying about is a credential left lying about. The `state` check runs before the exchange is attempted, and the query string is cleared on return, since a one-time code left in the address bar gets bookmarked and shared by accident.
+
+**Zero scopes.** The explorer needs a token to *exist*, not a token that can do anything, and `/api/account` reads without one. Asking for nothing is both the smallest possible request and the most honest consent screen: the person signing in is told, by the emptiness of the list, that the app cannot play, message or change a thing.
+
+Two decisions that look like omissions and are not:
+
+- **Sign-out does not revoke.** Lichess offers `DELETE /api/token`, but a button labelled "sign out" that destroys a credential the user may also have pasted in by hand would be doing more than it says. It forgets the token locally; revoking happens on Lichess, where the whole list of tokens is visible.
+- **The pasted-token field stays.** Signing in obtains the same credential without leaving the app; it does not become the only way in, and the app keeps working for someone who would rather not authorise anything.
+
+#### The sentence under the button is the important part
+
+"Sign in" invites the assumption that there is now an account holding your data. There is not. Signing in on a phone and on a laptop gives two independent decks; Lichess is the identity provider, not our storage, and carrying a deck across devices is still the backup file. Someone who believes otherwise will eventually lose a deck to a reinstall and be right to be annoyed. So the panel says outright that signing in does **not** sync anything — **the disclaimer is a feature of the deliverable, not decoration on it.**
+
+#### On testing an OAuth flow with no network
+
+The exchange itself needs Lichess and cannot run in the build container, so what is tested is everything around it: the S256 derivation against **RFC 7636's own appendix B test vector** — if that passes, nothing else about PKCE is subtle — plus verifier length and alphabet, and the refusals. A code whose `state` does not match, or which arrives with no stored request at all, must not even attempt the exchange, and the tests assert `fetch` was never called rather than merely that the result was a failure.
+
+`test/lichessAuth.test.ts` stubs the four browser things the module touches — two storages, `location`, `history.replaceState` — instead of pulling in jsdom. It keeps the suite dependency-free and the stub doubles as the list of what this module is allowed to depend on; if that list grows, the stub is where it becomes visible.
+
+The end-to-end check clicks the real button, intercepts the redirect, and asserts the parameters: `response_type=code`, `S256`, a challenge and state of proper length, `redirect_uri` equal to the app's own URL **including the subpath**, and no scope parameter at all. Verified at both `/` and `/Schackal/`, because the redirect URI must match exactly at the exchange or Lichess refuses it — and that is precisely the kind of thing that works on a laptop and fails on the deploy.
+
+One piece of test-infrastructure learning: registering a Playwright route on the main page broke the *offline* check with `ERR_INTERNET_DISCONNECTED`, because interception and the service worker do not coexist — the worker stopped serving the reload. The sign-in check runs last, in its own browser context, so the offline result keeps meaning what it says.
+
 ---
 
 ## 10. Risks
