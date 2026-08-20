@@ -1195,6 +1195,65 @@ The part worth stating plainly: **`vilhelmc.github.io` is a different origin fro
 The migration path is the backup we already have: export from the local app, restore into the deployed one. `restoreBackup` merges rather than replaces and takes the less flattering copy of any disagreement, so doing it twice, or in either direction, cannot inflate what it says you know. This is the first time that property has had a real use.
 
 
+
+### M9 — What the deploy broke, and what the checks did not catch
+
+Six reports from the first phone install. Five were surface; one was structural, and it was the same bug three times.
+
+#### The engine was loaded from a path that does not exist
+
+`CONFIG.engine.workerPath` was `'/engine/stockfish-18-lite-single.js'`. Correct at the origin root; one directory too high under `/Schackal/`. Vite rewrites the asset URLs it can *see* — those in `index.html` and in imports — but a path held in a config object as a plain string is invisible to it and ships unchanged.
+
+The worker 404'd, so it never spoke, so the app timed out waiting for `uciok`. **The symptom was a timeout, and a timeout reads as "the engine is broken" rather than "the file is not there."** That one substitution is what made this cost an evening instead of a minute, and it explains all three reports: the Checks tab, Train's options panel, and — silently — every imported game.
+
+Three changes, in increasing order of how much they matter:
+
+1. `src/base.ts` owns the rule. `assetUrl(path)` resolves against `import.meta.env.BASE_URL`; nothing else builds a URL to our own files. It tolerates a leading slash rather than producing a broken URL from one.
+2. The worker reports `onerror` and races it against the `uciok` wait, so a missing file says *"Engine failed to load from &lt;url&gt;"*. **The URL is the whole answer, so the message contains the URL.**
+3. A failed `init()` no longer poisons the session. `ready` cached the rejected promise, so every later attempt re-threw the first error and only a page reload could clear it.
+
+#### "0 cards from 20 games" was a lie the program told about the user
+
+The import found nothing because nothing could be evaluated, and reported it in the language of a clean result. `defaultAnalyse` caught every engine error and returned `null`; `findMistakes` skipped every null; the tally came out zero. Each step was locally reasonable and the composition was a falsehood — a sentence about how Will played, produced by a program that had measured nothing.
+
+This is the sharpest instance yet of §1.1's *honest numbers or no numbers*, and it earns a rule of its own: **a measurement failure must never be reported in the vocabulary of a measurement.** Zero found and zero measurable are different facts and need different sentences.
+
+- `findMistakes` now returns `{ mistakes, measured, unmeasured }`. An empty list with `measured: 0` is a dead engine; an empty list with `measured: 34` is a clean game. The type makes the two distinguishable at the point they are produced, not reconstructed later.
+- `importGames` calls `engine.init()` **once, up front**, and returns `engineError` if it fails. A dead engine fails every position identically, so it is worth one check before the loop rather than forty failures inside it.
+- The UI has a distinct panel for it, which says outright that nothing here describes your play.
+
+#### The checks passed, and the app did not work
+
+`pwa-check.mjs` verified that the manifest parsed, the worker registered and the app booted offline. All true, all shipped, all useless: **it asserted that the app LOADS and never that the app WORKS.** Two things now close the gap.
+
+`test/basePath.test.ts` bans root-absolute paths to our own assets anywhere in `src/`. The rule is mechanical, so it is enforced mechanically. Verified by reintroducing the original line and watching it fail.
+
+`pwa-check.mjs` boots Stockfish and waits for `uciok`. Critically it reads the URL from **the app's own debug dump** rather than recomputing it — a check that derives the path the same way the app does would have agreed with the bug and passed. Verified both ways: 404 with the old resolution, `uciok` with the new.
+
+Two smaller lessons from writing that check. It spawned `npx vite preview`; killing the npx wrapper left the real server holding the port, so the next run measured the *previous* build — test infrastructure that does not fail but lies. It now spawns Vite's entry directly and refuses to start if the port is occupied.
+
+#### Layout: nine buttons do not fit, and saying so is the fix
+
+The control strip still wrapped. It will: nine controls at a touch-sized target need about 516px and a phone gives 369. The options were 36px buttons that fingers miss, or a menu that hides controls behind something you must know about first — the same move §M7 rejected for the tabs.
+
+So it still wraps, and the fix is that it wraps *evenly*. `columnsFor()` balances the count across the rows it is going to take anyway: 5 and 4 in aligned columns rather than 6 and 3 with a third of the last row empty. **"Spills over" was an objection to raggedness, not to the second row.**
+
+#### The move list is a scoresheet now
+
+Wrapped chips pack the most moves into the least space, which is the wrong trade. Every row began at a different move number, so finding White's 7th meant reading the strip instead of looking down a column. It is now a grid with fixed tracks — number, White, Black — so **position on the page carries information**.
+
+The move number comes from `ply`, not from array position. A list resumed at an even ply starts on Black's move, and the old code numbered it as though Black had opened the game. An empty White cell now holds the column open, which is what the ellipsis in printed notation has always been for.
+
+#### Both labelling gaps were the same pedagogy failure
+
+Progress tree rows showed a move number only for White. Black's number was left to be derived from indentation — precisely the *"the move number tells you whose turn it is"* reasoning §1.1 exists to reject. Both colours are numbered now, `7.` and `7…`.
+
+Neither the tree nor the mistake deck said which *line* a position belonged to. Cards mined from real games were the worst case: labelled `lichess vs someone, 2026-08-19`, which says where the card came FROM and nothing about what it is ABOUT — so a game-mined card could never connect to the book line it belongs to, which is the one thing that would let the deck reinforce the tree instead of sitting beside it.
+
+Both now derive the name from the path via `nameForPath`. In the tree the name is printed only where it *changes* from the parent, because a name repeated down every row of a trunk buries the one row where the line actually became something else — and that row is why a tree is drawn instead of a list.
+
+**A gap worth knowing about:** the bundled ECO list has no entry for the Italian junction itself (`e4 e5 Nf3 Nc6 Bc4`) — only for variations below it, and for `Two knights defence` one ply later. So that position labels as `King's knight opening`: the most specific named ancestor, which is honest but not what a player expects to read. Adding junction names means inventing them, so it is left as a known gap rather than silently patched.
+
 ---
 
 ## 10. Risks

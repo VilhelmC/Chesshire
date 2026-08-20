@@ -12,6 +12,8 @@
 
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const PORT = 4173;
 const HOST = `http://localhost:${PORT}`;
@@ -23,7 +25,19 @@ const BASE = process.env.BASE_PATH ?? '/';
 // than redirecting, and the failure looks like a broken build.
 const ORIGIN = HOST + BASE;
 
-const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
+// Vite's own entry, not `npx vite`. npx wraps the real server in a launcher
+// process; killing the wrapper leaves the server holding the port, so the next
+// run silently measures the PREVIOUS build. That produced two wrong answers
+// before it was noticed, which is the worst kind of test infrastructure bug —
+// it does not fail, it lies.
+const VITE = join(
+	dirname(dirname(fileURLToPath(import.meta.url))),
+	'node_modules',
+	'vite',
+	'bin',
+	'vite.js',
+);
+const server = spawn(process.execPath, [VITE, 'preview', '--port', String(PORT), '--strictPort'], {
 	stdio: ['ignore', 'pipe', 'pipe'],
 	env: process.env,
 });
@@ -34,6 +48,14 @@ function check(name, ok, detail = '') {
 	if (!ok) failures.push(name);
 }
 
+// A preview server left behind by an earlier run answers on the same port and
+// serves a DIFFERENT build — which looks like the app being broken rather than
+// the check pointing at the wrong thing. Refuse to start instead of guessing.
+if (await isUp()) {
+	server.kill();
+	throw new Error(`Something is already listening on ${PORT}. Stop it and re-run.`);
+}
+process.on('exit', () => server.kill());
 await waitForServer();
 
 // PLAYWRIGHT_CHROMIUM lets a sandbox point at a browser it already has,
@@ -93,6 +115,59 @@ try {
 	// The app itself rendered, not just an empty shell.
 	await page.waitForSelector('nav button', { timeout: 10_000 });
 
+	// --- the engine actually loads --------------------------------------
+	//
+	// This is the check that was missing. The manifest parsed, the worker
+	// registered, the app booted offline — and Stockfish 404'd on every page,
+	// because its URL was root-absolute and the app is served from a subpath.
+	// Asserting the app "loads" says nothing about whether the app WORKS.
+	const engine = await page.evaluate(async (base) => {
+		// The URL the APP resolves, read from its debug dump, not one this script
+		// recomputes. A check that derives the path the same way the app does
+		// would have agreed with the bug and passed.
+		const dump = await window.schackal?.collect?.();
+		// Providers are collected under `views`; see src/data/debug.ts.
+		const url = dump?.views?.engine?.workerUrl;
+		if (!url) {
+			// Not a pass. If the app cannot say where it loads the engine from,
+			// this check has nothing to check and must say so.
+			return { ok: false, url: '(none)', why: 'app did not report an engine URL' };
+		}
+		const head = await fetch(url, { method: 'GET' });
+		if (!head.ok) return { ok: false, url, why: `HTTP ${head.status}` };
+		return await new Promise((resolve) => {
+			let w;
+			const done = (r) => {
+				try {
+					w?.terminate();
+				} catch {
+					/* already gone */
+				}
+				resolve(r);
+			};
+			const timer = setTimeout(() => done({ ok: false, url, why: 'no uciok in 30s' }), 30_000);
+			try {
+				w = new Worker(url);
+			} catch (e) {
+				clearTimeout(timer);
+				return done({ ok: false, url, why: String(e) });
+			}
+			w.onerror = (e) => {
+				clearTimeout(timer);
+				done({ ok: false, url, why: e.message || 'worker error' });
+			};
+			w.onmessage = (e) => {
+				const text = typeof e.data === 'string' ? e.data : String(e.data?.data ?? '');
+				if (text.includes('uciok')) {
+					clearTimeout(timer);
+					done({ ok: true, url });
+				}
+			};
+			w.postMessage('uci');
+		});
+	}, BASE);
+	check('Stockfish loads and answers uciok', engine.ok, engine.why ?? engine.url);
+
 	// --- offline --------------------------------------------------------
 	await context.setOffline(true);
 	await page.reload({ waitUntil: 'load' });
@@ -114,6 +189,15 @@ try {
 
 console.log(failures.length ? `\n${failures.length} failed` : '\nall checks passed');
 process.exit(failures.length ? 1 : 0);
+
+async function isUp() {
+	try {
+		await fetch(HOST + '/', { signal: AbortSignal.timeout(500) });
+		return true;
+	} catch {
+		return false;
+	}
+}
 
 async function waitForServer() {
 	const deadline = Date.now() + 30_000;

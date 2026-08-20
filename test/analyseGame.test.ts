@@ -48,7 +48,7 @@ describe('findMistakes', () => {
 	it('flags a move that drops the evaluation, and only our moves', () => {
 		// Ply 4 is White's third move (index 4). Say it costs 300cp.
 		const { analyse } = stubEngine(MOVES, { 0: 20, 1: 20, 2: 20, 3: 20, 4: 20, 5: -280, 6: -280 });
-		return findMistakes(game(MOVES), { analyse }).then((out) => {
+		return findMistakes(game(MOVES), { analyse }).then(({ mistakes: out }) => {
 			expect(out.length).toBe(1);
 			expect(out[0].ply).toBe(4);
 			expect(out[0].playedSan).toBe('Bc4');
@@ -62,7 +62,7 @@ describe('findMistakes', () => {
 	it('measures losses from our side when we are Black', async () => {
 		// Same numbers, but now the fall from White's point of view is a GAIN for us.
 		const { analyse } = stubEngine(MOVES, { 0: 20, 1: 20, 2: 20, 3: 20, 4: 20, 5: -280, 6: -280 });
-		const out = await findMistakes(game(MOVES, { ourColour: 'b' }), { analyse });
+		const { mistakes: out } = await findMistakes(game(MOVES, { ourColour: 'b' }), { analyse });
 		// Ply 5 (Bc5, Black's third) went from -280 to -280 our-POV = +280 → no loss.
 		expect(out.length).toBe(0);
 	});
@@ -70,15 +70,15 @@ describe('findMistakes', () => {
 	it('ignores positions that were already decided', async () => {
 		const big = DECIDED_CP + 200;
 		const { analyse } = stubEngine(MOVES, { 4: big, 5: big - 400 });
-		const out = await findMistakes(game(MOVES), { analyse });
+		const { mistakes: out } = await findMistakes(game(MOVES), { analyse });
 		expect(out).toEqual([]);
 	});
 
 	it('ignores drops smaller than the threshold', async () => {
 		const { analyse } = stubEngine(MOVES, { 4: 20, 5: -60 });
-		const out = await findMistakes(game(MOVES), { analyse, minLoss: 150 });
+		const { mistakes: out } = await findMistakes(game(MOVES), { analyse, minLoss: 150 });
 		expect(out).toEqual([]);
-		const out2 = await findMistakes(game(MOVES), { analyse, minLoss: 50 });
+		const { mistakes: out2 } = await findMistakes(game(MOVES), { analyse, minLoss: 50 });
 		expect(out2.length).toBe(1);
 	});
 
@@ -86,7 +86,7 @@ describe('findMistakes', () => {
 		// Best move at ply 2 is Nf3 — which is what was played, so any apparent
 		// loss there is measurement noise rather than a mistake.
 		const { analyse } = stubEngine(MOVES, { 2: 300, 3: 0 }, 'g1f3');
-		const out = await findMistakes(game(MOVES), { analyse });
+		const { mistakes: out } = await findMistakes(game(MOVES), { analyse });
 		expect(out.find((m) => m.ply === 2)).toBeUndefined();
 	});
 
@@ -95,7 +95,7 @@ describe('findMistakes', () => {
 		const evals: (number | null)[] = new Array(MOVES.length).fill(20);
 		evals[4] = -280; // after our Bc4
 		const { analyse, calls } = stubEngine(MOVES, {});
-		const out = await findMistakes(game(MOVES, { evals }), { analyse });
+		const { mistakes: out } = await findMistakes(game(MOVES, { evals }), { analyse });
 
 		expect(out.length).toBe(1);
 		expect(out[0].ply).toBe(4);
@@ -119,7 +119,47 @@ describe('findMistakes', () => {
 
 	it('survives a game whose moves stop being legal', async () => {
 		const { analyse } = stubEngine(['e4', 'e5'], {});
-		const out = await findMistakes(game(['e4', 'e5', 'Qz9']), { analyse });
+		const { mistakes: out } = await findMistakes(game(['e4', 'e5', 'Qz9']), { analyse });
 		expect(out).toEqual([]);
+	});
+
+	// -----------------------------------------------------------------------
+	// Coverage. The bug this guards against shipped: the engine failed to load,
+	// every position was silently skipped, and the import reported "0 cards
+	// from 20 games" — a statement about the user's play, made by a program
+	// that had measured nothing.
+	// -----------------------------------------------------------------------
+
+	it('counts the positions it actually measured', async () => {
+		const { analyse } = stubEngine(MOVES, { 4: 20, 5: -280 });
+		const r = await findMistakes(game(MOVES), { analyse });
+		expect(r.measured).toBeGreaterThan(0);
+		expect(r.unmeasured).toBe(0);
+	});
+
+	it('counts positions it could not evaluate rather than swallowing them', async () => {
+		const r = await findMistakes(game(MOVES), {
+			analyse: async () => {
+				throw new Error('Engine failed to load from /engine/stockfish.js');
+			},
+		});
+		expect(r.mistakes).toEqual([]);
+		expect(r.measured).toBe(0);
+		// An empty mistake list with zero measured positions is the signature of
+		// a dead engine, and must be distinguishable from a clean game.
+		expect(r.unmeasured).toBeGreaterThan(0);
+	});
+
+	it('separates a clean game from an unmeasurable one', async () => {
+		const { analyse } = stubEngine(MOVES, {});
+		const clean = await findMistakes(game(MOVES), { analyse });
+		const dead = await findMistakes(game(MOVES), {
+			analyse: async () => {
+				throw new Error('no engine');
+			},
+		});
+		expect(clean.mistakes).toEqual(dead.mistakes); // both empty...
+		expect(clean.measured).toBeGreaterThan(0); // ...but not the same thing
+		expect(dead.measured).toBe(0);
 	});
 });

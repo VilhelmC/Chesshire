@@ -4,6 +4,8 @@
 // no COOP/COEP headers — are required. See SPEC.md §8.
 
 import { CONFIG } from '../config';
+import { assetUrl } from '../base';
+import { registerDebug } from '../data/debug';
 
 export type PvLine = {
 	multipv: number;
@@ -32,7 +34,10 @@ export class Engine {
 		if (this.ready) return this.ready;
 
 		this.ready = (async () => {
-			const w = new Worker(CONFIG.engine.workerPath);
+			// assetUrl, not the bare config value: under a subpath deploy the
+			// root-absolute form resolves one directory ABOVE the app and 404s.
+			const url = assetUrl(CONFIG.engine.workerPath);
+			const w = new Worker(url);
 			this.worker = w;
 
 			w.onmessage = (e: MessageEvent) => {
@@ -40,11 +45,32 @@ export class Engine {
 				for (const l of this.listeners) l(text);
 			};
 
-			await this.expect('uciok', () => this.send('uci'));
+			// A worker whose script fails to load never speaks, so without this the
+			// only symptom is a 30-second timeout waiting for `uciok` — which reads
+			// as "the engine is broken" when the truth is "the file is not there".
+			// Say which, and say the URL, because the URL is the whole answer.
+			const failed = new Promise<never>((_, reject) => {
+				w.onerror = (e) => {
+					const detail = typeof e === 'object' && 'message' in e ? ` (${e.message})` : '';
+					reject(new Error(`Engine failed to load from ${url}${detail}`));
+				};
+			});
+			// Anything the worker might reject with has to beat the 30s timeout,
+			// hence the race rather than an await in sequence.
+			await Promise.race([this.expect('uciok', () => this.send('uci')), failed]);
 			this.send(`setoption name Hash value ${CONFIG.engine.hashMb}`);
 			this.send('setoption name Threads value 1');
-			await this.expect('readyok', () => this.send('isready'));
+			await Promise.race([this.expect('readyok', () => this.send('isready')), failed]);
 		})();
+
+		// A failed init used to be cached forever: `ready` held a rejected promise,
+		// so every later call re-threw the first error and only a page reload could
+		// clear it. Forget it instead, so the next attempt actually retries.
+		this.ready.catch(() => {
+			this.ready = null;
+			this.worker?.terminate();
+			this.worker = null;
+		});
 
 		return this.ready;
 	}
@@ -179,5 +205,19 @@ export function toWhitePov(cp: number, sideToMove: 'w' | 'b'): number {
 export function toOurPov(cpWhite: number, ourColour: 'w' | 'b'): number {
 	return ourColour === 'w' ? cpWhite : -cpWhite;
 }
+
+/**
+ * The URL the worker is actually loaded from.
+ *
+ * Exported, and reported in the debug dump, because when it is wrong the
+ * symptom is a timeout — a silence that says nothing about the cause. The
+ * end-to-end check reads THIS rather than recomputing the path, so it exercises
+ * the app's own resolution instead of agreeing with itself.
+ */
+export function engineWorkerUrl(): string {
+	return assetUrl(CONFIG.engine.workerPath);
+}
+
+registerDebug('engine', () => ({ workerUrl: engineWorkerUrl() }));
 
 export const engine = new Engine();

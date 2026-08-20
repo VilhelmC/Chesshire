@@ -32,8 +32,11 @@ export const CONFIG = {
 	},
 
 	engine: {
-		// Files copied into public/engine by scripts/copy-engine.mjs
-		workerPath: '/engine/stockfish-18-lite-single.js',
+		// Files copied into public/engine by scripts/copy-engine.mjs.
+		// Relative, WITHOUT a leading slash: the app is not always served from
+		// the origin root, and a root-absolute path here 404s under /Schackal/.
+		// Resolved through assetUrl() at the point of use — see src/base.ts.
+		workerPath: 'engine/stockfish-18-lite-single.js',
 		hashMb: 64,
 		multiPvClassify: 1,
 		multiPvSolution: 3,

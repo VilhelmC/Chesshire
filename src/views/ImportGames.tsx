@@ -315,14 +315,47 @@ function SourceLine({ s }: { s: SourceStatus }) {
 }
 
 function ResultBlock({ r }: { r: ImportResult }) {
+	// The engine never started, so nothing was measured. Saying "0 cards" here
+	// would be a claim about the games; this is a claim about the program, and
+	// they are not the same sentence.
+	if (r.engineError) {
+		return (
+			<div
+				style={{
+					fontSize: 14,
+					marginTop: 12,
+					padding: 10,
+					borderRadius: 8,
+					border: '1px solid #c62828',
+					background: '#c6282810',
+				}}
+			>
+				<strong>No games were analysed — the engine did not start.</strong>
+				<p style={{ margin: '6px 0 0', fontSize: 13 }}>
+					Nothing here says anything about how you played. Try the analysis check on the
+					Checks tab, which reports the same failure with the URL it tried.
+				</p>
+				<code style={{ display: 'block', marginTop: 6, fontSize: 12, opacity: 0.8 }}>
+					{r.engineError}
+				</code>
+			</div>
+		);
+	}
+
 	if (!r.cards) {
+		// A game with nothing measured is not a clean game. Which of the two this
+		// is decides the sentence.
+		const blind = r.analysed > 0 && r.measured === 0;
 		return (
 			<p style={{ fontSize: 14, marginTop: 12 }}>
-				{r.analysed
-					? `Analysed ${r.analysed} game${r.analysed === 1 ? '' : 's'} — nothing above the threshold. Lower the minimum loss to catch smaller slips.`
-					: r.skipped
-						? `Nothing new — all ${r.skipped} games have been analysed already.`
-						: 'No games came back. See the per-site status above.'}
+				{blind
+					? `Walked ${r.analysed} game${r.analysed === 1 ? '' : 's'} but could not evaluate a single position, so there is nothing to report about them.`
+					: r.analysed
+						? `Analysed ${r.analysed} game${r.analysed === 1 ? '' : 's'} — nothing above the threshold. Lower the minimum loss to catch smaller slips.` +
+							(r.unmeasured ? ` (${r.unmeasured} positions could not be evaluated.)` : '')
+						: r.skipped
+							? `Nothing new — all ${r.skipped} games have been analysed already.`
+							: 'No games came back. See the per-site status above.'}
 			</p>
 		);
 	}
@@ -334,7 +367,8 @@ function ResultBlock({ r }: { r: ImportResult }) {
 			<p style={{ fontSize: 14, margin: '0 0 6px' }}>
 				<strong>{r.cards}</strong> card{r.cards === 1 ? '' : 's'} from {r.analysed} game
 				{r.analysed === 1 ? '' : 's'}
-				{r.skipped ? ` · ${r.skipped} already analysed` : ''}.
+				{r.skipped ? ` · ${r.skipped} already analysed` : ''}
+				{r.unmeasured ? ` · ${r.unmeasured} positions unmeasured` : ''}.
 			</p>
 			<ol style={{ fontSize: 13, paddingLeft: 20, margin: 0 }}>
 				{worst.map((m, i) => (

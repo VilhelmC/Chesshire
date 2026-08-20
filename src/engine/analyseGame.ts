@@ -60,20 +60,35 @@ export type AnalyseOptions = {
 };
 
 async function defaultAnalyse(fen: string): Promise<PositionEval | null> {
-	try {
-		const r = await engine.analyse(fen, DEPTH, 1, MOVETIME_MS);
-		const l = r.lines[0];
-		if (!l) return null;
-		return { cpWhite: toWhitePov(l.cp, sideToMove(fen)), bestUci: l.pv[0] ?? null };
-	} catch {
-		return null;
-	}
+	// Deliberately NOT wrapped in try/catch. It used to be, and that is how an
+	// engine which never loaded at all turned into "0 cards from 20 games" — a
+	// sentence about your play, produced by a program that had measured nothing.
+	// Errors belong to the caller, which counts them and says so.
+	const r = await engine.analyse(fen, DEPTH, 1, MOVETIME_MS);
+	const l = r.lines[0];
+	if (!l) return null;
+	return { cpWhite: toWhitePov(l.cp, sideToMove(fen)), bestUci: l.pv[0] ?? null };
 }
+
+/**
+ * What one game's analysis found, and how much of it was actually measured.
+ *
+ * `unmeasured` is the point. An empty `mistakes` list means one of two very
+ * different things — you played it clean, or nothing could be evaluated — and
+ * the deck is worthless if it cannot tell them apart.
+ */
+export type GameAnalysis = {
+	mistakes: GameMistake[];
+	/** Positions successfully evaluated. */
+	measured: number;
+	/** Positions that could not be evaluated, so were skipped. */
+	unmeasured: number;
+};
 
 export async function findMistakes(
 	game: ImportedGame,
 	opts: AnalyseOptions = {},
-): Promise<GameMistake[]> {
+): Promise<GameAnalysis> {
 	const minLoss = opts.minLoss ?? MISTAKE_CP;
 	const ourColour = game.ourColour;
 
@@ -98,6 +113,8 @@ export async function findMistakes(
 
 	const out: GameMistake[] = [];
 	const search = opts.analyse ?? defaultAnalyse;
+	let measured = 0;
+	let unmeasured = 0;
 	type Verdict = { cp: number; best: string | null; source: 'site' | 'local' };
 	const evalCache = new Map<number, Verdict>();
 
@@ -115,8 +132,21 @@ export async function findMistakes(
 			return v;
 		}
 
-		const r = await search(positions[idx]);
-		if (!r) return null;
+		let r: PositionEval | null;
+		try {
+			r = await search(positions[idx]);
+		} catch {
+			// One position failing is survivable and is counted. A dead engine
+			// fails EVERY position, which is why importGames checks the engine is
+			// alive before it starts rather than inferring it from a tally here.
+			unmeasured++;
+			return null;
+		}
+		if (!r) {
+			unmeasured++;
+			return null;
+		}
+		measured++;
 		const v: Verdict = { cp: pov(r.cpWhite, ourColour), best: r.bestUci, source: 'local' };
 		evalCache.set(idx, v);
 		return v;
@@ -142,7 +172,12 @@ export async function findMistakes(
 		// only for the handful of plies that already look like mistakes.
 		let bestUci = before.best;
 		if (!bestUci) {
-			bestUci = (await search(positions[i]))?.bestUci ?? null;
+			try {
+				bestUci = (await search(positions[i]))?.bestUci ?? null;
+			} catch {
+				unmeasured++;
+				continue;
+			}
 		}
 		if (!bestUci) continue;
 
@@ -169,7 +204,7 @@ export async function findMistakes(
 		});
 	}
 
-	return out;
+	return { mistakes: out, measured, unmeasured };
 }
 
 function pov(cpWhite: number, colour: 'w' | 'b'): number {

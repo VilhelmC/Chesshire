@@ -19,6 +19,7 @@ import { db } from './db';
 import { recordMistake } from './mistakes';
 import { fetchLichessGames, fetchChesscomGames, type ImportedGame } from './games';
 import { findMistakes, type AnalyseOptions, type GameMistake } from '../engine/analyseGame';
+import { engine } from '../engine/stockfish';
 import { positionKey, applyUci } from '../domain/chess';
 
 /** Cards taken from a single game, worst first. */
@@ -71,6 +72,15 @@ export type ImportResult = {
 	skipped: number;
 	cards: number;
 	mistakes: (GameMistake & { game: ImportedGame })[];
+	/** Positions evaluated across every game analysed. */
+	measured: number;
+	/** Positions that could not be evaluated. */
+	unmeasured: number;
+	/**
+	 * Set when the engine could not be started, in which case NOTHING was
+	 * analysed and `cards: 0` is not a statement about your games.
+	 */
+	engineError?: string;
 };
 
 export type ImportRequest = {
@@ -130,9 +140,40 @@ export async function importGames(req: ImportRequest): Promise<ImportResult> {
 	const todo = games.filter((g) => !seen.has(g.id)).sort((a, b) => b.playedAt - a.playedAt);
 	const skipped = games.length - todo.length;
 
+	// --- is there an engine at all? -----------------------------------------
+	//
+	// Checked ONCE, up front, rather than discovered forty positions in. A
+	// worker that fails to load fails every position identically, and the old
+	// code swallowed each failure and finished with "0 cards from 20 games" —
+	// which reads as "you played twenty clean games". Never let a measurement
+	// failure be reported as a measurement.
+	//
+	// Skipped when a test seam supplies its own analyse function.
+	let engineError: string | undefined;
+	if (!req.analyse && todo.length) {
+		try {
+			await engine.init();
+		} catch (e) {
+			engineError = e instanceof Error ? e.message : String(e);
+			emit({ stage: 'done', note: engineError, done: 0, total: todo.length, cards: 0, skipped });
+			return {
+				sources,
+				analysed: 0,
+				skipped,
+				cards: 0,
+				mistakes: [],
+				measured: 0,
+				unmeasured: 0,
+				engineError,
+			};
+		}
+	}
+
 	// --- analyse -------------------------------------------------------------
 	const found: (GameMistake & { game: ImportedGame })[] = [];
 	let cards = 0;
+	let measured = 0;
+	let unmeasured = 0;
 
 	for (let i = 0; i < todo.length; i++) {
 		if (req.shouldCancel?.()) break;
@@ -146,13 +187,15 @@ export async function importGames(req: ImportRequest): Promise<ImportResult> {
 			skipped,
 		});
 
-		const mistakes = await findMistakes(g, {
+		const analysis = await findMistakes(g, {
 			minLoss: req.minLoss,
 			shouldCancel: req.shouldCancel,
 			analyse: req.analyse,
 		});
+		measured += analysis.measured;
+		unmeasured += analysis.unmeasured;
 
-		const worst = [...mistakes].sort((a, b) => b.loss - a.loss).slice(0, MAX_PER_GAME);
+		const worst = [...analysis.mistakes].sort((a, b) => b.loss - a.loss).slice(0, MAX_PER_GAME);
 		for (const m of worst) {
 			await cardFor(m, g);
 			cards++;
@@ -175,14 +218,16 @@ export async function importGames(req: ImportRequest): Promise<ImportResult> {
 
 	emit({
 		stage: 'done',
-		note: `${cards} cards from ${todo.length} games`,
+		note:
+			`${cards} cards from ${todo.length} games` +
+			(unmeasured ? ` — ${unmeasured} positions could not be evaluated` : ''),
 		done: todo.length,
 		total: todo.length,
 		cards,
 		skipped,
 	});
 
-	return { sources, analysed: todo.length, skipped, cards, mistakes: found };
+	return { sources, analysed: todo.length, skipped, cards, mistakes: found, measured, unmeasured };
 }
 
 async function cardFor(m: GameMistake, g: ImportedGame): Promise<void> {

@@ -14,6 +14,7 @@
 import { useState } from 'react';
 import { Move } from './Move';
 import { accuracyOf, type TreeNode, type TreeStats } from '../domain/tree';
+import { nameForPath } from '../domain/openings';
 import { useViewport } from './useViewport';
 
 const INK_2 = '#52514e';
@@ -110,6 +111,7 @@ function Row({
 	toggle,
 	onPin,
 	phone,
+	parentName,
 }: {
 	node: TreeNode;
 	depth: number;
@@ -117,11 +119,20 @@ function Row({
 	toggle: (key: string) => void;
 	onPin?: (node: TreeNode) => void;
 	phone: boolean;
+	/** The line this row's parent belonged to, so only CHANGES are printed. */
+	parentName?: string;
 }) {
 	const key = node.path.join(' ');
 	const isOpen = open.has(key);
 	const acc = accuracyOf(node.total);
 	const meaningful = node.total.attempts >= MIN_MEANINGFUL;
+
+	// Which line this move belongs to. Printed only where it differs from the
+	// parent's, because a name repeated on every row down a trunk is noise that
+	// buries the one row where the line actually became something else — and
+	// that row is the whole reason a tree is drawn instead of a list.
+	const name = nameForPath(node.path)?.name ?? parentName;
+	const named = name && name !== parentName ? name : null;
 
 	return (
 		<>
@@ -164,10 +175,41 @@ function Row({
 						{isOpen ? '▾' : '▸'}
 					</button>
 
-					{node.ply % 2 === 1 && (
-						<span style={{ color: INK_2, fontSize: 11 }}>{Math.ceil(node.ply / 2)}.</span>
-					)}
+					{/* Both colours are numbered. Showing it only for White made the
+						reader derive Black's number from the indentation — the exact
+						"the move number tells you whose turn it is" reasoning that is
+						bad pedagogy: cheap to print, expensive to work out. */}
+					<span
+						style={{
+							color: INK_2,
+							fontSize: 11,
+							fontVariantNumeric: 'tabular-nums',
+							whiteSpace: 'nowrap',
+						}}
+					>
+						{Math.ceil(node.ply / 2)}
+						{node.ply % 2 === 1 ? '.' : '…'}
+					</span>
 					<Move san={node.san ?? ''} colour={node.colour ?? 'w'} size={13} />
+
+					{named && (
+						<span
+							style={{
+								fontSize: 10,
+								color: INK_2,
+								border: `1px solid ${GRID}`,
+								borderRadius: 3,
+								padding: '0 4px',
+								whiteSpace: 'nowrap',
+								overflow: 'hidden',
+								textOverflow: 'ellipsis',
+								maxWidth: phone ? 130 : 260,
+							}}
+							title={named}
+						>
+							{named}
+						</span>
+					)}
 
 					{node.children.length > 0 && !isOpen && (
 						<span style={{ fontSize: 11, color: INK_2 }}>
@@ -259,6 +301,7 @@ function Row({
 						toggle={toggle}
 						onPin={onPin}
 						phone={phone}
+						parentName={name}
 					/>
 				))}
 		</>

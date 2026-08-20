@@ -11,6 +11,8 @@
 // The captions are FIXED words, not the sentences that used to shift the strip,
 // so the layout still holds still.
 
+import { useMeasure } from './useViewport';
+
 export type ToolbarAction = {
 	id: string;
 	/** The full sentence, on hover and for screen readers. */
@@ -43,6 +45,31 @@ const CAPTION: Record<ToolbarAction['icon'], string> = {
 	resign: 'resign',
 };
 
+/** Smallest control a finger hits reliably enough to keep captions readable. */
+const MIN_CELL = 52;
+const GAP = 6;
+
+/**
+ * How many columns to use, so that the rows come out EVEN.
+ *
+ * Nine controls at a usable touch size do not fit across a 393px phone — that
+ * is arithmetic, not a layout bug, and pretending otherwise means either
+ * finger-missing 36px buttons or hiding controls behind a menu you have to know
+ * about first. So it wraps; the fix is that it wraps *evenly*.
+ *
+ * Plain flex-wrap fills the first row and strands the remainder: six buttons,
+ * then three, with a third of the last row empty. Balancing the count across the
+ * rows it is going to take anyway gives 5 and 4 in aligned columns, which is
+ * what "spills over" was really objecting to.
+ */
+export function columnsFor(count: number, width: number): number {
+	if (!count) return 1;
+	const fit = Math.max(1, Math.floor((width + GAP) / (MIN_CELL + GAP)));
+	const cols = Math.min(count, fit);
+	const rows = Math.ceil(count / cols);
+	return Math.ceil(count / rows);
+}
+
 export function Toolbar({
 	actions,
 	labelled = false,
@@ -51,20 +78,29 @@ export function Toolbar({
 	/** Caption each icon. On by default nowhere; set when the pointer cannot hover. */
 	labelled?: boolean;
 }) {
+	const [ref, width] = useMeasure<HTMLDivElement>();
+	const cols = columnsFor(actions.length, width ?? 0);
+
 	return (
 		<div
-			style={{
-				// Fills the row rather than leaving a ragged edge: fixed-width buttons
-				// on a 393px screen wrap after six and leave a third of the last row
-				// empty. `flex: 1` with a minimum keeps them evenly sized and evenly
-				// spread at any width, and they still do not resize as the run
-				// changes, which is what the fixed widths were protecting.
-				display: 'flex',
-				gap: labelled ? 6 : 4,
-				alignItems: 'flex-start',
-				flexWrap: 'wrap',
-				width: labelled ? '100%' : undefined,
-			}}
+			ref={ref}
+			style={
+				labelled
+					? {
+							// A grid, not wrapped flex: every cell is the same width and
+							// the columns line up between rows.
+							display: 'grid',
+							gridTemplateColumns: `repeat(${cols}, 1fr)`,
+							gap: GAP,
+							width: '100%',
+						}
+					: {
+							display: 'flex',
+							gap: 4,
+							alignItems: 'flex-start',
+							flexWrap: 'wrap',
+						}
+			}
 		>
 			{actions.map((a) => (
 				<button
@@ -74,10 +110,8 @@ export function Toolbar({
 					onClick={a.onClick}
 					disabled={a.disabled}
 					style={{
-						// 44px is the smallest target a finger hits reliably.
-						...(labelled
-							? { flex: '1 1 52px', minWidth: 52, maxWidth: 90 }
-							: { width: 40 }),
+						// The grid gives the width; only the desktop row needs one here.
+						...(labelled ? { width: '100%' } : { width: 40 }),
 						height: labelled ? 50 : 36,
 						display: 'inline-flex',
 						flexDirection: 'column',

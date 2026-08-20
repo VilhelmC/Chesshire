@@ -25,6 +25,7 @@ import { applyUci, sameMove } from '../domain/chess';
 import { ImportGames } from './ImportGames';
 import { Move } from '../components/Move';
 import { withGlyph } from '../domain/notation';
+import { nameForPath } from '../domain/openings';
 import { registerDebug, describePosition } from '../data/debug';
 import { useViewport } from '../components/useViewport';
 
@@ -471,6 +472,9 @@ export function Quiz() {
 									<Move san={c.playedSan} colour={c.ourColour} size={12} />) — missed{' '}
 									{c.lapses}×{c.retired && ' · retired'}
 								</span>
+								{lineLabelFor(c) && (
+									<div style={{ fontSize: 11, color: INK_2 }}>{lineLabelFor(c)}</div>
+								)}
 							</li>
 						))}
 				</ol>
@@ -541,13 +545,47 @@ function promptFor(c: MistakeCard): string {
 	}
 }
 
-function namesFor(c: MistakeCard): string {
-	if (c.phase === 'game' && c.origin) {
-		const when = new Date(c.origin.playedAt).toISOString().slice(0, 10);
-		return `${c.origin.platform} vs ${c.origin.opponent}, ${when}`;
-	}
+/**
+ * Which line this position belongs to, and where in it.
+ *
+ * Cards mined from real games used to show only the opponent and the date,
+ * which says where the card came FROM but not what it is ABOUT — and "what is
+ * it about" is the thing that makes a card connect to the rest of the deck. The
+ * name is derived from the path when it was not recorded, so old cards and
+ * game-mined cards get labelled too rather than only new book ones.
+ */
+export function lineLabelFor(c: MistakeCard): string | null {
 	if (c.opening) return c.opening;
 	// Cards made before openings were recorded still carry their old line IDs.
 	if (c.lineIds?.length) return c.lineIds[0];
-	return c.path?.length ? `After ${Math.ceil(c.path.length / 2)} moves` : 'Free play';
+	if (c.path?.length) return nameForPath(c.path)?.name ?? null;
+	return null;
+}
+
+/**
+ * The move number the mistake was played on.
+ *
+ * `path` holds the moves BEFORE it, so the mistake is ply `path.length` counting
+ * from zero — one further on than the path is long.
+ */
+export function moveNumberFor(c: MistakeCard): { no: number; white: boolean } {
+	const ply = c.path?.length ?? c.ply ?? 0;
+	return { no: Math.floor(ply / 2) + 1, white: ply % 2 === 0 };
+}
+
+function namesFor(c: MistakeCard): string {
+	const parts: string[] = [];
+
+	const line = lineLabelFor(c);
+	const { no, white } = moveNumberFor(c);
+	// Spelled out rather than left to the reader: "7…" is only obviously Black's
+	// if you already know the convention, and the point is to be read, not decoded.
+	parts.push(line ? `${line}, move ${no}${white ? '' : '…'}` : `Move ${no}${white ? '' : '…'}`);
+
+	if (c.phase === 'game' && c.origin) {
+		const when = new Date(c.origin.playedAt).toISOString().slice(0, 10);
+		parts.push(`${c.origin.platform} vs ${c.origin.opponent}, ${when}`);
+	}
+
+	return parts.join(' · ');
 }
