@@ -1,6 +1,6 @@
 {
-	"name": "Schackal — Offbook trainer",
-	"short_name": "Schackal",
+	"name": "Chesshire — offbook chess trainer",
+	"short_name": "Chesshire",
 	"description": "Drills what happens when the book runs out: the move after the last one you memorised.",
 	"start_url": "./",
 	"scope": "./",
