@@ -1290,6 +1290,43 @@ The end-to-end check clicks the real button, intercepts the redirect, and assert
 
 One piece of test-infrastructure learning: registering a Playwright route on the main page broke the *offline* check with `ERR_INTERNET_DISCONNECTED`, because interception and the service worker do not coexist — the worker stopped serving the reload. The sign-in check runs last, in its own browser context, so the offline result keeps meaning what it says.
 
+
+### M11 — Closing the data loop
+
+The transfer measurement was finished in §M6 and has been sitting idle ever since, because it had nothing to read. This is the piece that feeds it.
+
+#### Why this and not the scheduling work
+
+Both were on the list, and the ordering is not a matter of taste. **A scheduling improvement written next month is exactly as good as one written today. A month of games that were never imported is a month of evidence no amount of later work recovers.** Game history is the only time-gated work in the project, so it goes first — everything else can wait without cost.
+
+Until now, importing happened when someone remembered to press a button.
+
+#### The engine belongs to whoever is looking at the screen
+
+Analysing a game runs Stockfish over every one of your positions in it. There is one engine and it is serialised, so a background import queued ahead of a drill move would put a whole search between the move and its answer — reintroducing exactly the latency §M5 was spent removing.
+
+The rule is blunt and states in one line: while the Train tab is mounted, the import stands down. `markTraining(true)` sets it; `findMistakes` and `importGames` both check `shouldCancel` between positions, so it yields within about one search rather than at the end of whatever game it had reached.
+
+**That rule was wrong on its own, and the review caught it before the deploy did.** Train is the tab the app *opens on*, so the startup check would have found `training` every time and the import would never have run at all — for anyone who trains and closes the app, which is the entire intended usage. Worse, it fails identically to working correctly: "no new games" and "never ran" are the same silence. Releasing the flag now schedules a pass five seconds later, so leaving Train for any other tab is what triggers it.
+
+Otherwise: once a day, at most eight games a pass, never without a token, a username and a network. The interval counts the last **attempt**, not the last success, so a failing import cannot retry on every page load and turn a rate limit into a worse one.
+
+#### Quiet is one keystroke from broken
+
+An import that has silently failed for three weeks looks exactly like an import that has found nothing new. `SyncStatus` therefore shows the last successful sync as a **date**, never as "up to date", and shows a failure in full rather than folding it into silence. This is the same rule as §M9's — a failure must not be reported in the vocabulary of a success — applied to a process nobody is watching.
+
+#### A count is not coverage
+
+`dataCoverage` reports the span alongside the number. Four games from one evening and four spread over two months are the same count and completely different evidence: split into before/after windows, the first pair is two halves of the same afternoon. A bare count cannot tell them apart, so it does not get to stand alone.
+
+`gamesStillNeeded` turns an empty report into a shortfall — "three more games through a drilled position" rather than "no results yet". **An empty result reads as a verdict on the training when it is a fact about the sample**, and the distinction is exactly the one this measurement exists to protect. It returns `null`, not zero, when nothing has been drilled at all, because that is a third state needing a third sentence.
+
+#### The twenty games with no moves
+
+They were imported before moves were kept, so nothing can tell whether they reached any position, and they are excluded from both windows. That is correct and it is also twenty games of evidence sitting unused.
+
+Repair re-fetches far enough back to reach the oldest of them, with `force`, because those rows are marked analysed and an ordinary run skips precisely the games that need fixing. The reach is bounded, and some may be older than the API will return — which is counted and reported afterwards ("recovered 14 of 20, the remaining 6 are beyond the API window") rather than left as a quietly smaller number.
+
 ---
 
 ## 10. Risks

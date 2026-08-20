@@ -147,6 +147,54 @@ export function coverage(games: PlayedGame[]): { usable: number; unusable: numbe
 	return { usable, unusable: games.length - usable };
 }
 
+export type DataCoverage = {
+	usable: number;
+	unusable: number;
+	/** Oldest and newest usable game, so the window's real extent is visible. */
+	from: number | null;
+	to: number | null;
+	/** Whole days spanned by the usable history. */
+	spanDays: number | null;
+};
+
+/**
+ * What the measurement can actually see.
+ *
+ * A count of games says nothing about whether they cover the period that
+ * matters. Four games from one evening in March split into "before" and "after"
+ * windows that are really the same afternoon; the same four spread over two
+ * months are a comparison. The span is what distinguishes them, so it is
+ * reported alongside the count rather than left to be assumed.
+ */
+export function dataCoverage(games: PlayedGame[]): DataCoverage {
+	const usable = games.filter((g) => g.moves?.length);
+	const times = usable.map((g) => g.playedAt).filter((t) => Number.isFinite(t));
+	const from = times.length ? Math.min(...times) : null;
+	const to = times.length ? Math.max(...times) : null;
+	return {
+		usable: usable.length,
+		unusable: games.length - usable.length,
+		from,
+		to,
+		spanDays: from !== null && to !== null ? Math.floor((to - from) / 86_400_000) : null,
+	};
+}
+
+/**
+ * How many more games are needed before ANY position can be answered.
+ *
+ * The honest headline for an empty report. Without it "no results yet" reads as
+ * a verdict on the training rather than on the sample.
+ */
+export function gamesStillNeeded(report: TransferResult[]): number | null {
+	if (report.some((r) => r.meaningful)) return 0;
+	const shortfalls = report
+		.filter((r) => r.firstDrilled !== null)
+		.map((r) => Math.max(0, MIN_GAMES_PER_SIDE - r.after.games));
+	if (!shortfalls.length) return null;
+	return Math.min(...shortfalls);
+}
+
 /** Plain words for a change in mistakes per game. */
 export function describeChange(r: TransferResult): string {
 	if (!r.meaningful || r.change === null) {

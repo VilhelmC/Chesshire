@@ -36,12 +36,13 @@ export function ImportGames({ onImported }: { onImported: () => void }) {
 	const [progress, setProgress] = useState<ImportProgress | null>(null);
 	const [result, setResult] = useState<ImportResult | null>(null);
 	const [history, setHistory] = useState<ImportedGameRow[]>([]);
+	const [repairNote, setRepairNote] = useState<string | null>(null);
 
 	useEffect(() => {
 		void importedGames().then(setHistory);
 	}, []);
 
-	async function run(force = false) {
+	async function run(force = false, overrideMax?: number) {
 		setUsernames({ lichess, chesscom });
 		setRunning(true);
 		setCancel(false);
@@ -56,7 +57,7 @@ export function ImportGames({ onImported }: { onImported: () => void }) {
 			const r = await importGames({
 				lichess,
 				chesscom,
-				max,
+				max: overrideMax ?? max,
 				minLoss,
 				force,
 				onProgress: setProgress,
@@ -80,6 +81,33 @@ export function ImportGames({ onImported }: { onImported: () => void }) {
 		}
 	}
 
+	// Rows imported before moves were kept. They are excluded from the transfer
+	// measurement entirely — see domain/transfer.ts — so they are not a cosmetic
+	// gap: they are games that happened and cannot be counted.
+	const missingMoves = history.filter((g) => !g.moves?.length);
+
+	/**
+	 * Re-fetch far enough back to reach the oldest of them and analyse again.
+	 *
+	 * `force` because those rows are already marked analysed, so an ordinary run
+	 * skips exactly the games that need fixing. The reach is bounded, and some
+	 * games may simply be older than the API will return — which is reported
+	 * afterwards rather than left as a silently smaller number.
+	 */
+	async function repair() {
+		const reach = Math.min(100, history.length + 10);
+		setRepairNote(null);
+		const before = missingMoves.length;
+		await run(true, reach);
+		const after = (await importedGames()).filter((g) => !g.moves?.length).length;
+		const fixed = before - after;
+		setRepairNote(
+			after === 0
+				? `Recovered moves for all ${before} games.`
+				: `Recovered ${fixed} of ${before}. The remaining ${after} are older than the API will return, so they stay excluded rather than counted on a guess.`,
+		);
+	}
+
 	return (
 		<section style={{ borderTop: '1px solid #ddd', paddingTop: 16, marginTop: 20 }}>
 			<h3 style={{ margin: '0 0 4px' }}>Import from Lichess &amp; Chess.com</h3>
@@ -88,6 +116,39 @@ export function ImportGames({ onImported }: { onImported: () => void }) {
 				card. Games already analysed are skipped, so running this again only picks up what is
 				new. At most four cards per game, worst first.
 			</p>
+
+			{(missingMoves.length > 0 || repairNote) && (
+				<div
+					style={{
+						border: '1px solid #eda100',
+						background: '#eda10010',
+						borderRadius: 8,
+						padding: 10,
+						margin: '0 0 12px',
+						fontSize: 13,
+						maxWidth: 560,
+					}}
+				>
+					{repairNote ? (
+						repairNote
+					) : (
+						<>
+							<strong>
+								{missingMoves.length} imported game
+								{missingMoves.length === 1 ? '' : 's'} have no moves stored.
+							</strong>{' '}
+							They were imported before moves were kept, so the transfer measurement cannot
+							tell whether they reached any position and leaves them out entirely. Re-fetching
+							them is the only way to count them.
+							<div style={{ marginTop: 8 }}>
+								<button onClick={() => void repair()} disabled={running}>
+									{running ? 'Working…' : `Re-import to recover moves`}
+								</button>
+							</div>
+						</>
+					)}
+				</div>
+			)}
 
 			<div style={{ display: 'grid', gap: 8, maxWidth: 560 }}>
 				<Field label="Lichess username">

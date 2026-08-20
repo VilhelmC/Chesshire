@@ -11,6 +11,7 @@ import { DebugCorner } from './components/DebugCorner';
 import { InstallBar } from './components/InstallBar';
 import { Footer } from './components/Footer';
 import { completeSignIn, hasToken, type SignInResult } from './data/lichessAuth';
+import { startBackgroundImport } from './data/autoImport';
 import { useViewport } from './components/useViewport';
 
 type Tab = 'train' | 'quiz' | 'review' | 'progress' | 'coverage' | 'drills' | 'checks';
@@ -35,6 +36,11 @@ export default function App() {
 			if (r.status !== 'none') setSignIn(r);
 		});
 	}, []);
+
+	// Game history is the one thing in this app that cannot be caught up on
+	// later — see data/autoImport.ts. Started here rather than from any one tab,
+	// because it should not depend on which screen someone happens to open.
+	useEffect(() => startBackgroundImport(), []);
 
 	return (
 		<div

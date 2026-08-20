@@ -14,7 +14,15 @@ import { estimate, ratingSeries, type RatingPoint } from '../domain/rating';
 import { loadProgress, clearProgress } from '../data/progress';
 import { db } from '../data/db';
 import { loadMistakes } from '../data/mistakes';
-import { transferReport, coverage, describeChange, type PlayedGame } from '../domain/transfer';
+import {
+	transferReport,
+	dataCoverage,
+	gamesStillNeeded,
+	describeChange,
+	type DataCoverage,
+	type PlayedGame,
+} from '../domain/transfer';
+import { SyncStatus } from '../components/SyncStatus';
 import { accuracy, freeplayLosses, type AnswerRow, type RunRow } from '../domain/progress';
 
 // Single series, so no categorical palette to validate — one hue for magnitude,
@@ -90,7 +98,8 @@ export function Progress() {
 		.filter(Boolean)
 		.map((k) => k.split(' '));
 	const transfer = transferReport(candidates, played, drills).slice(0, 6);
-	const gameCoverage = coverage(played);
+	const gameCoverage = dataCoverage(played);
+	const stillNeeded = gamesStillNeeded(transfer);
 
 	// One definition of "a move that measures strength", shared with the trainer.
 	const scored = answers.filter(
@@ -273,6 +282,12 @@ export function Progress() {
 					improvement.
 				</p>
 
+				{/* What the measurement can see, stated before any of its numbers.
+					An empty report otherwise reads as a verdict on the training when
+					it is a fact about the sample. */}
+				<CoverageLine c={gameCoverage} stillNeeded={stillNeeded} />
+				<SyncStatus />
+
 				{gameCoverage.usable === 0 ? (
 					<p style={{ fontSize: 14, color: INK_2 }}>
 						No imported games with recorded moves yet.{' '}
@@ -453,4 +468,38 @@ function Tile({
 
 function pct(v: number | null): string {
 	return v === null ? '—' : `${Math.round(v * 100)}%`;
+}
+
+/**
+ * What the transfer measurement is working from.
+ *
+ * Count AND span. Four games from one evening split into two windows that are
+ * really the same afternoon; four spread over two months are a comparison. A
+ * bare count cannot tell those apart, so it does not get to stand alone.
+ */
+function CoverageLine({
+	c,
+	stillNeeded,
+}: {
+	c: DataCoverage;
+	stillNeeded: number | null;
+}) {
+	const day = (t: number) => new Date(t).toISOString().slice(0, 10);
+	return (
+		<p style={{ fontSize: 12, color: INK_2, margin: '0 0 8px' }}>
+			<strong>{c.usable}</strong> game{c.usable === 1 ? '' : 's'} with moves
+			{c.from !== null && c.to !== null && (
+				<>
+					{' '}
+					· {day(c.from)} to {day(c.to)}
+					{c.spanDays !== null && c.spanDays > 0 && ` (${c.spanDays} days)`}
+				</>
+			)}
+			{c.unusable > 0 && ` · ${c.unusable} without moves, excluded`}
+			{stillNeeded !== null &&
+				stillNeeded > 0 &&
+				` · ${stillNeeded} more game${stillNeeded === 1 ? '' : 's'} through a drilled position before anything can be said`}
+			{stillNeeded === null && c.usable > 0 && ' · nothing drilled yet to compare against'}
+		</p>
+	);
 }

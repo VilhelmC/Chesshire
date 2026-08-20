@@ -31,6 +31,7 @@ import {
 } from '../engine/session';
 import { applyUci, replayLine } from '../domain/chess';
 import { getToken } from '../data/explorer';
+import { markTraining } from '../data/autoImport';
 import type { ToolbarAction } from '../components/Toolbar';
 import { BoardPanel } from '../components/BoardPanel';
 import { Move, MoveLine } from '../components/Move';
@@ -96,6 +97,19 @@ export function Train({ handoff, onHandoffUsed }: { handoff?: TrainHandoff; onHa
 	const [attempts, setAttempts] = useState(0);
 	/** Bumped on a rejected move, to pull the piece back to where it started. */
 	const [boardVersion, setBoardVersion] = useState(0);
+
+	// The engine belongs to whoever is looking at the screen.
+	//
+	// It is single and serialised, so a background game import queued ahead of a
+	// drill move would put a whole position's search between the move and its
+	// answer. Claiming it for as long as this tab is mounted is blunt and
+	// correct: the import resumes the moment you go elsewhere, and it checks
+	// this between positions, so it yields within about one search rather than
+	// at the end of whatever game it was working through.
+	useEffect(() => {
+		markTraining(true);
+		return () => markTraining(false);
+	}, []);
 
 	// schackal.dump() — see data/debug.ts. Registered every render so the
 	// snapshot reflects current state, not the first render's.
