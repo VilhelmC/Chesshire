@@ -1549,6 +1549,19 @@ They are separate blocks now, each with a small caption — **Your move**, then 
 
 **"Default until measured" described the app rather than answering the question.** It said what the program was doing; the reader wanted the number. Now `(~1500 until you have played enough to measure)`, and `(~1500, from your play)` once it has. **When a control's label explains a mechanism instead of stating a value, the value is what was wanted.**
 
+
+### M15.2 — A bug this environment cannot see
+
+`src/ui/Mark.tsx` and `src/ui/mark.ts` are **two files on Linux and one file on Windows.** Everything typechecked, tested and built in the container; the same commit failed instantly on the machine the repo lives on — `Already included file name … differs from file name … only in casing`.
+
+The general shape is worth stating, because it will recur: **a development environment that differs from the target in a systematic way will never report the bugs that live in the difference.** No amount of testing on Linux finds this one. It is not a gap in coverage, it is a gap in the *kind* of thing the tests can observe.
+
+So it is checked as a property of the tree instead — `test/filenames.test.ts` — along with the other filename rules Windows enforces and POSIX does not: reserved device names (`aux.ts` is as unusable as `aux`), trailing dots and spaces, and characters legal in a POSIX path and rejected by NTFS.
+
+**The first version of that test did not catch the bug it was written for.** It compared whole filenames lowercased, and `mark.ts` and `mark.tsx` are different strings. The clash is not between filenames — it is between *module names*, because TypeScript resolves `./ui/Mark` against both extensions. Keying on the basename with the extension stripped is what makes the comparison the same one the compiler makes.
+
+Which is the lesson underneath the lesson: **a regression test is only worth what its failure demonstrates.** Both versions passed on a clean tree; only one of them failed when the bug was put back.
+
 ---
 
 ## 10. Risks

@@ -11,7 +11,7 @@
 // face read as emerging from the background rather than sitting on top of it —
 // and it inverts with the rest of the app for free.
 
-import { MARK_INNER, MARK_BOX } from './mark';
+import { MARK_INNER, MARK_BOX } from './markPaths';
 import { color } from './theme';
 
 export function Mark({ size = 40, rounded = true }: { size?: number; rounded?: boolean }) {
