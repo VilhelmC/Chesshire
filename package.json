@@ -14,6 +14,7 @@
 		"test": "vitest run",
 		"openings": "node scripts/build-openings.mjs",
 		"icons": "node scripts/build-icons.mjs",
+		"deploy": "node scripts/deploy-pages.mjs",
 		"pwa:check": "npm run build && node scripts/pwa-check.mjs"
 	},
 	"dependencies": {

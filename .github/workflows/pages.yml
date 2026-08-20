@@ -6,13 +6,22 @@
 #
 # Published at https://<owner>.github.io/<repo>/, which is why BASE_PATH is set.
 # Everything else derives its base from that one value.
+#
+# CURRENTLY DORMANT. Actions minutes are metered and the free allowance for this
+# account runs out; `npm run deploy` (scripts/deploy-pages.mjs) does the same
+# work on the machine that already has the code, for nothing. This file is kept
+# rather than deleted because the difference between the two is one trigger, and
+# because CI running the tests on every push is worth having back later.
+#
+# To re-enable: restore the `push` trigger below, and switch
+# Settings -> Pages -> Source back to GitHub Actions.
 
 name: Pages
 
 on:
-  push:
-    branches: [main]
-  # So a deploy can be re-run without an empty commit.
+  # push:
+  #   branches: [main]
+  # Manual only, for now — see the note above.
   workflow_dispatch:
 
 permissions:

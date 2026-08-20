@@ -24,6 +24,7 @@ copies the two files we ship (~7 MB) into `public/engine/`, which is gitignored.
 | `npm run openings` | Regenerate the bundled opening index |
 | `npm run icons` | Regenerate the app icons from one inline SVG |
 | `npm run pwa:check` | Build, then verify the manifest, the service worker **and an offline boot** |
+| `npm run deploy` | Build and publish to the `gh-pages` branch |
 
 `icons` and `pwa:check` need `npm i -D playwright` first. It is deliberately not
 a devDependency: both are run roughly never, and neither belongs in a fresh
@@ -36,9 +37,22 @@ will not register over `http://192.168.x.x`, so on the LAN dev address there is
 no install prompt and no offline mode. The app says which condition failed
 rather than just hiding the button.
 
-Pushing to `main` builds and publishes to GitHub Pages
-(`.github/workflows/pages.yml`), which is https, which is what makes it
-installable. One-time setup: repo **Settings → Pages → Source → GitHub Actions**.
+`npm run deploy` builds and pushes to the `gh-pages` branch, which GitHub serves
+over https at `https://vilhelmc.github.io/Schackal/` — and https is the whole
+point, because it is what makes the app installable.
+
+One-time setup: **Settings → Pages → Source → Deploy from a branch → `gh-pages`
+/ `(root)`**.
+
+The deploy writes the branch through a git *worktree* rather than checking it
+out, so your working tree never moves to a branch containing nothing but build
+output. It refuses to push when the build is byte-identical to what is already
+live, and it says so out loud when it is publishing uncommitted changes.
+
+`.github/workflows/pages.yml` does the same thing on a runner and is kept, but
+**dormant** — its `push` trigger is commented out, because Actions minutes are
+metered and this is not. Re-enabling it is one uncomment plus switching the
+Pages source back.
 
 Offline is partial and honest about it: Train needs the Lichess explorer and
 cloud eval, so with the network off you get the Mistakes deck, Progress, Review,

@@ -1,3 +1,9 @@
+// `process` is a Node global, and tsconfig sets an explicit `types` array,
+// which switches OFF automatic inclusion of every @types package. Without this
+// line the config only typechecks because vite's own index.d.ts happens to
+// reference node types — borrowing a dependency's internals to compile our own
+// file. Declared here so it is ours.
+/// <reference types="node" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 

@@ -1176,7 +1176,19 @@ The check script runs against `vite preview` on localhost for the same reason. T
 
 #### The deploy is a new origin, and that costs you your data
 
-Published to GitHub Pages via `.github/workflows/pages.yml` — https, which is the only reason any of the above works on a phone. `BASE_PATH` is set from the repo name; `pwa-check.mjs` takes the same variable, so the subpath deploy is verified rather than assumed.
+Published to GitHub Pages — https, which is the only reason any of the above works on a phone. `BASE_PATH` is set from the repo name; `pwa-check.mjs` takes the same variable, so the subpath deploy is verified rather than assumed.
+
+**Deployed from a branch, not from a runner.** The Actions workflow was written first and worked, in the sense that it was correct; it never ran, because the account's Actions allowance was spent and the build job was refused before it started. Both runs showed green in the Actions *list* while the run page said `build — Failed, deploy — Skipped`, which is worth recording as a small lesson in reading a status from the summary view.
+
+`scripts/deploy-pages.mjs` does the same work on the machine that already has the code, for nothing. The build was always local anyway; a runner was only ever doing `git push` on our behalf.
+
+Three properties worth having in a deploy script:
+
+1. **It writes the branch through a git worktree.** Checking out `gh-pages` would swap the working tree to a branch containing nothing but build output, and an interruption there leaves you standing in it wondering where the source went. A worktree is a separate directory sharing the same object database, so the tree you work in never moves.
+2. **It refuses to push an identical build.** Vite hashes asset filenames, so identical output produces an identical tree and an empty commit. Pushing one would put a deploy in the history that changed nothing — the log should say what happened, not merely that something did.
+3. **It says when it is publishing uncommitted work.** `Deploy a1b2c3d+dirty` in the commit message, and a warning before the build. A site that corresponds to no commit is a fact you want stated, not discovered later when the repo and the deployment disagree.
+
+The branch is orphaned on first deploy, so build output never enters the source history and a clone does not drag every past build along with it. The workflow file is kept but **dormant** — `push` trigger commented out, `workflow_dispatch` retained — because the difference between dormant and live is one uncomment, and because running the tests on every push is worth having back when the allowance resets.
 
 The part worth stating plainly: **`vilhelmc.github.io` is a different origin from `localhost:5173`.** localStorage and IndexedDB are per-origin, so the deployed app starts with no Lichess token, no mistake deck, no practice settings and no imported games. Nothing is lost — it is still on the laptop — but it does not follow you across.
 
