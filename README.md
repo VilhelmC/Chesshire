@@ -1,6 +1,6 @@
-# Schackal
+# Chesshire
 
-An "offbook" chess trainer: it drills the seam between the book move and what your
+An "offbook" chess trainer — a Cheshire grin whose teeth are chessboard squares: it drills the seam between the book move and what your
 opponent actually plays. See [`SPEC.md`](./SPEC.md) for the full design.
 
 ## Setup
@@ -24,6 +24,7 @@ copies the two files we ship (~7 MB) into `public/engine/`, which is gitignored.
 | `npm run openings` | Regenerate the bundled opening index |
 | `npm run icons` | Regenerate the app icons from one inline SVG |
 | `npm run pwa:check` | Build, then verify the manifest, the service worker **and an offline boot** |
+| `npm run shots` | Screenshot every tab, light and dark, phone and desktop, into `.shots/` |
 | `npm run deploy` | Build and publish to the `gh-pages` branch |
 
 `icons` and `pwa:check` need `npm i -D playwright` first. It is deliberately not
@@ -38,7 +39,7 @@ no install prompt and no offline mode. The app says which condition failed
 rather than just hiding the button.
 
 `npm run deploy` builds and pushes to the `gh-pages` branch, which GitHub serves
-over https at `https://vilhelmc.github.io/Schackal/` — and https is the whole
+over https at `https://vilhelmc.github.io/Chesshire/` — and https is the whole
 point, because it is what makes the app installable.
 
 One-time setup: **Settings → Pages → Source → Deploy from a branch → `gh-pages`
@@ -100,7 +101,7 @@ src/
 
 **GPL-3.0-or-later.** Full text in [`LICENSE`](./LICENSE).
 
-    Schackal — an offbook chess trainer
+    Chesshire — an offbook chess trainer
     Copyright (C) 2026 Will (@VilhelmC)
 
     This program is free software: you can redistribute it and/or modify it

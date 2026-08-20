@@ -1,5 +1,5 @@
 {
-	"name": "schackal",
+	"name": "chesshire",
 	"private": true,
 	"license": "GPL-3.0-or-later",
 	"version": "0.1.0",
@@ -15,7 +15,8 @@
 		"openings": "node scripts/build-openings.mjs",
 		"icons": "node scripts/build-icons.mjs",
 		"deploy": "node scripts/deploy-pages.mjs",
-		"pwa:check": "npm run build && node scripts/pwa-check.mjs"
+		"pwa:check": "npm run build && node scripts/pwa-check.mjs",
+		"shots": "npm run build && node scripts/shots.mjs"
 	},
 	"dependencies": {
 		"chessground": "^9.2.1",

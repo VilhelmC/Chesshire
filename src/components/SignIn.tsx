@@ -11,8 +11,9 @@
 
 import { useEffect, useState } from 'react';
 import { beginSignIn, signedInAs, hasToken, signOut } from '../data/lichessAuth';
+import { color } from '../ui/theme';
 
-const INK_2 = '#52514e';
+const INK_2 = color.ink2;
 
 export function SignIn({ onChange }: { onChange?: () => void }) {
 	const [user, setUser] = useState<string | null>(signedInAs());

@@ -1,6 +1,6 @@
-# Offbook — Project Specification
+# Chesshire — Project Specification
 
-**Working name:** Offbook
+**Name:** Chesshire (was Schackal, then Offbook)
 **Owner:** Will ([@VilhelmC](https://github.com/VilhelmC))
 **Target user:** one — the author. Rating band <1400.
 **Doc path:** `offbook/SPEC.md`
@@ -1345,6 +1345,100 @@ Three things in the generator worth keeping:
 #### An honest limit
 
 It reads as a face down to about 48px. At 32px — a browser tab — the checkered teeth fall below one pixel each and the grin becomes texture. That is a property of the drawing, not of the pipeline, and the fix would be a separate simplified mark for small sizes rather than anything the generator can do. The primary target is a phone home screen at 192 and 512, where it is at its best, so this is recorded rather than solved.
+
+
+### M12 — The tab bar was a record of how the app was built
+
+Seven destinations, three of which announced themselves as scaffolding: *"M0 — dependency checks"*, *"M2 audit"*, *"Coverage audit"*. They were built to prove the pipeline worked, and they did — the endpoint probe is what found the explorer's 401, and the analysis check is what surfaced the missing engine file. **They are worth keeping and they are not features.**
+
+That is a reasonable thing for a tab bar to be while you are the only person who will ever see it, and an unreasonable one the moment you send someone a link.
+
+#### Four tabs: Train, Mistakes, Progress, Settings
+
+The three instruments moved into Settings, folded shut, under a heading that says what they are. **Demoted rather than deleted, and deliberately not dev-only** — every one of the last three bugs was found on the phone, and hiding them from production builds would have meant not having them exactly where they were needed.
+
+**Review stopped being a peer of Progress and became a drill-down of it.** It replays a training session, which is something you go and look at *because* Progress told you something; a link from there matches how it is actually used, and takes a seventh of the top-level space back. (Worth noting for anyone reading the code: Review shows *runs*, not imported games — the name suggests otherwise.)
+
+Four fit across a 393px phone without scrolling, which is the point of the exercise. A destination you have to swipe sideways to discover is one you forget exists.
+
+Two things fell out of the move that were nothing to do with structure:
+
+- Train's empty state said *"Save a Lichess token on the Checks tab first"* — a tab that no longer exists, in red, with no way to act on it. It is now an empty state with a button that goes where the problem is solved. **A message naming a place is worse than a control that takes you there**, and it rots the moment anything is renamed.
+- That message and the banner above the tabs said the same thing twice. The banner went; the one in the place the problem occurs stayed.
+
+#### A vocabulary, because "mostly agreed" is not a design system
+
+Six colours were re-declared at the top of nine files and 450 inline style objects each decided their own padding, radius and type size. Nothing was wrong. The problem is that a panel on Progress and a panel on Mistakes were the same *by coincidence*, so they drifted apart every time either was touched.
+
+`src/ui/theme.ts` names values by role — `space.card`, not `12` — so changing what a card's padding means changes it everywhere at once. `src/ui/primitives.tsx` is six shapes: `Section`, `Panel`, `Note`, `Field`, `Button`, `Disclosure`, plus `Stat`/`Row`/`Empty`. Deliberately small: a seventh would mostly be one of the six with a different opinion, and **a component with eight boolean flags is a stylesheet wearing a costume**.
+
+Two details worth keeping:
+
+- `Field` renders a real `<label>` wrapping its input, so tapping the words moves focus. On a phone that roughly doubles every target in a form for no layout cost.
+- `Disclosure` is a native `<details>`, not state plus a chevron: keyboard accessible, findable by the browser's own in-page search *while closed*, and incapable of getting stuck in a state React forgot about.
+
+**Unifying the colours changed some of them, on purpose.** The old `GOOD` was `#0ca30c` and the old `CRITICAL` was `#d03b3b` — both thin against white. They now resolve to `color.good` and `color.bad`, which are darker and pass contrast. Every file keeps its local `const GOOD = color.good` alias, so the diff is one line per constant and the values have exactly one home.
+
+#### What is NOT done
+
+Layout inside Train, Progress and Quiz still uses inline styles; only the colours were unified there, plus the empty states and `SyncStatus` rebuilt on the primitives. Restyling those screens onto `Section`/`Panel` is the remaining half and is deliberately separate — Train alone is 1400 lines and rewriting its layout in the same pass as the navigation would have made any regression impossible to attribute.
+
+#### Looking, as a build step
+
+`scripts/shots.mjs` (`npm run shots`) screenshots all four tabs at phone and desktop widths into `.shots/`. Not an assertion — a way to look. **Every layout bug in this project so far was found by a person opening the app**, never by the test suite, which only ever knew that the DOM parsed. This makes opening it cheap enough to do after every change.
+
+Its honest limit: the container has no training data, so the shots are all empty states. Populated layouts still have to be checked on a real device with a real deck.
+
+
+### M13 — Chesshire, dark, and an import that survives you
+
+#### An import that keeps going
+
+Import state — `running`, `progress`, `result` — lived in React state inside the `ImportGames` component. Switching tab unmounted it, and three things followed, of which only the first was obvious:
+
+1. The work carried on and kept writing to the database, but every progress update went to a component that no longer existed.
+2. Coming back showed an idle screen, because a freshly mounted component starts idle. **The import looked cancelled. It was not.**
+3. Pressing Import again then started a *second concurrent run* on top of the first.
+
+Analysing games takes minutes. Any design that requires someone to sit and watch a tab for minutes is going to be wrong the first time they do anything else, which is immediately.
+
+`src/data/importRunner.ts` owns the run at module scope; views subscribe. **Unmounting a view is now unrelated to whether the work continues**, which is the correct relationship between the two. The progress bar therefore also appears for a run you did not start on this screen — a background pass, or a manual one from before you switched tabs.
+
+**Explicit beats implicit.** A background import still stands down when training starts, because the engine is single and serialised and a drill move must not queue behind a game analysis. A run you pressed a button for does not: you asked for it by name, and having it silently abandon itself because you looked at another screen is the same failure in a different costume. `kind: 'manual' | 'background'` is the whole of that distinction.
+
+The bar is determinate only once the total is known. During the fetch there is no denominator, so it runs indeterminate rather than inventing a percentage — §1.1 again, at the smallest possible scale.
+
+#### Dark mode cost nothing, because of a decision made in M12
+
+The colour tokens became `var(--ink)` and friends, with the values in `index.css` under three cascading states: `:root` for light, `prefers-color-scheme: dark`, then `[data-theme]` last so an explicit choice wins in both directions.
+
+**No component changed.** An inline style saying `color: var(--ink)` is resolved by the browser against whichever palette is in force, so the 450 inline style objects that looked like technical debt in M12 turned out to be theme-agnostic by accident. This is the payoff for having centralised the tokens a step earlier rather than reaching for dark mode first.
+
+Three things worth recording:
+
+- **Dark is not light inverted.** Pure white on pure black vibrates, so the text stops short of white and the page short of black. Accents lift, because a colour that reads solid on white looks muddy on dark. The `*Soft` fills become dark tints — a pale wash would glow like a bulb in the middle of the screen.
+- **`color-scheme: dark` earns its line.** It is what makes the browser's own widgets — number inputs, scrollbars, focus rings — follow. Without it the form controls stay light and look like a rendering fault.
+- **The one real constraint:** a `var()` string cannot be concatenated into a new colour. `` `${color.bad}10` `` used to make a 6% tint and now produces nothing at all. Four places did this; they use the `*Soft` tokens now, which is what those exist for. Every hardcoded `#fff` background had to go the same way — `Button`'s default surface was invisible on a dark page.
+
+The control is three-way, not a switch. "Follow the system" is a real answer that a two-state toggle cannot express, and the usual workaround — a toggle that quietly stops following once touched — hides the most useful setting behind an interaction nobody knows to avoid. A phone that goes dark at sunset is not always right about the room you are in.
+
+The theme is applied in `main.tsx` **before render**, not in an effect: applying it after the first paint is exactly the flash of the wrong theme that every implementation is judged by.
+
+#### The name
+
+**Chesshire.** It matches the mark, which the previous name never did — the icon has been a Cheshire cat since M11.1 while the app was called after a jackal. It is also a pun that works in the language the app is written in.
+
+The repo is renamed too, and one thing about that is worth stating because I got it wrong first time and said so: **`/Schackal/` and `/Chesshire/` are the same origin.** Storage is keyed by scheme, host and port; the path is not part of an origin. So the deck, the token, the settings and the imported games all carry across untouched. What actually breaks is narrower: an installed copy points at the old `start_url` and needs reinstalling, and old links depend on GitHub's redirect for a renamed repository.
+
+`BASE_PATH` is derived from `git remote get-url origin`, so the deploy follows the rename with no edit — which is the payoff for deriving it in M8 rather than hardcoding it.
+
+#### The mark, in the app
+
+The header shows `icon.svg` — the same file the home-screen icons are generated from, so the thing you tap and the thing you land on agree.
+
+#### Screenshots are half as useful in one palette
+
+`npm run shots` now takes every tab at both widths **and both colour schemes**. A palette nobody looks at is a palette nobody has checked, and the first pass through it found two real faults: inactive tab labels hardcoded to `#444`, which on a dark page reads as disabled rather than available, and white-on-white buttons.
 
 ---
 

@@ -161,7 +161,6 @@ export function Drills() {
 
 	return (
 		<div>
-			<h2 style={{ margin: '0 0 4px' }}>Punishment generator — M2 audit</h2>
 			<p style={{ margin: '0 0 12px', fontSize: 14, opacity: 0.75, maxWidth: 820 }}>
 				This is the project&apos;s go/no-go gate. Each refutation is re-checked by an
 				independent deeper search — the <strong>Verified</strong> column, not eyeballing, is what

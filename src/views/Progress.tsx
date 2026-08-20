@@ -24,18 +24,19 @@ import {
 } from '../domain/transfer';
 import { SyncStatus } from '../components/SyncStatus';
 import { accuracy, freeplayLosses, type AnswerRow, type RunRow } from '../domain/progress';
+import { color } from '../ui/theme';
 
 // Single series, so no categorical palette to validate — one hue for magnitude,
 // status colours for state, and every status carries a label rather than relying
 // on colour alone.
-const INK = '#0b0b0b';
-const INK_2 = '#52514e';
+const INK = color.ink;
+const INK_2 = color.ink2;
 const SERIES = '#2a78d6';
-const CRITICAL = '#d03b3b';
-const GOOD = '#0ca30c';
-const GRID = '#e6e5e2';
+const CRITICAL = color.bad;
+const GOOD = color.good;
+const GRID = color.line;
 
-export function Progress() {
+export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 	const [answers, setAnswers] = useState<AnswerRow[]>([]);
 	const [runs, setRuns] = useState<RunRow[]>([]);
 	const [loaded, setLoaded] = useState(false);
@@ -206,6 +207,30 @@ export function Progress() {
 					}
 				/>
 			</div>
+
+			{/* Reviewing one session is a drill-down of this screen rather than a
+				peer of it — you go and look at a game BECAUSE something here said
+				so — which is why it is a link from Progress and no longer a tab of
+				its own. */}
+			{onOpenReview && (
+				<div style={{ marginBottom: 16 }}>
+					<button
+						onClick={onOpenReview}
+						style={{
+							border: `1px solid ${GRID}`,
+							background: '#fff',
+							borderRadius: 6,
+							padding: '8px 12px',
+							minHeight: 40,
+							fontSize: 14,
+							cursor: 'pointer',
+							color: INK,
+						}}
+					>
+						Replay a training session →
+					</button>
+				</div>
+			)}
 
 			<section
 				style={{ border: `1px solid ${GRID}`, borderRadius: 10, padding: 16, marginBottom: 16 }}

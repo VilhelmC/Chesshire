@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Build } from './views/Build';
-import { Coverage } from './views/Coverage';
-import { Drills } from './views/Drills';
+import { Settings } from './views/Settings';
 import { Train } from './views/Train';
 import { Progress } from './views/Progress';
 import { Review } from './views/Review';
@@ -10,17 +8,36 @@ import type { TrainHandoff } from './views/Train';
 import { DebugCorner } from './components/DebugCorner';
 import { InstallBar } from './components/InstallBar';
 import { Footer } from './components/Footer';
-import { completeSignIn, hasToken, type SignInResult } from './data/lichessAuth';
+import { completeSignIn, type SignInResult } from './data/lichessAuth';
 import { startBackgroundImport } from './data/autoImport';
 import { useViewport } from './components/useViewport';
+import { color } from './ui/theme';
+import { assetUrl } from './base';
 
-type Tab = 'train' | 'quiz' | 'review' | 'progress' | 'coverage' | 'drills' | 'checks';
+/**
+ * Four destinations, down from seven.
+ *
+ * The three that went — the dependency checks, the coverage audit and the
+ * punishment generator — were instruments for building the app rather than
+ * places to train, and their own headings said so ("M0", "M2 audit"). They now
+ * live folded shut inside Settings. A tab bar should describe what the app is
+ * for, not the order in which it was assembled.
+ *
+ * Review is not a peer of Progress; it is a drill-down of it. Looking at one
+ * session in detail is what you do BECAUSE of something Progress told you, so
+ * it is reached from there rather than from the top level.
+ */
+type Tab = 'train' | 'quiz' | 'progress' | 'settings';
 
 export default function App() {
 	const [tab, setTab] = useState<Tab>('train');
 	const vp = useViewport();
 	/** A position handed from Review to Train, so a game can be played on from there. */
 	const [handoff, setHandoff] = useState<TrainHandoff>(null);
+	/** Progress drilled into one session. */
+	const [reviewing, setReviewing] = useState(false);
+	/** Bumped when games are imported, so the deck reloads. */
+	const [dataVersion, setDataVersion] = useState(0);
 
 	// The return leg of a Lichess sign-in, if that is what this page load is.
 	// Announced rather than left silent: the user pressed a button, went to
@@ -55,8 +72,26 @@ export default function App() {
 				393 available, spent on something you already know. The tabs still
 				say where you are. */}
 			{vp.height > 520 && (
-				<header style={{ marginBottom: vp.phone ? 10 : 16 }}>
-					<h1 style={{ margin: 0, fontSize: vp.phone ? 24 : undefined }}>Schackal</h1>
+				<header
+					style={{
+						marginBottom: vp.phone ? 10 : 16,
+						display: 'flex',
+						alignItems: 'center',
+						gap: vp.phone ? 10 : 14,
+					}}
+				>
+					{/* The mark, at the size it was drawn to survive. It is the same
+						file the home-screen icon is generated from, so the thing you
+						tap and the thing you land on agree. */}
+					<img
+						src={assetUrl('icon.svg')}
+						alt=""
+						width={vp.phone ? 34 : 46}
+						height={vp.phone ? 34 : 46}
+						style={{ borderRadius: 8, flexShrink: 0 }}
+					/>
+					<div>
+					<h1 style={{ margin: 0, fontSize: vp.phone ? 24 : undefined }}>Chesshire</h1>
 					{/* The tagline is the first thing to go when the screen is the
 						scarce resource. */}
 					{!vp.phone && (
@@ -64,6 +99,7 @@ export default function App() {
 							Offbook trainer — drills what happens when the book runs out.
 						</p>
 					)}
+					</div>
 				</header>
 			)}
 
@@ -78,8 +114,11 @@ export default function App() {
 						marginBottom: 12,
 						borderRadius: 8,
 						fontSize: 14,
-						border: `1px solid ${signIn.status === 'ok' ? '#2e7d32' : '#c62828'}`,
-						background: signIn.status === 'ok' ? '#2e7d3210' : '#c6282810',
+						// Tokens, not concatenated hex: `${color.bad}10` cannot work
+						// once the colours are var() references. That is what the
+						// *Soft tokens exist for.
+						border: `1px solid ${signIn.status === 'ok' ? color.good : color.bad}`,
+						background: signIn.status === 'ok' ? color.goodSoft : color.badSoft,
 					}}
 				>
 					{signIn.status === 'ok'
@@ -91,35 +130,15 @@ export default function App() {
 				</div>
 			)}
 
-			{/* A new user has no token, and without one Train cannot check a single
-				move. Sending them to the tab that fixes it is better than letting
-				them meet a 401 first. */}
-			{!hasToken() && tab === 'train' && (
-				<div
-					style={{
-						padding: '8px 12px',
-						marginBottom: 12,
-						borderRadius: 8,
-						fontSize: 14,
-						border: '1px solid #1565c0',
-						background: '#1565c010',
-					}}
-				>
-					Training needs a Lichess sign-in — the opening explorer refuses anonymous requests.{' '}
-					<button onClick={() => setTab('checks')} style={{ fontSize: 13, marginLeft: 6 }}>
-						Set it up
-					</button>
-				</div>
-			)}
-
-			{/* Seven tabs do not fit on a phone. Scrolled rather than collapsed into
-				a menu: every destination stays visible by swiping, and nothing is
-				hidden behind a control you have to know about first. */}
+			{/* Four now fit across a phone without scrolling, which is the point:
+				a destination you have to swipe to find is one you forget exists.
+				Kept scrollable anyway, for the narrowest screens and the longest
+				translations. */}
 			<nav
 				style={{
 					display: 'flex',
 					gap: 4,
-					borderBottom: '1px solid #ddd',
+					borderBottom: `1px solid ${color.line}`,
 					marginBottom: vp.phone ? 14 : 20,
 					overflowX: 'auto',
 					WebkitOverflowScrolling: 'touch',
@@ -132,37 +151,58 @@ export default function App() {
 				<TabButton active={tab === 'quiz'} onClick={() => setTab('quiz')}>
 					Mistakes
 				</TabButton>
-				<TabButton active={tab === 'review'} onClick={() => setTab('review')}>
-					Review
-				</TabButton>
-				<TabButton active={tab === 'progress'} onClick={() => setTab('progress')}>
+				<TabButton
+					active={tab === 'progress'}
+					onClick={() => {
+						setTab('progress');
+						setReviewing(false);
+					}}
+				>
 					Progress
 				</TabButton>
-				<TabButton active={tab === 'coverage'} onClick={() => setTab('coverage')}>
-					Analysis
-				</TabButton>
-				<TabButton active={tab === 'drills'} onClick={() => setTab('drills')}>
-					Drill research
-				</TabButton>
-				<TabButton active={tab === 'checks'} onClick={() => setTab('checks')}>
-					Checks &amp; token
+				<TabButton active={tab === 'settings'} onClick={() => setTab('settings')}>
+					Settings
 				</TabButton>
 			</nav>
 
-			{tab === 'train' && <Train handoff={handoff} onHandoffUsed={() => setHandoff(null)} />}
-			{tab === 'quiz' && <Quiz />}
-			{tab === 'review' && (
-				<Review
-					onPlayFrom={(h) => {
-						setHandoff(h);
-						setTab('train');
-					}}
+			{tab === 'train' && (
+				<Train
+					handoff={handoff}
+					onHandoffUsed={() => setHandoff(null)}
+					onNeedsToken={() => setTab('settings')}
 				/>
 			)}
-			{tab === 'progress' && <Progress />}
-			{tab === 'coverage' && <Coverage />}
-			{tab === 'drills' && <Drills />}
-			{tab === 'checks' && <Build />}
+			{tab === 'quiz' && <Quiz key={dataVersion} onOpenSettings={() => setTab('settings')} />}
+
+			{tab === 'progress' &&
+				(reviewing ? (
+					<>
+						<button
+							onClick={() => setReviewing(false)}
+							style={{
+								border: 'none',
+								background: 'none',
+								color: '#1565c0',
+								fontSize: 14,
+								padding: '8px 0',
+								cursor: 'pointer',
+								minHeight: 40,
+							}}
+						>
+							← Back to progress
+						</button>
+						<Review
+							onPlayFrom={(h) => {
+								setHandoff(h);
+								setTab('train');
+							}}
+						/>
+					</>
+				) : (
+					<Progress onOpenReview={() => setReviewing(true)} />
+				))}
+
+			{tab === 'settings' && <Settings onImported={() => setDataVersion((v) => v + 1)} />}
 
 			<Footer />
 

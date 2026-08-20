@@ -1109,7 +1109,7 @@ function roleOfChar(ch: string): string {
 /** PGN for the moves played so far. */
 export function toPgn(state: RunState, lineNames: string[]): string {
 	const headers = [
-		'[Event "Schackal training run"]',
+		'[Event "Chesshire training run"]',
 		'[Site "local"]',
 		'[White "?"]',
 		'[Black "?"]',

@@ -10,37 +10,30 @@
 
 import { useEffect, useState } from 'react';
 import { subscribeSync, syncState, runBackgroundImport, type SyncState } from '../data/autoImport';
-
-const INK_2 = '#52514e';
+import { Note, Button, Row } from '../ui/primitives';
+import { color } from '../ui/theme';
 
 export function SyncStatus() {
 	const [s, setS] = useState<SyncState>(syncState);
 	useEffect(() => subscribeSync(setS), []);
 
 	return (
-		<p style={{ fontSize: 12, color: INK_2, margin: '0 0 10px' }}>
-			{s.running ? (
-				<>Importing… {s.note}</>
-			) : s.error ? (
-				<span style={{ color: '#c62828' }}>Last import failed: {s.error}</span>
-			) : s.lastSuccessAt ? (
-				<>Games last imported {describeWhen(s.lastSuccessAt)}.</>
-			) : (
-				<>No automatic import has run yet on this device.</>
-			)}{' '}
-			<button
-				onClick={() => void runBackgroundImport({ force: true })}
-				disabled={s.running}
-				style={{
-					fontSize: 11,
-					padding: '2px 6px',
-					marginLeft: 4,
-					cursor: s.running ? 'default' : 'pointer',
-				}}
-			>
-				{s.running ? 'running' : 'check now'}
-			</button>
-		</p>
+		<Row>
+			<Note style={{ flex: '1 1 240px' }}>
+				{s.running ? (
+					<>Importing… {s.note}</>
+				) : s.error ? (
+					<span style={{ color: color.bad }}>Last import failed: {s.error}</span>
+				) : s.lastSuccessAt ? (
+					<>Games last imported {describeWhen(s.lastSuccessAt)}.</>
+				) : (
+					<>No automatic import has run yet on this device.</>
+				)}
+			</Note>
+			<Button kind="quiet" onClick={() => void runBackgroundImport({ force: true })} disabled={s.running}>
+				{s.running ? 'Running…' : 'Check now'}
+			</Button>
+		</Row>
 	);
 }
 

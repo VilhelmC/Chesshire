@@ -1,9 +1,103 @@
 /*
  * The only global stylesheet. Everything else is inline styles on components.
  *
- * Keyframes are the exception that forces a stylesheet to exist at all: CSS
- * animations cannot be expressed as an inline style attribute.
+ * Two things force it to exist: keyframes, which cannot be written as an inline
+ * style attribute, and the colour tokens below, which cannot respond to a media
+ * query from inside one.
  */
+
+/*
+ * COLOUR LIVES HERE, AS CUSTOM PROPERTIES
+ *
+ * The app styles itself with inline style objects, which cannot respond to a
+ * media query. Custom properties can: a component writes `color: var(--ink)`
+ * into an inline style and the browser resolves it against whichever palette is
+ * currently in force. So dark mode needed no component to change at all — only
+ * these declarations, and src/ui/theme.ts pointing at them.
+ *
+ * Three states, in cascade order:
+ *   :root                          light, the default
+ *   prefers-color-scheme: dark     the system asked for dark
+ *   [data-theme="..."]             the user overruled the system
+ *
+ * The explicit attribute comes last so it wins in both directions — someone in
+ * a bright room at night is not helped by an app that only knows what the OS
+ * thinks.
+ */
+
+:root {
+	--ink: #1a1a19;
+	--ink2: #52514e;
+	--ink3: #8a8884;
+	--page: #ffffff;
+	--surface: #faf9f7;
+	--line: #e6e5e2;
+	--accent: #1565c0;
+	--accent-soft: #e8f1fb;
+	--good: #0f7d32;
+	--warn: #b07500;
+	--bad: #c62828;
+	--good-soft: #e9f5ec;
+	--warn-soft: #fdf4e3;
+	--bad-soft: #fbeaea;
+	color-scheme: light;
+}
+
+/*
+ * Dark is not light inverted. Pure white on pure black vibrates, so the text
+ * stops short of white and the page stops short of black; the accents are
+ * lifted because a colour that reads as solid on white looks muddy on dark;
+ * and the "soft" fills become dark tints rather than pale washes, which would
+ * otherwise glow like a lightbulb in the middle of the screen.
+ */
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme='light']) {
+		--ink: #e8e6e1;
+		--ink2: #a8a49c;
+		--ink3: #77736c;
+		--page: #16161a;
+		--surface: #1e1e23;
+		--line: #32323a;
+		--accent: #6aa9f0;
+		--accent-soft: #1b2b40;
+		--good: #55c47a;
+		--warn: #e0a63c;
+		--bad: #f0736e;
+		--good-soft: #16301f;
+		--warn-soft: #322613;
+		--bad-soft: #37201f;
+		color-scheme: dark;
+	}
+}
+
+:root[data-theme='dark'] {
+	--ink: #e8e6e1;
+	--ink2: #a8a49c;
+	--ink3: #77736c;
+	--page: #16161a;
+	--surface: #1e1e23;
+	--line: #32323a;
+	--accent: #6aa9f0;
+	--accent-soft: #1b2b40;
+	--good: #55c47a;
+	--warn: #e0a63c;
+	--bad: #f0736e;
+	--good-soft: #16301f;
+	--warn-soft: #322613;
+	--bad-soft: #37201f;
+	color-scheme: dark;
+}
+
+/*
+ * The page itself. Without this the app paints its panels on the browser's
+ * default white and dark mode is a set of dark cards floating on a white sheet.
+ */
+html,
+body {
+	background: var(--page);
+	color: var(--ink);
+}
+
 
 @keyframes schackal-pulse {
 	0%,

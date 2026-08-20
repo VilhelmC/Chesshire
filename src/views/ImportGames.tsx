@@ -8,7 +8,6 @@
 
 import { useEffect, useState } from 'react';
 import {
-	importGames,
 	getUsernames,
 	setUsernames,
 	importedGames,
@@ -22,8 +21,19 @@ import type { ImportedGameRow } from '../data/db';
 import { Move } from '../components/Move';
 import { ThinkingBar } from '../components/Thinking';
 import { useViewport } from '../components/useViewport';
+import { color, space, radius, text as textScale } from '../ui/theme';
+import { Button } from '../ui/primitives';
+import {
+	runState,
+	subscribeRun,
+	startRun,
+	cancelRun,
+	describeRun,
+	runFraction,
+	type RunState,
+} from '../data/importRunner';
 
-const INK_2 = '#52514e';
+const INK_2 = color.ink2;
 
 export function ImportGames({ onImported }: { onImported: () => void }) {
 	const saved = getUsernames();
@@ -31,10 +41,15 @@ export function ImportGames({ onImported }: { onImported: () => void }) {
 	const [chesscom, setChesscom] = useState(saved.chesscom);
 	const [max, setMax] = useState(10);
 	const [minLoss, setMinLoss] = useState(MISTAKE_CP);
-	const [running, setRunning] = useState(false);
-	const [cancel, setCancel] = useState(false);
-	const [progress, setProgress] = useState<ImportProgress | null>(null);
-	const [result, setResult] = useState<ImportResult | null>(null);
+	// The run itself lives in data/importRunner.ts, not here. Analysing games
+	// takes minutes, and state that dies when this component unmounts means the
+	// import appears to have been cancelled the moment you look at another tab.
+	// This view subscribes to a run; it does not own one.
+	const [run_, setRun] = useState(runState);
+	useEffect(() => subscribeRun(setRun), []);
+	const running = run_.running;
+	const progress = run_.progress;
+	const result = run_.result;
 	const [history, setHistory] = useState<ImportedGameRow[]>([]);
 	const [repairNote, setRepairNote] = useState<string | null>(null);
 
@@ -44,41 +59,18 @@ export function ImportGames({ onImported }: { onImported: () => void }) {
 
 	async function run(force = false, overrideMax?: number) {
 		setUsernames({ lichess, chesscom });
-		setRunning(true);
-		setCancel(false);
-		setResult(null);
-		setProgress(null);
-
-		// The cancel flag lives outside React state so the loop sees it
-		// immediately rather than on the next render.
-		cancelFlag.value = false;
-
-		try {
-			const r = await importGames({
-				lichess,
-				chesscom,
-				max: overrideMax ?? max,
-				minLoss,
-				force,
-				onProgress: setProgress,
-				shouldCancel: () => cancelFlag.value,
-			});
-			setResult(r);
-			setHistory(await importedGames());
-			onImported();
-		} catch (e) {
-			setProgress({
-				stage: 'done',
-				note: (e as Error).message,
-				done: 0,
-				total: 0,
-				sources: [],
-				cards: 0,
-				skipped: 0,
-			});
-		} finally {
-			setRunning(false);
-		}
+		// 'manual' matters: a run someone pressed a button for is never cancelled
+		// by them going to look at something else.
+		await startRun({
+			kind: 'manual',
+			lichess,
+			chesscom,
+			max: overrideMax ?? max,
+			minLoss,
+			force,
+		});
+		setHistory(await importedGames());
+		onImported();
 	}
 
 	// Rows imported before moves were kept. They are excluded from the transfer
@@ -109,12 +101,14 @@ export function ImportGames({ onImported }: { onImported: () => void }) {
 	}
 
 	return (
-		<section style={{ borderTop: '1px solid #ddd', paddingTop: 16, marginTop: 20 }}>
-			<h3 style={{ margin: '0 0 4px' }}>Import from Lichess &amp; Chess.com</h3>
-			<p style={{ fontSize: 13, color: INK_2, marginTop: 0, maxWidth: 560 }}>
-				Mines your recent games for moves that cost material or position, and files each as a
-				card. Games already analysed are skipped, so running this again only picks up what is
-				new. At most four cards per game, worst first.
+		<section>
+			{/* No heading here: the Section this sits inside already carries one, and
+				a second larger one underneath it inverted the hierarchy — the detail
+				shouting louder than the thing it belongs to. */}
+			<p style={{ fontSize: 12, color: INK_2, margin: '0 0 10px', maxWidth: 560 }}>
+				Mistakes are mined from your recent games and filed as cards — at most four per game,
+				worst first. Already-analysed games are skipped, so running it again only picks up what
+				is new.
 			</p>
 
 			{(missingMoves.length > 0 || repairNote) && (
@@ -192,24 +186,22 @@ export function ImportGames({ onImported }: { onImported: () => void }) {
 				</div>
 
 				<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-					<button onClick={() => void run(false)} disabled={running}>
+					{/* Themed buttons rather than bare <button>: a browser default
+						button is grey-on-grey once the page goes dark. */}
+					<Button kind="primary" onClick={() => void run(false)} disabled={running}>
 						{running ? 'Importing…' : 'Import new games'}
-					</button>
-					<button onClick={() => void run(true)} disabled={running} style={{ fontSize: 13 }}>
+					</Button>
+					<Button onClick={() => void run(true)} disabled={running}>
 						Re-analyse all
-					</button>
-					{running && (
-						<button
-							onClick={() => {
-								cancelFlag.value = true;
-								setCancel(true);
-							}}
-							style={{ fontSize: 13 }}
-						>
-							{cancel ? 'Stopping…' : 'Cancel'}
-						</button>
-					)}
+					</Button>
+					{running && <Button kind="quiet" onClick={cancelRun}>Cancel</Button>}
 				</div>
+
+				{/* Shown whenever a run is going, including one started before this
+					view existed — a background pass, or a manual one from before you
+					switched tabs. Leaving is no longer indistinguishable from
+					stopping. */}
+				<ImportProgressBar state={run_} />
 			</div>
 
 			<p style={{ fontSize: 12, color: INK_2, maxWidth: 560 }}>
@@ -267,14 +259,15 @@ export function ImportGames({ onImported }: { onImported: () => void }) {
 }
 
 /** Outside React state so the analysis loop sees a cancel on the same tick. */
-const cancelFlag = { value: false };
-
 const inputStyle: React.CSSProperties = {
+	// 16px: anything smaller makes iOS Safari zoom the page on focus.
+	fontSize: 16,
+	color: color.ink,
+	background: color.page,
+	border: `1px solid ${color.line}`,
+	borderRadius: 4,
 	padding: 6,
 	minWidth: 0,
-	// 16px: below that, mobile browsers zoom the page in on focus and then leave
-	// you scrolled sideways.
-	fontSize: 16,
 };
 
 function Field({
@@ -387,8 +380,8 @@ function ResultBlock({ r }: { r: ImportResult }) {
 					marginTop: 12,
 					padding: 10,
 					borderRadius: 8,
-					border: '1px solid #c62828',
-					background: '#c6282810',
+					border: `1px solid ${color.bad}`,
+					background: color.badSoft,
 				}}
 			>
 				<strong>No games were analysed — the engine did not start.</strong>
@@ -446,6 +439,47 @@ function ResultBlock({ r }: { r: ImportResult }) {
 					</li>
 				))}
 			</ol>
+		</div>
+	);
+}
+
+/**
+ * How far along an import is, if one is going.
+ *
+ * A determinate bar where the total is known and an indeterminate note where it
+ * is not — a bar that invents a percentage during the fetch, when the number of
+ * games is not yet known, would be showing a number it does not have.
+ */
+function ImportProgressBar({ state }: { state: RunState }) {
+	if (!state.running) return null;
+	const f = runFraction(state);
+
+	return (
+		<div style={{ marginTop: space.snug }}>
+			<div style={{ fontSize: textScale.note, color: color.ink2, marginBottom: space.hair }}>
+				{describeRun(state)}
+				{state.kind === 'background' && ' · started automatically'}
+			</div>
+			<div
+				style={{
+					height: 6,
+					borderRadius: radius.pill,
+					background: color.line,
+					overflow: 'hidden',
+				}}
+				role="progressbar"
+				aria-valuenow={f === null ? undefined : Math.round(f * 100)}
+			>
+				<div
+					style={{
+						height: '100%',
+						width: f === null ? '100%' : `${Math.round(f * 100)}%`,
+						background: color.accent,
+						opacity: f === null ? 0.35 : 1,
+						transition: 'width 300ms linear',
+					}}
+				/>
+			</div>
 		</div>
 	);
 }

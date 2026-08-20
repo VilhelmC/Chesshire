@@ -13,9 +13,10 @@
 import { useMemo, useState } from 'react';
 import { searchOpenings, sideToMoveAfter, type Opening } from '../domain/openings';
 import { MoveLine } from './Move';
+import { color } from '../ui/theme';
 
-const INK_2 = '#52514e';
-const GRID = '#e6e5e2';
+const INK_2 = color.ink2;
+const GRID = color.line;
 
 export function OpeningSearch({
 	colour,

@@ -22,10 +22,11 @@ import {
 	type Quality,
 } from '../domain/review';
 import type { AnswerRow, RunRow } from '../domain/progress';
+import { color } from '../ui/theme';
 
-const INK = '#0b0b0b';
-const INK_2 = '#52514e';
-const GRID = '#e6e5e2';
+const INK = color.ink;
+const INK_2 = color.ink2;
+const GRID = color.line;
 const SERIES = '#2a78d6';
 
 export function Review({

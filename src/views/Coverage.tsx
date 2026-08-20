@@ -52,7 +52,6 @@ export function Coverage() {
 	return (
 		<div>
 			<header style={{ marginBottom: 16 }}>
-				<h2 style={{ margin: 0 }}>Coverage audit — {spec.id}</h2>
 				<p style={{ margin: '4px 0', opacity: 0.7, fontSize: 14 }}>
 					{spec.line} · band {CONFIG.explorer.ratings.join('/')} ·{' '}
 					{CONFIG.explorer.speeds.join('+')}

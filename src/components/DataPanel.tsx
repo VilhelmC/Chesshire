@@ -16,10 +16,11 @@ import {
 	type RestoreResult,
 	type StorageStatus,
 } from '../data/backup';
+import { color } from '../ui/theme';
 
-const INK_2 = '#52514e';
-const GRID = '#e6e5e2';
-const GOOD = '#2e7d32';
+const INK_2 = color.ink2;
+const GRID = color.line;
+const GOOD = color.good;
 const BAD = '#c62828';
 
 export function DataPanel() {
@@ -75,7 +76,6 @@ export function DataPanel() {
 
 	return (
 		<section style={{ borderTop: `1px solid ${GRID}`, paddingTop: 16, marginTop: 16 }}>
-			<h3 style={{ margin: '0 0 4px' }}>Your data</h3>
 			<p style={{ fontSize: 13, color: INK_2, marginTop: 0, maxWidth: 580 }}>
 				Everything lives in this browser. Nothing is sent anywhere, and there is no account to
 				recover from — so the backup is the only copy that survives a cleared browser or a new

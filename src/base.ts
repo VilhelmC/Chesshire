@@ -14,7 +14,7 @@
 //
 // So: no root-absolute paths to our own assets anywhere. Build them here.
 
-/** Trailing-slash base path the app is served under: '/' or '/Schackal/'. */
+/** Trailing-slash base path the app is served under: '/' or '/Chesshire/'. */
 export const BASE: string = import.meta.env.BASE_URL || '/';
 
 /**

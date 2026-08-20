@@ -16,12 +16,13 @@ import { Move } from './Move';
 import { accuracyOf, type TreeNode, type TreeStats } from '../domain/tree';
 import { nameForPath } from '../domain/openings';
 import { useViewport } from './useViewport';
+import { color } from '../ui/theme';
 
-const INK_2 = '#52514e';
-const GOOD = '#0ca30c';
-const WARNING = '#fab219';
-const CRITICAL = '#d03b3b';
-const GRID = '#e6e5e2';
+const INK_2 = color.ink2;
+const GOOD = color.good;
+const WARNING = color.warn;
+const CRITICAL = color.bad;
+const GRID = color.line;
 
 /** Attempts below which an accuracy is not worth colouring. */
 const MIN_MEANINGFUL = 3;

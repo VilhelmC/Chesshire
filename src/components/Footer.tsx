@@ -11,7 +11,7 @@
 
 import { useViewport } from './useViewport';
 
-export const SOURCE_URL = 'https://github.com/VilhelmC/Schackal';
+export const SOURCE_URL = 'https://github.com/VilhelmC/Chesshire';
 
 export function Footer() {
 	const vp = useViewport();
@@ -31,7 +31,7 @@ export function Footer() {
 			}}
 		>
 			<span>
-				Schackal — free software under{' '}
+				Chesshire — free software under{' '}
 				<a href={`${SOURCE_URL}/blob/main/LICENSE`} target="_blank" rel="noreferrer">
 					GPL-3.0-or-later
 				</a>

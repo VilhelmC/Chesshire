@@ -150,7 +150,6 @@ export function Build() {
 			</div>
 
 			<div style={{ minWidth: 440, flex: 1 }}>
-				<h2>M0 — dependency checks</h2>
 
 				<CheckRow label="Board + chessops" check={boardCheck} />
 

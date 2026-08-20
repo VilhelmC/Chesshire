@@ -32,6 +32,7 @@ import {
 import { applyUci, replayLine } from '../domain/chess';
 import { getToken } from '../data/explorer';
 import { markTraining } from '../data/autoImport';
+import { Empty, Button } from '../ui/primitives';
 import type { ToolbarAction } from '../components/Toolbar';
 import { BoardPanel } from '../components/BoardPanel';
 import { Move, MoveLine } from '../components/Move';
@@ -74,7 +75,16 @@ const EMPTY: Stats = { runs: 0, moves: 0, correct: 0, punished: 0, missed: 0, sh
 
 export type TrainHandoff = { moves: string[]; ply: number; ourColour: 'w' | 'b' } | null;
 
-export function Train({ handoff, onHandoffUsed }: { handoff?: TrainHandoff; onHandoffUsed?: () => void }) {
+export function Train({
+	handoff,
+	onHandoffUsed,
+	onNeedsToken,
+}: {
+	handoff?: TrainHandoff;
+	onHandoffUsed?: () => void;
+	/** Somewhere to send someone who cannot train yet, rather than naming a tab. */
+	onNeedsToken?: () => void;
+}) {
 	const [state, setState] = useState<RunState | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -712,10 +722,14 @@ export function Train({ handoff, onHandoffUsed }: { handoff?: TrainHandoff; onHa
 
 	if (!getToken()) {
 		return (
-			<p style={{ color: '#c62828' }}>
-				Save a Lichess token on the Checks tab first — the opponent&apos;s mistakes come from
-				real games at your rating band.
-			</p>
+			<Empty>
+				<p style={{ margin: '0 0 10px', maxWidth: 460, display: 'inline-block' }}>
+					<strong>Sign in with Lichess to train.</strong> The opponent&apos;s moves — and their
+					mistakes — come from what players at your rating band actually play, and the opening
+					explorer refuses anonymous requests.
+				</p>
+				<div>{onNeedsToken && <Button kind="primary" onClick={onNeedsToken}>Sign in</Button>}</div>
+			</Empty>
 		);
 	}
 

@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { pwaState, subscribePWA, applyUpdate, promptInstall, type PWAState } from '../registerSW';
 import { useViewport } from './useViewport';
+import { color } from '../ui/theme';
 
 export function usePWA(): PWAState {
 	const [s, setS] = useState(pwaState);
@@ -21,7 +22,7 @@ export function InstallBar() {
 
 	if (s.updateReady) {
 		return (
-			<Strip tone="#1565c0">
+			<Strip tone={color.accent} fill={color.accentSoft}>
 				<Message>A new version is ready.</Message>
 				<Action onClick={applyUpdate}>Reload to update</Action>
 			</Strip>
@@ -31,11 +32,11 @@ export function InstallBar() {
 	if (!s.canInstall || dismissed) return null;
 
 	return (
-		<Strip tone="#2e7d32">
+		<Strip tone={color.good} fill={color.goodSoft}>
 			<Message>
 				{vp.phone
-					? 'Add Schackal to your home screen.'
-					: 'Install Schackal to open it without the browser.'}
+					? 'Add Chesshire to your home screen.'
+					: 'Install Chesshire to open it without the browser.'}
 			</Message>
 			<Action onClick={() => void promptInstall()}>Install</Action>
 			<Action onClick={() => setDismissed(true)} quiet>
@@ -45,7 +46,15 @@ export function InstallBar() {
 	);
 }
 
-function Strip({ tone, children }: { tone: string; children: React.ReactNode }) {
+function Strip({
+	tone,
+	fill,
+	children,
+}: {
+	tone: string;
+	fill: string;
+	children: React.ReactNode;
+}) {
 	return (
 		<div
 			style={{
@@ -57,7 +66,7 @@ function Strip({ tone, children }: { tone: string; children: React.ReactNode }) 
 				marginBottom: 12,
 				borderRadius: 8,
 				border: `1px solid ${tone}`,
-				background: `${tone}10`,
+				background: fill,
 				fontSize: 14,
 			}}
 		>

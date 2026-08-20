@@ -24,7 +24,7 @@ import { tmpdir } from 'node:os';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const BRANCH = 'gh-pages';
-const WORKTREE = join(tmpdir(), 'schackal-gh-pages');
+const WORKTREE = join(tmpdir(), 'chesshire-gh-pages');
 
 function git(args, opts = {}) {
 	return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', ...opts }).trim();

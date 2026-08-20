@@ -3,3 +3,4 @@ dist/
 public/engine/
 .DS_Store
 *.local
+.shots/

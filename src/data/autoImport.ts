@@ -19,15 +19,20 @@
 //
 // Analysing a game runs Stockfish over every one of your positions in it, so
 // this is not free and must never compete with the person actually using the
-// app. `markTraining(true)` makes the import stand down, and because both
+// app. `markTraining(true)` makes a BACKGROUND pass stand down, and because both
 // findMistakes and importGames check `shouldCancel` between positions, it stops
 // within about one search — not at the end of the game it was working on.
+//
+// A run the user started by pressing a button is not cancelled by anything
+// except asking. The run itself lives in data/importRunner.ts, at module scope,
+// so it survives leaving the tab — see the note there.
 //
 // It is capped, throttled to once a day, and it never runs without a token, a
 // username, or a network.
 // ---------------------------------------------------------------------------
 
-import { importGames, getUsernames, type ImportProgress } from './importGames';
+import { getUsernames } from './importGames';
+import { startRun, setTraining, isTraining, runState } from './importRunner';
 import { getToken } from './explorer';
 
 /** Once a day. A second pass the same evening would find nothing and cost a lot. */
@@ -86,8 +91,6 @@ function set(patch: Partial<SyncState>) {
 // Yielding to the person using the app
 // ---------------------------------------------------------------------------
 
-let training = false;
-let cancelled = false;
 
 /**
  * Called by the trainer while a run is live.
@@ -98,11 +101,8 @@ let cancelled = false;
  * belongs to whoever is looking at the screen.**
  */
 export function markTraining(on: boolean): void {
-	training = on;
-	if (on) {
-		cancelled = true;
-		return;
-	}
+	setTraining(on);
+	if (on) return;
 	// Retry on release, and this is not a nicety — Train is the tab the app
 	// OPENS on, so without it the conditions are "training" at every startup
 	// check and the import would never run at all for someone who trains and
@@ -115,10 +115,6 @@ export function markTraining(on: boolean): void {
 /** Long enough that flicking through tabs does not start a search each time. */
 const RELEASE_DELAY_MS = 5000;
 let releaseTimer: ReturnType<typeof setTimeout> | undefined;
-
-export function cancelBackgroundImport(): void {
-	cancelled = true;
-}
 
 // ---------------------------------------------------------------------------
 // Whether to run at all
@@ -163,7 +159,7 @@ export async function runBackgroundImport(
 			hasUsername: !!(users.lichess || users.chesscom),
 			hasToken: !!getToken(),
 			online: navigator.onLine !== false,
-			training,
+			training: isTraining(),
 		});
 		if (why) {
 			set({ note: why });
@@ -171,18 +167,28 @@ export async function runBackgroundImport(
 		}
 	}
 
-	cancelled = false;
+	// A run already in flight — the user may have pressed Import themselves —
+	// is not something to start a second one alongside.
+	if (runState().running) {
+		set({ note: 'an import is already running' });
+		return state;
+	}
+
 	writeTime(ATTEMPT_KEY, now);
 	set({ running: true, error: null, note: 'looking for new games…' });
 
 	try {
-		const r = await importGames({
+		const finished = await startRun({
+			kind: opts.force ? 'manual' : 'background',
 			lichess: users.lichess,
 			chesscom: users.chesscom,
 			max: BACKGROUND_MAX,
-			shouldCancel: () => cancelled || training,
-			onProgress: (p: ImportProgress) => set({ note: p.note }),
 		});
+		const r = finished.result;
+		if (!r) {
+			set({ running: false, error: finished.error, note: finished.error ?? 'nothing to do' });
+			return state;
+		}
 
 		if (r.engineError) {
 			// Not a silent zero. See §M9: a measurement failure must never be

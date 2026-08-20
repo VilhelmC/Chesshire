@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 const PORT = 4173;
 const HOST = `http://localhost:${PORT}`;
-// Set BASE_PATH to check the subpath deploy — `BASE_PATH=/Schackal/` is what
+// Set BASE_PATH to check the subpath deploy — `BASE_PATH=/Chesshire/` is what
 // GitHub Pages actually serves, and it is a different code path for every URL
 // in the app. Vite preview honours the same config value the build used.
 const BASE = process.env.BASE_PATH ?? '/';
@@ -204,7 +204,7 @@ try {
 	});
 	try {
 		await authPage.goto(ORIGIN, { waitUntil: 'load' });
-		await authPage.locator('nav button', { hasText: 'Checks' }).click();
+		await authPage.locator('nav button', { hasText: 'Settings' }).click();
 		const signInButton = authPage.locator('button', { hasText: 'Sign in with Lichess' }).first();
 		check('sign-in button is offered', (await signInButton.count()) > 0);
 

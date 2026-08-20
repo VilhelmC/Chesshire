@@ -22,16 +22,17 @@ import {
 	type MistakeCard,
 } from '../domain/mistakes';
 import { applyUci, sameMove } from '../domain/chess';
-import { ImportGames } from './ImportGames';
+import { Empty, Button } from '../ui/primitives';
 import { Move } from '../components/Move';
 import { withGlyph } from '../domain/notation';
 import { nameForPath } from '../domain/openings';
 import { registerDebug, describePosition } from '../data/debug';
 import { useViewport } from '../components/useViewport';
+import { color } from '../ui/theme';
 
-const INK_2 = '#52514e';
+const INK_2 = color.ink2;
 
-export function Quiz() {
+export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	const [cards, setCards] = useState<MistakeCard[]>([]);
 	const [queue, setQueue] = useState<MistakeCard[]>([]);
 	const [current, setCurrent] = useState<MistakeCard | null>(null);
@@ -227,14 +228,17 @@ export function Quiz() {
 
 	if (!cards.length) {
 		return (
-			<div>
-				<p style={{ opacity: 0.7, maxWidth: 560 }}>
-					No mistakes recorded yet. Anything you get wrong on the Train tab lands here
-					automatically — or import your real games below and drill the mistakes you made
-					when it counted.
+			<Empty>
+				<p style={{ margin: '0 0 10px', maxWidth: 520, display: 'inline-block' }}>
+					No mistakes recorded yet. Anything you get wrong while training lands here on its
+					own — and your real games are mined for the mistakes you made when it counted.
 				</p>
-				<ImportGames onImported={() => void reload()} />
-			</div>
+				<div>
+					{onOpenSettings && (
+						<Button onClick={onOpenSettings}>Check your game import</Button>
+					)}
+				</div>
+			</Empty>
 		);
 	}
 
@@ -492,9 +496,6 @@ export function Quiz() {
 				</button>
 			</div>
 
-			<div style={{ flexBasis: '100%' }}>
-				<ImportGames onImported={() => void reload()} />
-			</div>
 		</div>
 	);
 }
