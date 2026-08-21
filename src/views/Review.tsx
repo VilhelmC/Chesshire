@@ -1,8 +1,19 @@
-// Game review: replay a run with the evaluation and the annotations attached.
+// Game review: your past games, and the runs you did in here, replayed with the
+// evaluation and the annotations attached.
 //
 // Deliberately built on what was already recorded rather than re-analysing from
 // scratch — every position in a run was evaluated as it was played, so a review
 // is a read of stored data, not a second engine pass.
+//
+// ---------------------------------------------------------------------------
+// The list is the screen; the board is what you get after choosing from it.
+//
+// This was a dropdown, which is the wrong control for the job twice over. A
+// dropdown shows one item at a time, so choosing between twenty games means
+// opening it and reading them one line at a time with no accuracy, no result
+// and no way to compare. And it hides the fact that anything is there at all —
+// the honest answer to "what have I played?" is a list you can look at.
+// ---------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
 import { Board } from '../components/Board';
@@ -21,9 +32,10 @@ import {
 	type Quality,
 } from '../domain/review';
 import type { AnswerRow } from '../domain/progress';
-import { reviewables, type Reviewable } from '../domain/reviewable';
+import { reviewables, summarise, type Reviewable, type ReviewSource } from '../domain/reviewable';
 import { db, type ImportedGameRow } from '../data/db';
-import { color } from '../ui/theme';
+import { color, space, radius, text, TOUCH } from '../ui/theme';
+import { Empty } from '../ui/primitives';
 
 const INK = color.ink;
 const INK_2 = color.ink2;
@@ -40,7 +52,10 @@ export function Review({
 	// way to see how the position came about.
 	const [items, setItems] = useState<Reviewable[]>([]);
 	const [answers, setAnswers] = useState<AnswerRow[]>([]);
+	// Null means the list. Nothing is opened for you: which game to look at is
+	// the choice this screen exists to offer.
 	const [selected, setSelected] = useState<string | null>(null);
+	const [filter, setFilter] = useState<ReviewSource | 'all'>('all');
 	const [ply, setPly] = useState(0);
 	const [loaded, setLoaded] = useState(false);
 
@@ -56,7 +71,6 @@ export function Review({
 			const all = reviewables(d.runs, games);
 			setItems(all);
 			setAnswers(d.answers);
-			setSelected(all[0]?.id ?? null);
 			setLoaded(true);
 		})();
 	}, []);
@@ -84,14 +98,23 @@ export function Review({
 	if (!loaded) return <p style={{ opacity: 0.6 }}>Loading…</p>;
 	if (!items.length) {
 		return (
-			<p style={{ opacity: 0.7 }}>
+			<Empty>
 				Nothing to review yet — no imported games with moves, and no finished runs. Import
-				from Settings, or play a run through to the end on the Train tab and it
-				appears here.
-			</p>
+				from Settings, or play a run through to the end on the Train tab and it appears
+				here.
+			</Empty>
 		);
 	}
-	if (!run) return null;
+	if (!run) {
+		return (
+			<GameList
+				items={items}
+				filter={filter}
+				onFilter={setFilter}
+				onOpen={setSelected}
+			/>
+		);
+	}
 
 	const ourColour = run.ourColour ?? 'w';
 	const losses: number[] = Object.values(run.losses ?? {});
@@ -113,41 +136,36 @@ export function Review({
 
 	return (
 		<div>
-			<div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16 }}>
-				<select
-					value={selected ?? ''}
-					onChange={(e) => setSelected(e.target.value)}
-					style={{ fontSize: 14, maxWidth: 460 }}
+			<div
+				style={{
+					display: 'flex',
+					gap: space.card,
+					alignItems: 'baseline',
+					flexWrap: 'wrap',
+					marginBottom: space.section,
+				}}
+			>
+				<button
+					onClick={() => setSelected(null)}
+					style={{
+						border: 'none',
+						background: 'none',
+						color: color.accent,
+						fontSize: text.body,
+						padding: 0,
+						minHeight: TOUCH,
+						cursor: 'pointer',
+					}}
 				>
-					{/* Grouped, because "a game I played" and "a session I did" are
-						different kinds of thing and a flat list of both invites picking
-						the wrong one. */}
-					<optgroup label="Your games">
-						{items
-							.filter((r) => r.source === 'game')
-							.map((r) => (
-								<option key={r.id} value={r.id}>
-									{new Date(r.ts).toLocaleDateString()} — {r.label}
-								</option>
-							))}
-					</optgroup>
-					<optgroup label="Training runs">
-						{items
-							.filter((r) => r.source === 'run')
-							.map((r) => (
-								<option key={r.id} value={r.id}>
-									{new Date(r.ts).toLocaleString()} — {r.label}
-								</option>
-							))}
-					</optgroup>
-				</select>
-				<span style={{ fontSize: 13, color: INK_2 }}>
-					{items.filter((r) => r.source === 'game').length} games ·{' '}
-					{items.filter((r) => r.source === 'run').length} runs
+					← All games
+				</button>
+				<strong style={{ fontSize: text.heading }}>{run.title}</strong>
+				<span style={{ fontSize: text.note, color: INK_2 }}>
+					{new Date(run.ts).toLocaleString()} · {run.detail}
 				</span>
-				{run?.url && (
-					<a href={run.url} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
-						see it on {run.label.split(' ')[0]}
+				{run.url && (
+					<a href={run.url} target="_blank" rel="noreferrer" style={{ fontSize: text.note }}>
+						see the original
 					</a>
 				)}
 			</div>
@@ -258,6 +276,194 @@ export function Review({
 			</div>
 		</div>
 	);
+}
+
+/**
+ * The list of things you could look at.
+ *
+ * Each row carries the accuracy, because that is what makes one game worth
+ * opening rather than another — a list of dates is a list you cannot choose
+ * from. Games and runs are both here and both labelled: the real games are the
+ * ones with something at stake, the runs are the practice, and telling them
+ * apart is the reader's business rather than something to be tidied away.
+ */
+function GameList({
+	items,
+	filter,
+	onFilter,
+	onOpen,
+}: {
+	items: Reviewable[];
+	filter: ReviewSource | 'all';
+	onFilter: (f: ReviewSource | 'all') => void;
+	onOpen: (id: string) => void;
+}) {
+	const games = items.filter((r) => r.source === 'game').length;
+	const runs = items.length - games;
+	const shown = items.filter((r) => filter === 'all' || r.source === filter);
+
+	return (
+		<div>
+			<div style={{ display: 'flex', gap: space.tight, marginBottom: space.card, flexWrap: 'wrap' }}>
+				<Pill on={filter === 'all'} onClick={() => onFilter('all')}>
+					Everything ({items.length})
+				</Pill>
+				<Pill on={filter === 'game'} onClick={() => onFilter('game')}>
+					Your games ({games})
+				</Pill>
+				<Pill on={filter === 'run'} onClick={() => onFilter('run')}>
+					Training runs ({runs})
+				</Pill>
+			</div>
+
+			{!shown.length ? (
+				<Empty>
+					{filter === 'game'
+						? 'No imported games with moves yet — import from Settings.'
+						: 'No finished training runs yet — play one through on the Train tab.'}
+				</Empty>
+			) : (
+				<div style={{ display: 'flex', flexDirection: 'column', gap: space.tight }}>
+					{shown.map((r) => {
+						const s = summarise(r);
+						return (
+							<button
+								key={s.id}
+								onClick={() => onOpen(s.id)}
+								style={{
+									display: 'grid',
+									// minmax(0, …) or a long opponent name pushes the
+									// accuracy off the right edge on a phone.
+									gridTemplateColumns: 'minmax(0, 1fr) auto',
+									gap: space.card,
+									alignItems: 'center',
+									textAlign: 'left',
+									width: '100%',
+									border: `1px solid ${GRID}`,
+									borderRadius: radius.panel,
+									background: color.surface,
+									color: INK,
+									padding: space.card,
+									minHeight: TOUCH,
+									cursor: 'pointer',
+									font: 'inherit',
+								}}
+							>
+								<span style={{ minWidth: 0 }}>
+									<span
+										style={{
+											display: 'flex',
+											alignItems: 'center',
+											gap: space.snug,
+											flexWrap: 'wrap',
+										}}
+									>
+										<Tag source={s.source} />
+										<strong
+											style={{
+												fontSize: text.body,
+												overflow: 'hidden',
+												textOverflow: 'ellipsis',
+												whiteSpace: 'nowrap',
+											}}
+										>
+											{s.title}
+										</strong>
+										{s.result && <Result result={s.result} />}
+									</span>
+									<span
+										style={{
+											display: 'block',
+											fontSize: text.note,
+											color: INK_2,
+											marginTop: 2,
+										}}
+									>
+										{new Date(s.ts).toLocaleDateString()} · {s.detail} ·{' '}
+										{s.plies} plies
+									</span>
+								</span>
+
+								<span style={{ textAlign: 'right' }}>
+									{s.accuracy === null ? (
+										// Not the same statement as 0%, and must never
+										// print as one.
+										<span style={{ fontSize: text.note, color: color.ink3 }}>
+											not scored
+										</span>
+									) : (
+										<>
+											<span
+												style={{ fontSize: 20, fontWeight: 700, display: 'block' }}
+											>
+												{s.accuracy}%
+											</span>
+											<span style={{ fontSize: text.note, color: INK_2 }}>
+												{s.scored} moves
+											</span>
+										</>
+									)}
+								</span>
+							</button>
+						);
+					})}
+				</div>
+			)}
+		</div>
+	);
+}
+
+function Pill({
+	on,
+	onClick,
+	children,
+}: {
+	on: boolean;
+	onClick: () => void;
+	children: React.ReactNode;
+}) {
+	return (
+		<button
+			onClick={onClick}
+			style={{
+				border: `1px solid ${on ? color.accent : GRID}`,
+				background: on ? color.accentSoft : 'transparent',
+				color: on ? color.accent : INK_2,
+				borderRadius: radius.pill,
+				padding: '6px 12px',
+				fontSize: text.note,
+				minHeight: 32,
+				cursor: 'pointer',
+			}}
+		>
+			{children}
+		</button>
+	);
+}
+
+function Tag({ source }: { source: ReviewSource }) {
+	const game = source === 'game';
+	return (
+		<span
+			style={{
+				fontSize: 11,
+				textTransform: 'uppercase',
+				letterSpacing: 0.4,
+				color: game ? color.accent : INK_2,
+				border: `1px solid ${game ? color.accent : GRID}`,
+				borderRadius: radius.small,
+				padding: '1px 5px',
+				flexShrink: 0,
+			}}
+		>
+			{game ? 'game' : 'run'}
+		</span>
+	);
+}
+
+function Result({ result }: { result: 'win' | 'loss' | 'draw' }) {
+	const c = result === 'win' ? color.good : result === 'loss' ? color.bad : INK_2;
+	return <span style={{ fontSize: text.note, color: c }}>{result}</span>;
 }
 
 function QualityBars({ dist, total }: { dist: Record<Quality, number>; total: number }) {

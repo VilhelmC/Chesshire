@@ -15,6 +15,8 @@
 // half the time. Normalising happens here, once.
 // ---------------------------------------------------------------------------
 
+import { accuracyPercent } from './review';
+
 export type ReviewSource = 'run' | 'game';
 
 export type Reviewable = {
@@ -22,6 +24,11 @@ export type Reviewable = {
 	source: ReviewSource;
 	/** When it happened. */
 	ts: number;
+	/** What it was — an opponent, or an opening. The thing you scan for. */
+	title: string;
+	/** The rest: platform and result, or length and how it ended. */
+	detail: string;
+	/** `title · detail`, for anywhere that wants one string. */
 	label: string;
 	moves: string[];
 	/** Evaluation after each ply, OUR point of view. */
@@ -62,11 +69,15 @@ export type GameLike = {
 /** A training run, if it kept enough to replay. */
 export function fromRun(r: RunLike): Reviewable | null {
 	if (!r.moves?.length) return null;
+	const title = r.opening ?? 'Training run';
+	const detail = `${r.plies} plies · ${r.finished ?? 'unfinished'}`;
 	return {
 		id: r.id,
 		source: 'run',
 		ts: r.ts,
-		label: `${r.opening ?? 'Training run'} · ${r.plies} plies · ${r.finished ?? 'unfinished'}`,
+		title,
+		detail,
+		label: `${title} · ${detail}`,
 		moves: r.moves,
 		evals: r.evals ?? [],
 		losses: r.losses ?? {},
@@ -85,11 +96,16 @@ export function fromGame(g: GameLike): Reviewable | null {
 		e === null || e === undefined ? null : ourColour === 'w' ? e : -e,
 	);
 
+	const title = `vs ${g.opponent}`;
+	const detail = `${g.platform} · ${g.result}`;
+
 	return {
 		id: g.id,
 		source: 'game',
 		ts: g.playedAt,
-		label: `${g.platform} vs ${g.opponent} · ${g.result}`,
+		title,
+		detail,
+		label: `${title} · ${detail}`,
 		moves: g.moves,
 		evals,
 		losses: lossesFrom(evals, ourColour),
@@ -120,6 +136,45 @@ export function lossesFrom(evals: (number | null)[], ourColour: 'w' | 'b'): Reco
 		out[i] = Math.max(0, before - after);
 	}
 	return out;
+}
+
+export type ReviewSummary = {
+	id: string;
+	source: ReviewSource;
+	ts: number;
+	title: string;
+	detail: string;
+	/** Null when nothing in it was scored — not zero. */
+	accuracy: number | null;
+	/** How many of our moves the accuracy is computed from. */
+	scored: number;
+	plies: number;
+	result?: 'win' | 'loss' | 'draw';
+	url?: string;
+};
+
+/**
+ * One row of the list.
+ *
+ * Accuracy is here rather than in the row component because a list of games
+ * whose only difference is the date is a list you cannot choose from: the
+ * number is the reason to open one game rather than another. Null when nothing
+ * was scored, which is a different statement from 0% and must not print as one.
+ */
+export function summarise(r: Reviewable): ReviewSummary {
+	const losses = Object.values(r.losses ?? {});
+	return {
+		id: r.id,
+		source: r.source,
+		ts: r.ts,
+		title: r.title,
+		detail: r.detail,
+		accuracy: accuracyPercent(losses),
+		scored: losses.length,
+		plies: r.moves.length,
+		result: r.result,
+		url: r.url,
+	};
 }
 
 /** Everything reviewable, newest first. */

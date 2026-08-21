@@ -7,7 +7,7 @@
 // wrong for a number nobody can easily check.
 
 import { describe, it, expect } from 'vitest';
-import { fromRun, fromGame, lossesFrom, reviewables } from '../src/domain/reviewable';
+import { fromRun, fromGame, lossesFrom, reviewables, summarise } from '../src/domain/reviewable';
 
 const run = (over = {}) => ({
 	id: 'r1',
@@ -95,6 +95,38 @@ describe('lossesFrom', () => {
 	it('skips a ply it cannot measure rather than guessing zero', () => {
 		// A zero would say "played perfectly"; absence says "not measured".
 		expect(lossesFrom([null, 10, 20], 'w')[0]).toBeUndefined();
+	});
+});
+
+describe('summarise', () => {
+	// What each row of the list says. The list is the screen now, so a row that
+	// cannot be told apart from the row above it is the whole feature failing.
+
+	it('names the opponent as the thing you scan for', () => {
+		const s = summarise(fromGame(game())!);
+		expect(s.title).toBe('vs someone');
+		expect(s.detail).toContain('win');
+	});
+
+	it('names the opening for a run, not the word "run"', () => {
+		expect(summarise(fromRun(run())!).title).toBe('Italian Game');
+	});
+
+	it('scores the game, so one row can be chosen over another', () => {
+		const s = summarise(fromGame(game())!);
+		expect(s.accuracy).toBeGreaterThan(0);
+		expect(s.scored).toBe(2); // our two plies as White
+	});
+
+	it('says "not scored" as null rather than as zero', () => {
+		// 0% is a claim about how you played. Null is the absence of one, and
+		// printing it as 0% would libel every unanalysed game in the list.
+		expect(summarise(fromGame(game({ evals: [] }))!).accuracy).toBeNull();
+	});
+
+	it('carries the link through for a real game and not for a run', () => {
+		expect(summarise(fromGame(game())!).url).toBe('https://lichess.org/abc');
+		expect(summarise(fromRun(run())!).url).toBeUndefined();
 	});
 });
 

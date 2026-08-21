@@ -16,7 +16,7 @@ import { color, sans } from './ui/theme';
 import { Mark } from './ui/Mark';
 
 /**
- * Four destinations, down from seven.
+ * Five destinations, down from seven.
  *
  * The three that went — the dependency checks, the coverage audit and the
  * punishment generator — were instruments for building the app rather than
@@ -24,19 +24,19 @@ import { Mark } from './ui/Mark';
  * live folded shut inside Settings. A tab bar should describe what the app is
  * for, not the order in which it was assembled.
  *
- * Review is not a peer of Progress; it is a drill-down of it. Looking at one
- * session in detail is what you do BECAUSE of something Progress told you, so
- * it is reached from there rather than from the top level.
+ * Review earns its own place. It was folded into Progress on the theory that
+ * looking at one game is something you do BECAUSE of a number — but the games
+ * are the app's own record of what you have played, and "let me look at that
+ * game from this morning" is a reason to open the app, not a footnote to a
+ * chart. Hidden behind a button, it read as absent.
  */
-type Tab = 'train' | 'quiz' | 'progress' | 'settings';
+type Tab = 'train' | 'quiz' | 'review' | 'progress' | 'settings';
 
 export default function App() {
 	const [tab, setTab] = useState<Tab>('train');
 	const vp = useViewport();
 	/** A position handed from Review to Train, so a game can be played on from there. */
 	const [handoff, setHandoff] = useState<TrainHandoff>(null);
-	/** Progress drilled into one session. */
-	const [reviewing, setReviewing] = useState(false);
 	/** Bumped when games are imported, so the deck reloads. */
 	const [dataVersion, setDataVersion] = useState(0);
 
@@ -125,10 +125,11 @@ export default function App() {
 				</div>
 			)}
 
-			{/* Four now fit across a phone without scrolling, which is the point:
-				a destination you have to swipe to find is one you forget exists.
-				Kept scrollable anyway, for the narrowest screens and the longest
-				translations. */}
+			{/* Five, and measured: the row is 320px wide at a 360px viewport and
+				353 at 393, so nothing needs swiping on any current phone. Below
+				360 it scrolls, which is the right failure — a destination you have
+				to swipe to find is one you forget exists, which is exactly what
+				happened to Review while it was a button inside Progress. */}
 			<nav
 				style={{
 					display: 'flex',
@@ -140,22 +141,19 @@ export default function App() {
 					scrollbarWidth: 'none',
 				}}
 			>
-				<TabButton active={tab === 'train'} onClick={() => setTab('train')}>
+				<TabButton compact={vp.phone} active={tab === 'train'} onClick={() => setTab('train')}>
 					Train
 				</TabButton>
-				<TabButton active={tab === 'quiz'} onClick={() => setTab('quiz')}>
+				<TabButton compact={vp.phone} active={tab === 'quiz'} onClick={() => setTab('quiz')}>
 					Mistakes
 				</TabButton>
-				<TabButton
-					active={tab === 'progress'}
-					onClick={() => {
-						setTab('progress');
-						setReviewing(false);
-					}}
-				>
+				<TabButton compact={vp.phone} active={tab === 'review'} onClick={() => setTab('review')}>
+					Review
+				</TabButton>
+				<TabButton compact={vp.phone} active={tab === 'progress'} onClick={() => setTab('progress')}>
 					Progress
 				</TabButton>
-				<TabButton active={tab === 'settings'} onClick={() => setTab('settings')}>
+				<TabButton compact={vp.phone} active={tab === 'settings'} onClick={() => setTab('settings')}>
 					Settings
 				</TabButton>
 			</nav>
@@ -169,33 +167,19 @@ export default function App() {
 			)}
 			{tab === 'quiz' && <Quiz key={dataVersion} onOpenSettings={() => setTab('settings')} />}
 
-			{tab === 'progress' &&
-				(reviewing ? (
-					<>
-						<button
-							onClick={() => setReviewing(false)}
-							style={{
-								border: 'none',
-								background: 'none',
-								color: '#1565c0',
-								fontSize: 14,
-								padding: '8px 0',
-								cursor: 'pointer',
-								minHeight: 40,
-							}}
-						>
-							← Back to progress
-						</button>
-						<Review
-							onPlayFrom={(h) => {
-								setHandoff(h);
-								setTab('train');
-							}}
-						/>
-					</>
-				) : (
-					<Progress onOpenReview={() => setReviewing(true)} />
-				))}
+			{tab === 'review' && (
+				<Review
+					key={dataVersion}
+					onPlayFrom={(h) => {
+						setHandoff(h);
+						setTab('train');
+					}}
+				/>
+			)}
+
+			{/* Progress keeps its way in, but as a shortcut to a tab that exists
+				rather than as the only door to a hidden screen. */}
+			{tab === 'progress' && <Progress onOpenReview={() => setTab('review')} />}
 
 			{tab === 'settings' && <Settings onImported={() => setDataVersion((v) => v + 1)} />}
 
@@ -218,10 +202,13 @@ let consumed = false;
 function TabButton({
 	active,
 	onClick,
+	compact,
 	children,
 }: {
 	active: boolean;
 	onClick: () => void;
+	/** Five labels have to cross a 360px screen without a swipe. */
+	compact?: boolean;
 	children: React.ReactNode;
 }) {
 	return (
@@ -235,8 +222,8 @@ function TabButton({
 				borderBottomWidth: 2,
 				borderBottomColor: active ? '#1565c0' : 'transparent',
 				background: 'none',
-				padding: '10px 12px',
-				fontSize: 15,
+				padding: compact ? '10px 6px' : '10px 12px',
+				fontSize: compact ? 14 : 15,
 				whiteSpace: 'nowrap',
 				flexShrink: 0,
 				touchAction: 'manipulation',

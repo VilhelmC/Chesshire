@@ -1633,6 +1633,31 @@ Three decisions:
 - **The token is never included** — `collect()` reports its length and nothing more.
 - **A dump too large for a URL is trimmed, and the report says it was trimmed.** A truncated diagnostic that looks complete is worse than an obviously partial one. The copy option carries all of it.
 
+### M17 — Review is a place, not a footnote
+
+Review handled imported games and training runs, and still read as missing, because it was a button inside Progress. That was a defensible theory — you look at one game *because* a number told you to — and it was wrong. The games are the app's own record of what you have played, and "let me look at that game from this morning" is a reason to open the app rather than a footnote to a chart.
+
+Review is a tab. Progress keeps its link, now a shortcut into a place that exists rather than the only door to a hidden one.
+
+**The list is the screen; the board is what you get after choosing from it.** The previous control was a `<select>`, which is wrong twice over: it shows one item at a time, so choosing between twenty games means reading them one line at a time with no accuracy, no result and no way to compare — and it hides the fact that anything is there at all. The honest answer to "what have I played?" is a list you can look at.
+
+Each row carries the accuracy, because that is what makes one game worth opening rather than another; a list of dates is a list you cannot choose from. `summarise()` is in the domain rather than the component, so what a row claims is testable. Two things it must not do: print a null accuracy as 0% (a claim about how you played, where there is none), and tidy games and runs into one undifferentiated list — the real games are the ones with something at stake, and telling them apart is the reader's business.
+
+**Five tabs across a phone, measured rather than assumed.** The tab row is 320px wide at a 360px viewport and 353 at 393, so nothing needs swiping on any current phone; below 360 it scrolls. Worth checking rather than eyeballing, given the failure mode being fixed is precisely a destination nobody could find.
+
+#### The round that was written to a tree nothing builds
+
+Review shipped twice and was missing both times. Not a bug in it: the files went to `<repo>/app/src/...` while the app lives at `<repo>/src/...`. Everything about the work was correct — 528 tests, a green build, a passing PWA check — in a copy of the tree that nothing compiles.
+
+The cause is a mismatch between where the work happens and where it lands. The scratch checkout sits at `…/offbook/app`, the repository root *is* the app, and the commit paths were built from the first rather than the second. Nothing errors, because writing a file to a new directory is a perfectly ordinary thing to do.
+
+Two responses, and only the second is worth anything:
+
+- **Read it back.** After writing to the device, stage the same paths again and diff them against what was meant to be there. A write that reports success and a file that contains the new bytes are different claims.
+- **`test/layout.test.ts` refuses a shadow tree.** It walks the repository and fails on any directory holding a path that duplicates one under `src/` or `test/`, naming the copies — because the confusing part is not that they are wrong but that they look right. Verified by reconstructing the bug: with `app/src/App.tsx` present it fails; without it, it passes.
+
+Same shape as the base-path regression and the Windows casing clash, and by now the pattern is not a coincidence: **every mistake in this project that took two rounds to find was one where the environment differed from the environment in my head, silently.** The fix is never to be more careful about the difference; it is a check that asserts the two are the same.
+
 ---
 
 ## 10. Risks

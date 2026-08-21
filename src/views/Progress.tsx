@@ -230,10 +230,9 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 				/>
 			</div>
 
-			{/* Reviewing one session is a drill-down of this screen rather than a
-				peer of it — you go and look at a game BECAUSE something here said
-				so — which is why it is a link from Progress and no longer a tab of
-				its own. */}
+			{/* A shortcut into the Review tab, not the only way in. Going to look
+				at a game because a number here said so is a real path, but it is
+				not the only reason anyone opens a game. */}
 			{onOpenReview && (
 				<div style={{ marginBottom: 16 }}>
 					<button
@@ -249,7 +248,7 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 							color: INK,
 						}}
 					>
-						Replay a training session →
+						Review your games and runs →
 					</button>
 				</div>
 			)}
