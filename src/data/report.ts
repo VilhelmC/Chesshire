@@ -17,18 +17,34 @@
 // to carry something private, so the token is never included; `collect()` in
 // data/debug.ts reports only its LENGTH, and this adds nothing beyond it.
 //
-// A URL has a practical length limit — browsers and servers both give up
-// somewhere past ~8000 characters, and GitHub is stricter than most. So the
-// dump is trimmed to fit, and **the report says when it was trimmed**, because
-// a truncated diagnostic that looks complete is worse than an obviously partial
-// one.
+// HOW LONG A LINK MAY BE
+//
+// The first version budgeted 7000 characters, which is roughly what a browser
+// will carry. It failed in the one case that matters: a person who is not
+// signed in to GitHub. Then the link is not fetched at all — it becomes the
+// `return_to` parameter of a login URL, doubling in length and passing through
+// a redirect chain that gives up. What the user sees is a sign-in page followed
+// by "Server Error", with no way to tell that their report was the cause.
+//
+// So the budget is what survives being embedded in a login redirect, not what a
+// browser will accept. The state dump does not fit in that, and pretending
+// otherwise is what broke it — it goes to the clipboard instead, and the issue
+// body says, in the place where it would have been, that it is on the clipboard
+// and asks for it to be pasted. A short link that works beats a complete one
+// that does not arrive.
 // ---------------------------------------------------------------------------
 
 import { collect } from './debug';
 import { SOURCE_URL } from '../components/Footer';
 
-/** Past this a browser or GitHub may silently refuse the navigation. */
-export const MAX_URL = 7000;
+/**
+ * Budget for the whole issue URL.
+ *
+ * Sized to survive `github.com/login?return_to=<this, encoded>` — the signed-out
+ * path, where the link is carried as a parameter of another link and re-encoded
+ * on the way. That round trip is where 7000 characters died.
+ */
+export const MAX_URL = 1500;
 
 export type Report = {
 	summary: string;
@@ -47,43 +63,51 @@ export async function gatherState(): Promise<string> {
 }
 
 /**
- * The issue body, trimmed to fit a URL.
+ * The issue body.
  *
- * Returns the body and whether anything was cut, so the caller can say so
- * rather than let a partial dump pass for a whole one.
+ * `trimmed` means the state dump did not fit and the body asks for it to be
+ * pasted instead. The caller has to put it on the clipboard and say so — a body
+ * that references a clipboard nobody filled is worse than no body at all.
  */
 export function composeBody(r: Report, budget = MAX_URL): { body: string; trimmed: boolean } {
-	const head = [
-		r.detail.trim() || '_No description given._',
+	const description = r.detail.trim() || '_No description given._';
+
+	// The state dump is the most useful part of a report and the least likely to
+	// fit. Rather than truncate it into something that looks complete, the body
+	// says where the whole thing is and asks for it.
+	const paste = [
+		'---',
+		'',
+		'<!-- The app state was copied to your clipboard when this link opened.',
+		'     Paste it below — it is what makes this report reproducible. -->',
+		'',
+		'```json',
+		'',
+		'```',
+	].join('\n');
+
+	const withState = [
+		description,
 		'',
 		'---',
 		'',
 		'<details><summary>App state</summary>',
 		'',
 		'```json',
+		r.state,
+		'```',
+		'',
+		'</details>',
 	].join('\n');
 
-	const tail = ['```', '', '</details>'].join('\n');
-
-	// Everything except the dump, plus the encoding overhead — JSON is mostly
-	// safe characters but quotes and newlines each cost three.
-	const fixed = encodeURIComponent(head + tail).length;
-	const room = Math.max(0, budget - fixed);
-
-	// Encoded length is roughly 1.6x raw for this kind of content; measure
-	// rather than assume, by trimming until it fits.
-	let state = r.state;
-	let trimmed = false;
-	while (state.length > 0 && encodeURIComponent(state).length > room) {
-		state = state.slice(0, Math.floor(state.length * 0.9));
-		trimmed = true;
+	// Inline it only if the whole thing genuinely fits. No trimming: a dump cut
+	// at an arbitrary character is not JSON, and a report that looks whole and
+	// is not costs more than an obviously partial one.
+	if (encodeURIComponent(withState).length <= budget) {
+		return { body: withState, trimmed: false };
 	}
 
-	if (trimmed) {
-		state += '\n\n… TRUNCATED to fit a URL. Ask for the full dump via schackal.dump().';
-	}
-
-	return { body: head + '\n' + state + '\n' + tail, trimmed };
+	return { body: [description, '', paste].join('\n'), trimmed: true };
 }
 
 /** The URL that opens a pre-filled GitHub issue. */
@@ -92,7 +116,10 @@ export function issueUrl(r: Report, budget = MAX_URL): { url: string; trimmed: b
 	const url = new URL(`${SOURCE_URL}/issues/new`);
 	url.searchParams.set('title', r.summary.trim() || 'Bug report');
 	url.searchParams.set('body', body);
-	url.searchParams.set('labels', 'from-app');
+	// No `labels` parameter. GitHub rejects it from anyone without triage rights
+	// on the repository, and a rejected parameter is another way this link can
+	// end at an error page instead of a form. Labelling is a maintainer's job and
+	// takes one click at the other end.
 	return { url: url.href, trimmed };
 }
 

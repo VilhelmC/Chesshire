@@ -273,6 +273,7 @@ async function cardFor(m: GameMistake, g: ImportedGame): Promise<void> {
 		path: [...g.moves.slice(0, m.ply)],
 		ply: m.ply,
 		phase: 'game',
+		...(m.motif ? { motif: m.motif } : {}),
 		origin: {
 			platform: g.platform,
 			url: g.url,

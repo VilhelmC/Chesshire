@@ -1,13 +1,22 @@
 // Runs and real games, made reviewable by the same code.
 //
-// The subtle one is the point of view. Runs store evaluations from OUR side;
-// imported games store them from WHITE's, because that is what the sites send.
-// Mixing the two silently produces an evaluation graph that is upside down for
-// every game played as Black — right half the time, which is the worst kind of
-// wrong for a number nobody can easily check.
+// Two conventions differ between the sources, and both had already put a wrong
+// number on screen:
+//
+//  * POINT OF VIEW. Runs store evaluations from OUR side; imported games store
+//    them from WHITE's, because that is what the sites send. Mixing them
+//    produces a graph that is upside down for every game played as Black —
+//    right half the time, which is the worst kind of wrong for a number nobody
+//    can easily check.
+//  * INDEXING. Runs index by ply count (index 0 is the starting position);
+//    imported games index from the position after the first move. Off by one,
+//    silently, in one of the two.
+//
+// Both are normalised at this boundary, so these tests are where the claim is
+// made that everything downstream can trust one convention.
 
 import { describe, it, expect } from 'vitest';
-import { fromRun, fromGame, lossesFrom, reviewables, summarise } from '../src/domain/reviewable';
+import { fromRun, fromGame, reviewables, summarise } from '../src/domain/reviewable';
 
 const run = (over = {}) => ({
 	id: 'r1',
@@ -48,6 +57,12 @@ describe('fromRun', () => {
 	it('leaves the evaluations alone — runs already store our point of view', () => {
 		expect(fromRun(run({ ourColour: 'b' }))?.evals).toEqual([20, 10]);
 	});
+
+	it('leaves the indexing alone — runs already count plies', () => {
+		// A run writes evals[path.length] after each move, so index 0 is the
+		// starting position and no shift is needed.
+		expect(fromRun(run({ evals: [null, 20, 10] }))?.evals).toEqual([null, 20, 10]);
+	});
 });
 
 describe('fromGame', () => {
@@ -60,41 +75,21 @@ describe('fromGame', () => {
 
 	it('flips the evaluations when we were Black', () => {
 		// The one that would otherwise be wrong half the time.
-		expect(fromGame(game({ ourColour: 'b' }))!.evals).toEqual([-20, -10, -25, -5]);
+		expect(fromGame(game({ ourColour: 'b' }))!.evals).toEqual([null, -20, -10, -25, -5]);
 	});
 
-	it('leaves them alone when we were White', () => {
-		expect(fromGame(game())!.evals).toEqual([20, 10, 25, 5]);
+	it('shifts them to count plies, with the start unmeasured', () => {
+		// The leading null IS the fix: the site's array starts after the first
+		// move, and everything downstream counts plies from the start.
+		expect(fromGame(game())!.evals).toEqual([null, 20, 10, 25, 5]);
 	});
 
 	it('carries a gap through as a gap', () => {
-		expect(fromGame(game({ evals: [20, null] }))!.evals).toEqual([20, null]);
+		expect(fromGame(game({ evals: [20, null] }))!.evals).toEqual([null, 20, null]);
 	});
 
 	it('refuses a game with no moves', () => {
 		expect(fromGame(game({ moves: undefined }))).toBeNull();
-	});
-});
-
-describe('lossesFrom', () => {
-	it('charges only our own moves', () => {
-		// White plays plies 0 and 2 (0-indexed). Ply 1 is theirs.
-		const losses = lossesFrom([15, -400, 15, -400], 'w');
-		expect(Object.keys(losses)).toEqual(['0', '2']);
-	});
-
-	it('measures a drop from our own point of view', () => {
-		// Evaluations are already our-POV here, so a fall is a loss either way.
-		expect(lossesFrom([15, 10, -85], 'w')[2]).toBe(95);
-	});
-
-	it('does not credit a move that improved the position', () => {
-		expect(lossesFrom([200], 'w')[0]).toBe(0);
-	});
-
-	it('skips a ply it cannot measure rather than guessing zero', () => {
-		// A zero would say "played perfectly"; absence says "not measured".
-		expect(lossesFrom([null, 10, 20], 'w')[0]).toBeUndefined();
 	});
 });
 
@@ -116,6 +111,18 @@ describe('summarise', () => {
 		const s = summarise(fromGame(game())!);
 		expect(s.accuracy).toBeGreaterThan(0);
 		expect(s.scored).toBe(2); // our two plies as White
+	});
+
+	it('scores the opponent too', () => {
+		expect(summarise(fromGame(game())!).opponentAccuracy).toBeGreaterThan(0);
+	});
+
+	it('counts the chances they gave and the ones we let go', () => {
+		// White to play ply 3 with a gift of ~300cp, handed straight back.
+		const g = game({ moves: ['e4', 'e5', 'Nf3', 'Nc6'], evals: [15, 315, 15, 15] });
+		const s = summarise(fromGame(g)!);
+		expect(s.offered).toBe(1);
+		expect(s.missed).toBe(1);
 	});
 
 	it('says "not scored" as null rather than as zero', () => {

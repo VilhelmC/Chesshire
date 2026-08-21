@@ -54,6 +54,28 @@ export function BugReport() {
 	const report: Report = { summary, detail, state: state ?? 'collecting…' };
 	const { url, trimmed } = issueUrl(report);
 
+	/**
+	 * Open the issue form, having first put the state where the body says it is.
+	 *
+	 * The clipboard write has to happen in the click, not after the navigation:
+	 * a browser only grants clipboard access from a user gesture, and once the
+	 * new tab has focus this one no longer has one to spend.
+	 */
+	async function openIssue() {
+		if (trimmed) {
+			try {
+				await navigator.clipboard.writeText(report.state);
+				setCopied(true);
+				setTimeout(() => setCopied(false), 4000);
+			} catch {
+				// Refused or unavailable. The issue is still worth opening; the
+				// body will ask for a dump the user has to fetch themselves, and
+				// the note below says how.
+			}
+		}
+		window.open(url, '_blank', 'noopener');
+	}
+
 	return (
 		<div
 			style={{
@@ -102,11 +124,7 @@ export function BugReport() {
 				</Note>
 
 				<div style={{ display: 'flex', gap: space.snug, flexWrap: 'wrap' }}>
-					<Button
-						kind="primary"
-						onClick={() => window.open(url, '_blank', 'noopener')}
-						disabled={!state}
-					>
+					<Button kind="primary" onClick={() => void openIssue()} disabled={!state}>
 						Open an issue
 					</Button>
 					<Button
@@ -126,6 +144,12 @@ export function BugReport() {
 
 				<Note style={{ marginTop: space.snug }}>
 					An issue is public. If this one should not be, copy it and send it privately.
+					{copied && trimmed && (
+						<>
+							{' '}
+							<strong>State copied — paste it into the issue.</strong>
+						</>
+					)}
 				</Note>
 			</Panel>
 		</div>

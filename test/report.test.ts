@@ -1,9 +1,17 @@
 // A bug report has to survive being put in a URL.
 //
-// The failure worth preventing: a state dump silently cut to fit a query
-// string, arriving as a complete-looking diagnostic that is missing the part
-// that explained the bug. A truncated report that says it is truncated is
-// useful; one that does not is worse than none.
+// Two failures worth preventing, and the second one actually happened:
+//
+//  * A state dump silently cut to fit a query string, arriving as a
+//    complete-looking diagnostic missing the part that explained the bug.
+//  * A link too long to survive the SIGNED-OUT path. GitHub carries an
+//    unauthenticated visitor's destination as `login?return_to=<url>`, so the
+//    whole thing is embedded and re-encoded inside another URL; at 7000
+//    characters that chain ended at "Server Error" — a sign-in page and then a
+//    dead end, with nothing to suggest the report was the cause.
+//
+// So the size test here is not "will a browser accept it" but "will it still be
+// there after being wrapped in a login redirect".
 
 import { describe, it, expect } from 'vitest';
 import { composeBody, issueUrl, asText, MAX_URL } from '../src/data/report';
@@ -32,19 +40,34 @@ describe('composeBody', () => {
 		expect(body).toContain('No description given');
 	});
 
-	it('trims a large dump AND says that it did', () => {
+	it('leaves a large dump out entirely rather than cutting it', () => {
+		// A dump sliced at an arbitrary character is not JSON and cannot be read
+		// back. Half a diagnostic that parses as nothing is not half as useful.
 		const huge = JSON.stringify({ pad: 'x'.repeat(50_000) });
 		const { body, trimmed } = composeBody(report(huge));
 		expect(trimmed).toBe(true);
-		expect(body).toContain('TRUNCATED');
+		expect(body).not.toContain('xxxxx');
 	});
 
-	it('trims to something that actually fits', () => {
+	it('asks for the dump in the place it would have been', () => {
 		const huge = JSON.stringify({ pad: 'x'.repeat(50_000) });
 		const { body } = composeBody(report(huge));
-		// The whole point of trimming. A body that still exceeds the budget
-		// would be trimmed and broken.
-		expect(encodeURIComponent(body).length).toBeLessThanOrEqual(MAX_URL * 1.2);
+		expect(body).toContain('clipboard');
+		// An empty fenced block, so there is somewhere obvious to paste into.
+		expect(body).toContain('```json');
+	});
+
+	it('keeps what the person wrote even when the state cannot come along', () => {
+		// The description is the irreplaceable half: the state can be asked for
+		// again, and what they were doing cannot.
+		const huge = JSON.stringify({ pad: 'x'.repeat(50_000) });
+		expect(composeBody(report(huge)).body).toContain('Tried to play Nf3');
+	});
+
+	it('stays inside the budget whatever the dump was', () => {
+		const huge = JSON.stringify({ pad: 'x'.repeat(50_000) });
+		const { body } = composeBody(report(huge));
+		expect(encodeURIComponent(body).length).toBeLessThanOrEqual(MAX_URL);
 	});
 });
 
@@ -64,18 +87,30 @@ describe('issueUrl', () => {
 		expect(new URL(url).searchParams.get('title')).toBe('Bug report');
 	});
 
-	it('labels it so app reports are findable', () => {
-		expect(issueUrl(report('{}')).url).toContain('labels=from-app');
+	it('asks for no labels', () => {
+		// GitHub refuses a `labels` parameter from anyone without triage rights,
+		// which is one more way this link can land on an error page instead of a
+		// form. Labelling costs the maintainer one click at the other end.
+		expect(issueUrl(report('{}')).url).not.toContain('labels=');
 	});
 
-	it('produces a URL a browser will accept', () => {
+	it('survives being wrapped in a sign-in redirect', () => {
+		// The actual failure. A signed-out visitor never fetches this URL: it
+		// becomes a parameter of github.com/login, encoded again on the way in.
 		const huge = JSON.stringify({ pad: 'x'.repeat(50_000) });
 		const { url, trimmed } = issueUrl(report(huge));
 		expect(trimmed).toBe(true);
-		// Generous ceiling: the practical limit is somewhere past 8000 and
-		// varies, so this checks the trimming worked at all rather than pinning
-		// a number nobody can verify.
-		expect(url.length).toBeLessThan(12_000);
+
+		const viaLogin = `https://github.com/login?return_to=${encodeURIComponent(url)}`;
+		// 8000 is where browsers and proxies start giving up; the whole point of
+		// the smaller budget is that the wrapped form is still nowhere near it.
+		expect(viaLogin.length).toBeLessThan(4000);
+	});
+
+	it('keeps a short report whole even after wrapping', () => {
+		const { url, trimmed } = issueUrl(report('{"engine":"ready"}'));
+		expect(trimmed).toBe(false);
+		expect(new URL(url).searchParams.get('body')).toContain('"engine":"ready"');
 	});
 });
 

@@ -208,3 +208,62 @@ describe('what counts as a mistake', () => {
 		expect(nearLevel).toBeGreaterThan(whenWinning);
 	});
 });
+
+
+// ---------------------------------------------------------------------------
+// The card this whole trainer is arguing for.
+//
+// Import mined our own errors only — "the opponent's mistakes are not our
+// flashcards" — and that sentence quietly excluded the single most valuable
+// position in the app: they hung something and we did not take it. Worse, the
+// ordinary rules could not have caught it anyway. The position after their
+// blunder is often past DECIDED_CP, and giving back 400cp of a +700 barely
+// moves the win percentage. Both filters are right for ordinary moves and both
+// are wrong for exactly this one, which is why it is judged separately.
+// ---------------------------------------------------------------------------
+
+describe('a chance we let go', () => {
+	const MOVES = ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5'];
+
+	it('makes a card when they blunder and we hand it back', async () => {
+		// Ply 3 is Black's second move: level -> +250 for us. Then our ply 4
+		// returns it to +20.
+		const { analyse } = stubEngine(MOVES, { 2: 20, 3: 20, 4: 250, 5: 20, 6: 20 });
+		const { mistakes } = await findMistakes(game(MOVES), { analyse });
+		expect(mistakes.map((m) => m.ply)).toEqual([4]);
+		expect(mistakes[0].motif).toBe('missed-punish');
+	});
+
+	it('does not make one when we keep the advantage', async () => {
+		const { analyse } = stubEngine(MOVES, { 2: 20, 3: 20, 4: 250, 5: 230, 6: 230 });
+		const { mistakes } = await findMistakes(game(MOVES), { analyse });
+		expect(mistakes).toEqual([]);
+	});
+
+	it('does not make one while we are still winning easily', async () => {
+		// +900 down to +400 is careless, and the game was never in doubt. A card
+		// here would drill precision in a won position, which is what the win
+		// percentage rule exists to refuse.
+		const { analyse } = stubEngine(MOVES, { 2: 20, 3: 20, 4: 900, 5: 400, 6: 400 });
+		const { mistakes } = await findMistakes(game(MOVES), { analyse });
+		expect(mistakes).toEqual([]);
+	});
+
+	it('leaves an ordinary mistake unmarked', async () => {
+		// Their previous move gave nothing away — 3 and 4 hold the same value —
+		// so the drop at ply 4 is our own doing and nothing else.
+		const { analyse } = stubEngine(MOVES, { 3: 120, 4: 120, 5: -160 });
+		const { mistakes } = await findMistakes(game(MOVES), { analyse });
+		expect(mistakes[0].motif).toBeUndefined();
+	});
+
+	it('costs no extra searches — their move was already measured', async () => {
+		// Our plies alternate with theirs, so the position before their blunder
+		// is the position after our previous move, and that was evaluated when
+		// our previous move was judged. If this ever regresses, every imported
+		// game gets 50% slower on a phone.
+		const { analyse, calls } = stubEngine(MOVES, { 2: 20, 3: 20, 4: 250, 5: 20, 6: 20 });
+		await findMistakes(game(MOVES), { analyse });
+		expect(new Set(calls).size).toBe(calls.length);
+	});
+});

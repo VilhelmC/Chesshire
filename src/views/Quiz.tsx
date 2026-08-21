@@ -624,7 +624,18 @@ function safeStm(fen: string): string {
 	}
 }
 
-function promptFor(c: MistakeCard): string {
+export function promptFor(c: MistakeCard): string {
+	// The motif comes first: a card mined from a real game where THEY blundered
+	// asks a different question from one where we simply went wrong, and reading
+	// "you played X and it cost 4.0" over a position you were winning describes
+	// the wrong event.
+	if (c.motif === 'missed-punish') {
+		return `They had just blundered here. You played ${withGlyph(
+			c.playedSan,
+			c.ourColour,
+		)} and let it go — find the punishment.`;
+	}
+
 	switch (c.phase) {
 		case 'punish':
 			return 'You missed the punishment here.';

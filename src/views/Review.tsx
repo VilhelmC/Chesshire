@@ -22,20 +22,25 @@ import { EvalBar } from '../components/EvalBar';
 import { loadProgress } from '../data/progress';
 import { applySan, INITIAL_FEN } from '../domain/chess';
 import {
-	classifyQuality,
 	distribution,
 	accuracyPercent,
-	comment,
 	QUALITY_COLOUR,
 	QUALITY_LABEL,
 	QUALITY_ORDER,
 	type Quality,
 } from '../domain/review';
+import {
+	annotate,
+	lossesOf,
+	punishTally,
+	signed,
+	type Annotation,
+} from '../domain/annotate';
 import type { AnswerRow } from '../domain/progress';
 import { reviewables, summarise, type Reviewable, type ReviewSource } from '../domain/reviewable';
 import { db, type ImportedGameRow } from '../data/db';
 import { color, space, radius, text, TOUCH } from '../ui/theme';
-import { Empty } from '../ui/primitives';
+import { Empty, Note } from '../ui/primitives';
 
 const INK = color.ink;
 const INK_2 = color.ink2;
@@ -93,6 +98,14 @@ export function Review({
 		return out;
 	}, [run]);
 
+	// One pass over the evaluations gives every move on BOTH sides its verdict.
+	// Deliberately not two code paths: "score our moves" and "score theirs" being
+	// separate is how the app ended up grading only one of the two players.
+	const notes = useMemo(
+		() => (run ? annotate(run.evals ?? [], run.ourColour ?? 'w') : []),
+		[run],
+	);
+
 	useEffect(() => setPly(0), [selected]);
 
 	if (!loaded) return <p style={{ opacity: 0.6 }}>Loading…</p>;
@@ -117,22 +130,26 @@ export function Review({
 	}
 
 	const ourColour = run.ourColour ?? 'w';
-	const losses: number[] = Object.values(run.losses ?? {});
-	const dist = distribution(losses);
-	const acc = accuracyPercent(losses);
+	const ourLosses = lossesOf(notes, 'us');
+	const theirLosses = lossesOf(notes, 'them');
+	const tally = punishTally(notes);
 
-	const chips: MoveChip[] = (run.moves ?? []).map((san: string, i: number) => ({
-		san,
-		ply: i + 1,
-		mistake: false,
-		suboptimal: (run.losses?.[i + 1] ?? 0) > 10,
-		cpLoss: run.losses?.[i + 1],
-		white: i % 2 === 0,
-	}));
+	const chips: MoveChip[] = (run.moves ?? []).map((san: string, i: number) => {
+		const n = notes[i];
+		return {
+			san,
+			ply: i + 1,
+			// The move list's mistake marker means "a position worth going back
+			// to and punishing", which is exactly what an opportunity is.
+			mistake: !!n?.opportunity,
+			suboptimal: n?.side === 'us' && (n.loss ?? 0) > 10,
+			cpLoss: n?.loss ?? undefined,
+			white: i % 2 === 0,
+		};
+	});
 
-	const currentLoss = run.losses?.[ply];
+	const here: Annotation | null = ply > 0 ? (notes[ply - 1] ?? null) : null;
 	const rowForPly = answers.find((a) => a.runId === run.id && a.ply === ply - 1);
-	const quality: Quality | null = currentLoss === undefined ? null : classifyQuality(currentLoss);
 
 	return (
 		<div>
@@ -221,50 +238,65 @@ export function Review({
 						)}
 					</div>
 
-					<div style={{ marginTop: 10, minHeight: 44, maxWidth: 430 }}>
-						{quality ? (
-							<div style={{ fontSize: 14 }}>
-								<strong style={{ color: QUALITY_COLOUR[quality] }}>
-									{QUALITY_LABEL[quality]}
-								</strong>{' '}
-								<span style={{ color: INK }}>
-									{comment({
-										quality,
-										cpLoss: currentLoss ?? 0,
-										phase: rowForPly?.phase,
-										assisted: rowForPly?.assisted,
-									})}
-								</span>
-							</div>
-						) : ply === 0 ? (
-							<div style={{ fontSize: 14, color: INK_2 }}>Start of the run.</div>
+					<div style={{ marginTop: 10, minHeight: 62, maxWidth: 430 }}>
+						{here ? (
+							<MoveNote note={here} assisted={rowForPly?.assisted} />
 						) : (
-							<div style={{ fontSize: 14, color: INK_2 }}>
-								Their move — nothing scored here.
+							<div style={{ fontSize: text.body, color: INK_2 }}>
+								Start of the game — step forward to walk through it.
 							</div>
 						)}
 					</div>
 				</div>
 
 				<div style={{ flex: 1, minWidth: 340 }}>
-					<h3 style={{ marginTop: 0 }}>Your moves</h3>
-					{acc === null ? (
-						<p style={{ fontSize: 14, color: INK_2 }}>Nothing scored in this run.</p>
+					{/* Both players, side by side. A game is two people playing, and
+						a review that grades one of them cannot show you the moment
+						they went wrong — which in this app is the moment that
+						matters most. */}
+					<h3 style={{ marginTop: 0 }}>How it was played</h3>
+					{!ourLosses.length && !theirLosses.length ? (
+						<p style={{ fontSize: text.body, color: INK_2 }}>
+							Nothing in this game was evaluated, so there is nothing to score.
+						</p>
 					) : (
 						<>
-							<div style={{ fontSize: 30, fontWeight: 700, color: INK, lineHeight: 1.1 }}>
-								{acc}%
-							</div>
-							<div style={{ fontSize: 12, color: INK_2, marginBottom: 10 }}>
-								accuracy over {losses.length} scored moves
-							</div>
-							<QualityBars dist={dist} total={losses.length} />
+							<Scoreline
+								ours={accuracyPercent(ourLosses)}
+								theirs={accuracyPercent(theirLosses)}
+								ourMoves={ourLosses.length}
+								theirMoves={theirLosses.length}
+							/>
+							<QualityTable
+								ours={distribution(ourLosses)}
+								theirs={distribution(theirLosses)}
+								ourTotal={ourLosses.length}
+								theirTotal={theirLosses.length}
+							/>
+							{tally.offered > 0 && (
+								// The app's whole thesis, as one line: they went wrong
+								// this many times, and this is how often it was taken.
+								<Note style={{ marginTop: space.snug }}>
+									They gave you {tally.offered} chance
+									{tally.offered === 1 ? '' : 's'} to punish
+									{tally.missed > 0 ? (
+										<>
+											{' '}
+											— <strong>{tally.missed}</strong> went by. Importing a
+											game turns those into cards in your Mistakes deck.
+										</>
+									) : (
+										<> and you took every one.</>
+									)}
+								</Note>
+							)}
 						</>
 					)}
 
 					<h3>Evaluation</h3>
 					<EvalGraph
 						evals={run.evals ?? []}
+						notes={notes}
 						ply={ply}
 						onSelect={setPly}
 						plies={positions.length - 1}
@@ -466,44 +498,190 @@ function Result({ result }: { result: 'win' | 'loss' | 'draw' }) {
 	return <span style={{ fontSize: text.note, color: c }}>{result}</span>;
 }
 
-function QualityBars({ dist, total }: { dist: Record<Quality, number>; total: number }) {
+/**
+ * What just happened, in one line, whoever played it.
+ *
+ * The label says how good the move was; the evaluation says where it leaves the
+ * game. Neither is enough alone — "inaccuracy" does not tell you whether you are
+ * still winning, and "+1.4" does not tell you it used to be +3.
+ */
+function MoveNote({ note, assisted }: { note: Annotation; assisted?: boolean }) {
+	const mine = note.side === 'us';
+	const badge = note.opportunity
+		? { label: 'Chance to punish', colour: color.good }
+		: note.missedPunish
+			? { label: 'Chance missed', colour: color.bad }
+			: note.quality
+				? { label: QUALITY_LABEL[note.quality], colour: QUALITY_COLOUR[note.quality] }
+				: { label: 'Unscored', colour: INK_2 };
+
+	return (
+		<div style={{ fontSize: text.body }}>
+			<div style={{ display: 'flex', gap: space.snug, alignItems: 'baseline', flexWrap: 'wrap' }}>
+				<span style={{ fontSize: text.note, color: INK_2 }}>
+					{mine ? 'Your move' : 'Their move'}
+				</span>
+				<strong style={{ color: badge.colour }}>{badge.label}</strong>
+				{note.after !== null && (
+					<span style={{ fontSize: text.note, color: INK_2 }}>{signed(note.after)}</span>
+				)}
+			</div>
+			<div style={{ color: INK, marginTop: 2 }}>{note.text}</div>
+			{assisted && (
+				// A run-only fact, and it changes what the number means.
+				<div style={{ fontSize: text.note, color: INK_2, marginTop: 2 }}>
+					Answered with help — not counted towards your rating.
+				</div>
+			)}
+		</div>
+	);
+}
+
+/** The two accuracies, next to each other, because that is the comparison. */
+function Scoreline({
+	ours,
+	theirs,
+	ourMoves,
+	theirMoves,
+}: {
+	ours: number | null;
+	theirs: number | null;
+	ourMoves: number;
+	theirMoves: number;
+}) {
+	return (
+		<div style={{ display: 'flex', gap: space.page, marginBottom: space.card }}>
+			<Score label="You" value={ours} moves={ourMoves} strong />
+			<Score label="Opponent" value={theirs} moves={theirMoves} />
+		</div>
+	);
+}
+
+function Score({
+	label,
+	value,
+	moves,
+	strong,
+}: {
+	label: string;
+	value: number | null;
+	moves: number;
+	strong?: boolean;
+}) {
 	return (
 		<div>
-			{QUALITY_ORDER.map((q) => {
-				const n = dist[q];
-				if (!n) return null;
-				return (
-					<div key={q} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-						<span style={{ width: 78, fontSize: 13, color: INK_2 }}>{QUALITY_LABEL[q]}</span>
-						<div
-							style={{
-								height: 10,
-								width: `${Math.max(4, (n / total) * 180)}px`,
-								background: QUALITY_COLOUR[q],
-								borderRadius: 4,
-							}}
-						/>
-						<span style={{ fontSize: 13, color: INK }}>{n}</span>
-					</div>
-				);
-			})}
+			<div style={{ fontSize: text.note, color: INK_2 }}>{label}</div>
+			<div
+				style={{
+					fontSize: strong ? 30 : 24,
+					fontWeight: 700,
+					color: value === null ? INK_2 : INK,
+					lineHeight: 1.1,
+				}}
+			>
+				{value === null ? '—' : `${value}%`}
+			</div>
+			<div style={{ fontSize: text.note, color: INK_2 }}>
+				{value === null ? 'not scored' : `${moves} moves`}
+			</div>
 		</div>
 	);
 }
 
 /**
- * Evaluation through the run.
+ * The judgement counts for both players.
+ *
+ * A table rather than two sets of bars: the interesting reading is across a row
+ * — three blunders to their one — and bars put that comparison in two different
+ * places on the page.
+ */
+function QualityTable({
+	ours,
+	theirs,
+	ourTotal,
+	theirTotal,
+}: {
+	ours: Record<Quality, number>;
+	theirs: Record<Quality, number>;
+	ourTotal: number;
+	theirTotal: number;
+}) {
+	const rows = QUALITY_ORDER.filter((q) => ours[q] || theirs[q]);
+	if (!rows.length) return null;
+
+	return (
+		<table style={{ borderCollapse: 'collapse', fontSize: text.body }}>
+			<thead>
+				<tr style={{ color: INK_2, fontSize: text.note, textAlign: 'left' }}>
+					<th style={{ fontWeight: 400, padding: '2px 10px 4px 0' }}>Move</th>
+					<th style={{ fontWeight: 400, padding: '2px 10px 4px 0' }}>You</th>
+					<th style={{ fontWeight: 400, padding: '2px 0 4px 0' }}>Opponent</th>
+				</tr>
+			</thead>
+			<tbody>
+				{rows.map((q) => (
+					<tr key={q}>
+						<td style={{ padding: '2px 10px 2px 0', color: QUALITY_COLOUR[q] }}>
+							{QUALITY_LABEL[q]}
+						</td>
+						<Cell n={ours[q]} total={ourTotal} q={q} />
+						<Cell n={theirs[q]} total={theirTotal} q={q} last />
+					</tr>
+				))}
+			</tbody>
+		</table>
+	);
+}
+
+function Cell({
+	n,
+	total,
+	q,
+	last,
+}: {
+	n: number;
+	total: number;
+	q: Quality;
+	last?: boolean;
+}) {
+	return (
+		<td style={{ padding: `2px ${last ? 0 : 10}px 2px 0` }}>
+			<span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+				<span style={{ minWidth: 16, color: n ? INK : INK_2 }}>{n}</span>
+				<span
+					style={{
+						height: 8,
+						width: total ? `${Math.round((n / total) * 90)}px` : 0,
+						background: QUALITY_COLOUR[q],
+						borderRadius: 4,
+						opacity: n ? 1 : 0,
+					}}
+				/>
+			</span>
+		</td>
+	);
+}
+
+/**
+ * Evaluation through the game.
  *
  * One series, so no legend — the heading names it. The zero line is the thing
  * being read against, so it is drawn properly rather than left to the grid.
+ *
+ * The dots carry the second story: a point is filled in a judgement colour when
+ * the move that reached it was bad, whoever played it, and ringed where they
+ * gave us something. A graph that marked only our own errors would show a line
+ * dropping for reasons it never explains.
  */
 function EvalGraph({
 	evals,
+	notes,
 	ply,
 	plies,
 	onSelect,
 }: {
 	evals: (number | null)[];
+	notes: Annotation[];
 	ply: number;
 	plies: number;
 	onSelect: (p: number) => void;
@@ -523,34 +701,45 @@ function EvalGraph({
 	}
 
 	if (pts.length < 2) {
-		return <p style={{ fontSize: 13, color: INK_2 }}>Not enough evaluations recorded.</p>;
+		return <p style={{ fontSize: text.note, color: INK_2 }}>Not enough evaluations recorded.</p>;
 	}
 
 	const d = pts.map((pt, i) => `${i ? 'L' : 'M'}${pt.x.toFixed(1)} ${pt.y.toFixed(1)}`).join(' ');
 	const here = pts.find((pt) => pt.p === ply);
 
 	return (
-		<svg width={W} height={H} role="img" aria-label="Evaluation through the run">
+		<svg width={W} height={H} role="img" aria-label="Evaluation through the game">
 			<line x1={PAD} x2={W - PAD} y1={H / 2} y2={H / 2} stroke={GRID} strokeWidth={1} />
 			<path d={d} fill="none" stroke={SERIES} strokeWidth={2} strokeLinejoin="round" />
-			{pts.map((pt) => (
-				<circle
-					key={pt.p}
-					cx={pt.x}
-					cy={pt.y}
-					r={pt.p === ply ? 5 : 3}
-					fill={pt.p === ply ? SERIES : '#fff'}
-					stroke={SERIES}
-					strokeWidth={1.5}
-					style={{ cursor: 'pointer' }}
-					onClick={() => onSelect(pt.p)}
-				>
-					<title>
-						ply {pt.p}: {pt.cp > 0 ? '+' : ''}
-						{(pt.cp / 100).toFixed(2)}
-					</title>
-				</circle>
-			))}
+			{pts.map((pt) => {
+				const n = notes[pt.p - 1];
+				const marked = n && n.quality && WORTH_MARKING.has(n.quality);
+				const fill = pt.p === ply
+					? SERIES
+					: marked
+						? QUALITY_COLOUR[n!.quality as Quality]
+						: '#fff';
+				return (
+					<circle
+						key={pt.p}
+						cx={pt.x}
+						cy={pt.y}
+						r={pt.p === ply ? 5 : marked || n?.opportunity ? 4 : 3}
+						fill={fill}
+						stroke={n?.opportunity ? color.good : SERIES}
+						strokeWidth={n?.opportunity ? 2.5 : 1.5}
+						style={{ cursor: 'pointer' }}
+						onClick={() => onSelect(pt.p)}
+					>
+						<title>
+							{n ? `${n.side === 'us' ? 'you' : 'them'}, ` : ''}ply {pt.p}:{' '}
+							{signed(pt.cp)}
+							{n?.opportunity ? ' — chance to punish' : ''}
+							{n?.missedPunish ? ' — chance missed' : ''}
+						</title>
+					</circle>
+				);
+			})}
 			{here && (
 				<text
 					x={Math.min(W - 34, here.x + 6)}
@@ -558,13 +747,15 @@ function EvalGraph({
 					fontSize={11}
 					fill={INK}
 				>
-					{here.cp > 0 ? '+' : ''}
-					{(here.cp / 100).toFixed(1)}
+					{signed(here.cp)}
 				</text>
 			)}
 		</svg>
 	);
 }
+
+/** Judgements bad enough that the graph should point at them. */
+const WORTH_MARKING = new Set<Quality>(['inaccuracy', 'mistake', 'blunder']);
 
 function lastMoveOf(
 	positions: string[],

@@ -1658,6 +1658,48 @@ Two responses, and only the second is worth anything:
 
 Same shape as the base-path regression and the Windows casing clash, and by now the pattern is not a coincidence: **every mistake in this project that took two rounds to find was one where the environment differed from the environment in my head, silently.** The fix is never to be more careful about the difference; it is a check that asserts the two are the same.
 
+### M18 — A game has two players
+
+Reviewing a real game as Black, the qualitative labels appeared only on White's moves. Two independent off-by-ones, and they cancelled often enough to look like a display quirk:
+
+- **Whose loss it is.** `lossesFrom` keyed by 0-based ply index; Review read `losses[ply]` with a 1-based ply. Playing Black put our scores on their moves, and nowhere else.
+- **Where an evaluation array starts.** A run writes `evals[path.length]`, so index 0 is the starting position. The sites' arrays start at the position *after* the first move. One of the two sources was a ply out, always.
+
+Both are now normalised at one boundary — `domain/reviewable.ts` — to **our point of view, indexed by ply count**, and nothing downstream is allowed a second opinion. Losses are no longer stored alongside evaluations at all: they are derived, because two sources of truth is how a move ends up printed against a different move's score.
+
+#### Grading one player is not reviewing a game
+
+The deeper problem was not the indexing. Review scored our moves and said nothing about theirs, and in a trainer built on punishment that is the wrong half to drop — the moment that matters most is the one where THEY went wrong and we did or did not take it.
+
+`domain/annotate.ts` derives every move on both sides from the one evaluation array: quality, the evaluation it leaves behind, and a line of commentary in the trainer's existing vocabulary rather than a second one. Two of those lines are the app's whole thesis, and they use the same test Train uses, so *chance to punish* means the same thing on both screens:
+
+> **They went wrong — 320cp. This is the chance to punish it.**
+> **They had just blundered and this gives 320cp of it straight back.**
+
+The panel now shows both accuracies side by side, a judgement table with an opponent column, and an evaluation graph whose dots are coloured by whoever played the move that reached them, ringed where a chance was offered. A graph that marked only our own errors showed a line dropping for reasons it never explained.
+
+#### The card this trainer is arguing for
+
+Import mined our own errors only — *"the opponent's mistakes are not our flashcards"* — which quietly excluded the most valuable position in the app: they hung something and we did not take it. Worse, the ordinary rules could not have caught it even if it had been looked for. The position after their blunder is often past `DECIDED_CP`, and giving back 400cp of a +700 barely moves the win percentage. Both filters are right for ordinary moves and both are wrong for exactly this one.
+
+So it is judged separately, by `missedTheChance(gift, giveBack, after)`: their move was a blunder by the trainer's own definition, we returned at least half of it (with a 60cp floor, because half of a small gift is the whole point of the position), **and** we are no longer clearly winning afterwards. That last clause is what keeps it honest — handing back half of a +9 is imprecision in a game that was never in doubt, and a card made from it would drill accuracy where nothing was at stake.
+
+It costs nothing to detect: our plies alternate with theirs, so the evaluation before their blunder is the evaluation after our previous move, already in the cache. There is a test that fails if that ever stops being true, because the alternative is every imported game getting 50% slower on a phone.
+
+Cards mined this way carry `motif: 'missed-punish'` and ask a different question — *"They had just blundered here. You played Bd3 and let it go — find the punishment."* `phase` could not carry it: that says where a card came from, and this says what the exercise is.
+
+#### The report button that led to a Server Error
+
+Pressing "Report a problem" while signed out of GitHub produced a sign-in page and then an error, with nothing to suggest the report was the cause.
+
+A signed-out visitor never fetches the link. GitHub carries the destination as `login?return_to=<the whole thing, encoded again>`, and a 7000-character issue URL does not survive that round trip. The budget was sized for what a browser accepts; it needed to be sized for what survives being embedded in another URL.
+
+It is 1500 now, and the state dump does not fit in that — so it goes to the clipboard, and the issue body says so **in the place where it would have been**, with an empty fenced block to paste into. It is not trimmed: a dump cut at an arbitrary character is not JSON, and half a diagnostic that parses as nothing is not half as useful. The `labels` parameter is gone too — GitHub rejects it from anyone without triage rights, which is one more way this link can land on an error page instead of a form.
+
+#### A check that looks at the screen
+
+Everything above passed 559 unit tests while the screen was wrong, because the bug lived in the seam between two modules that each behaved correctly. `scripts/review-check.mjs` seeds one imported game played as Black, steps through it, and prints the commentary for every ply. The rule this is the third instance of: **when a defect is invisible to the tests, the answer is a check at the level the defect lives at, not more tests at the level it does not.**
+
 ---
 
 ## 10. Risks

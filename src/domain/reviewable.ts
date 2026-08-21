@@ -10,12 +10,26 @@
 // of moves, an evaluation after each, and a side that was you. Making that
 // explicit means Review works on both without knowing which it has.
 //
-// The evaluations are stored White-POV for imported games and our-POV for runs,
-// which is exactly the kind of difference that produces a graph that is right
-// half the time. Normalising happens here, once.
+// TWO conventions had to be reconciled, and both of them had already caused a
+// wrong number on screen:
+//
+//  * POINT OF VIEW. Imported games store evaluations from WHITE's side, because
+//    that is what the sites send; runs store them from ours. Mixing the two puts
+//    the graph upside down for every game played as Black — right half the time,
+//    which is the worst kind of wrong for a number nobody can easily check.
+//
+//  * INDEXING. Runs index by ply COUNT, so `evals[1]` is the position after the
+//    first move and `evals[0]` is the start. Imported games index from zero, so
+//    their `evals[0]` is the position after the first move. Off by one, silently,
+//    in one of the two sources.
+//
+// Both are normalised here, at the boundary, to: OUR point of view, `evals[i]`
+// is the position after i plies. Nothing downstream gets a second opinion, and
+// nothing downstream stores losses of its own — they are derived from these.
 // ---------------------------------------------------------------------------
 
 import { accuracyPercent } from './review';
+import { annotate, lossesOf, punishTally } from './annotate';
 
 export type ReviewSource = 'run' | 'game';
 
@@ -31,10 +45,14 @@ export type Reviewable = {
 	/** `title · detail`, for anywhere that wants one string. */
 	label: string;
 	moves: string[];
-	/** Evaluation after each ply, OUR point of view. */
+	/**
+	 * OUR point of view, indexed by ply count: `evals[0]` is the starting
+	 * position and `evals[i]` is the position after i plies.
+	 *
+	 * Null where a ply was never evaluated — which is not the same as level, and
+	 * must never be read as it.
+	 */
 	evals: (number | null)[];
-	/** Centipawns lost on each of our plies, keyed by ply index. */
-	losses: Record<number, number>;
 	ourColour: 'w' | 'b';
 	/** Where to see the original, for imported games. */
 	url?: string;
@@ -79,8 +97,9 @@ export function fromRun(r: RunLike): Reviewable | null {
 		detail,
 		label: `${title} · ${detail}`,
 		moves: r.moves,
+		// Already our-POV, and already indexed by ply count — a run writes
+		// `evals[path.length]` after each move, so index 0 is the start.
 		evals: r.evals ?? [],
-		losses: r.losses ?? {},
 		ourColour: r.ourColour ?? 'w',
 	};
 }
@@ -92,9 +111,17 @@ export function fromGame(g: GameLike): Reviewable | null {
 
 	// White-POV in storage, our-POV here. Getting this wrong would put the
 	// evaluation graph upside down for every game played as Black.
-	const evals = (g.evals ?? []).map((e) =>
-		e === null || e === undefined ? null : ourColour === 'w' ? e : -e,
-	);
+	//
+	// The leading null is the index shift: the sites' arrays start at the position
+	// AFTER the first move, and everything here counts plies. Null rather than a
+	// number because nothing measured the starting position — annotate() fills it
+	// with the known starting value, which is a different claim from a reading.
+	const evals: (number | null)[] = [
+		null,
+		...(g.evals ?? []).map((e) =>
+			e === null || e === undefined ? null : ourColour === 'w' ? e : -e,
+		),
+	];
 
 	const title = `vs ${g.opponent}`;
 	const detail = `${g.platform} · ${g.result}`;
@@ -108,34 +135,10 @@ export function fromGame(g: GameLike): Reviewable | null {
 		label: `${title} · ${detail}`,
 		moves: g.moves,
 		evals,
-		losses: lossesFrom(evals, ourColour),
 		ourColour,
 		url: g.url,
 		result: g.result,
 	};
-}
-
-/**
- * Centipawns given up on each of our moves, derived from the evaluations.
- *
- * Runs record this as they go; imported games never did, because nothing was
- * watching at the time. It falls out of the evaluations either way, and doing
- * it here means Review does not have to care which kind of thing it is holding.
- *
- * Keyed by the ply index the move was played AT, matching what runs store.
- */
-export function lossesFrom(evals: (number | null)[], ourColour: 'w' | 'b'): Record<number, number> {
-	const out: Record<number, number> = {};
-	for (let i = 0; i < evals.length; i++) {
-		const isOurs = (i % 2 === 0) === (ourColour === 'w');
-		if (!isOurs) continue;
-		const after = evals[i];
-		const before = i === 0 ? 15 : evals[i - 1];
-		if (after === null || before === null || after === undefined || before === undefined) continue;
-		// Our-POV already, so a drop is a loss whichever colour we are.
-		out[i] = Math.max(0, before - after);
-	}
-	return out;
 }
 
 export type ReviewSummary = {
@@ -146,9 +149,14 @@ export type ReviewSummary = {
 	detail: string;
 	/** Null when nothing in it was scored — not zero. */
 	accuracy: number | null;
+	/** Theirs, on the same basis, so the row says who was playing well. */
+	opponentAccuracy: number | null;
 	/** How many of our moves the accuracy is computed from. */
 	scored: number;
 	plies: number;
+	/** Chances they gave us, and the ones we let go. */
+	offered: number;
+	missed: number;
 	result?: 'win' | 'loss' | 'draw';
 	url?: string;
 };
@@ -162,16 +170,21 @@ export type ReviewSummary = {
  * was scored, which is a different statement from 0% and must not print as one.
  */
 export function summarise(r: Reviewable): ReviewSummary {
-	const losses = Object.values(r.losses ?? {});
+	const a = annotate(r.evals, r.ourColour);
+	const ours = lossesOf(a, 'us');
+	const tally = punishTally(a);
 	return {
 		id: r.id,
 		source: r.source,
 		ts: r.ts,
 		title: r.title,
 		detail: r.detail,
-		accuracy: accuracyPercent(losses),
-		scored: losses.length,
+		accuracy: accuracyPercent(ours),
+		opponentAccuracy: accuracyPercent(lossesOf(a, 'them')),
+		scored: ours.length,
 		plies: r.moves.length,
+		offered: tally.offered,
+		missed: tally.missed,
 		result: r.result,
 		url: r.url,
 	};

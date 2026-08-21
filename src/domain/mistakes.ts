@@ -46,6 +46,15 @@ export type MistakeCard = {
 	lineIds?: string[];
 	ply: number;
 	phase: 'book' | 'punish' | 'freeplay' | 'game';
+	/**
+	 * What kind of position this is, when it is a particular kind.
+	 *
+	 * 'missed-punish' is a card mined from a game where the OPPONENT blundered
+	 * and the chance went by. `phase` cannot carry it: that says where the card
+	 * came from, and this says what the exercise is. Both are worth knowing —
+	 * these are the cards this whole trainer is arguing for.
+	 */
+	motif?: 'missed-punish';
 	origin?: CardOrigin;
 	firstSeen: number;
 	lastSeen: number;
@@ -72,6 +81,7 @@ export function makeCard(opts: {
 	opening?: string | null;
 	ply: number;
 	phase: 'book' | 'punish' | 'freeplay' | 'game';
+	motif?: 'missed-punish';
 	origin?: CardOrigin;
 	now: number;
 }): MistakeCard {
@@ -86,6 +96,7 @@ export function makeCard(opts: {
 		...(opts.opening ? { opening: opts.opening } : {}),
 		ply: opts.ply,
 		phase: opts.phase,
+		...(opts.motif ? { motif: opts.motif } : {}),
 		...(opts.origin ? { origin: opts.origin } : {}),
 		firstSeen: opts.now,
 		lastSeen: opts.now,
@@ -133,7 +144,11 @@ export function answer(card: MistakeCard, correct: boolean, now: number): Mistak
 export const CATEGORIES: { id: MistakeCard['phase']; label: string; note: string }[] = [
 	{ id: 'book', label: 'Openings', note: 'Book moves you lost the line on.' },
 	{ id: 'punish', label: 'Refutations', note: 'Mistakes you failed to punish.' },
-	{ id: 'game', label: 'Real games', note: 'Mined from your Lichess and Chess.com games.' },
+	{
+		id: 'game',
+		label: 'Real games',
+		note: 'Mined from your Lichess and Chess.com games — your errors, and the chances you let go.',
+	},
 	{ id: 'freeplay', label: 'Free play', note: 'Moves that cost material after the book ran out.' },
 ];
 

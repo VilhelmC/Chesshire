@@ -20,6 +20,8 @@
 
 import { engine, toWhitePov } from './stockfish';
 import { winPercent, JUDGEMENT } from '../domain/accuracy';
+import { classifyMove } from '../domain/classify';
+import { missedTheChance } from '../domain/annotate';
 import { applySan, applyUci, sideToMove, INITIAL_FEN } from '../domain/chess';
 import type { ImportedGame } from '../data/games';
 
@@ -77,6 +79,14 @@ export type GameMistake = {
 	loss: number;
 	evalBefore: number;
 	source: 'site' | 'local';
+	/**
+	 * Why this position is worth a card.
+	 *
+	 * 'missed-punish' means the move before it was THEIR blunder and we handed
+	 * most of it back. It earns its own name because it is the app's whole
+	 * thesis, and because it is judged by a different rule — see below.
+	 */
+	motif?: 'missed-punish';
 };
 
 /** One position's verdict, White's point of view. */
@@ -206,14 +216,40 @@ export async function findMistakes(
 		const after = await evalAt(i + 1);
 		if (!before || !after) continue;
 
-		// Already decided — see DECIDED_CP.
-		if (Math.abs(before.cp) > DECIDED_CP) continue;
-
 		const loss = before.cp - after.cp;
-		// The judgement is on win percentage, not centipawns: how much the move
-		// changed the likely OUTCOME, which is the thing worth a flashcard.
-		const winDrop = winPercent(before.cp) - winPercent(after.cp);
-		if (winDrop < minWinDrop) continue;
+
+		// ------------------------------------------------------------------
+		// Did they just blunder, and did we give it back?
+		//
+		// This mattered enough to be worth its own rule. Import mined only our
+		// own errors, so the single most important position in this trainer —
+		// they hung something and we did not take it — never became a card. It
+		// was also invisible to the ordinary test twice over: the position
+		// after their blunder is often past DECIDED_CP, and giving back 400cp
+		// of a +700 is barely any change in win percentage. Both filters are
+		// right for ordinary moves and wrong for exactly this one.
+		//
+		// The evaluation either side of THEIR move is already cached: our plies
+		// alternate with theirs, so positions[i-1] was measured as the "after"
+		// of our previous move. No extra search.
+		// ------------------------------------------------------------------
+		const theirs = i > 0 ? await evalAt(i - 1) : null;
+		const gift = theirs ? before.cp - theirs.cp : 0;
+		const missed =
+			!!theirs &&
+			classifyMove(theirs.cp, before.cp) === 'blunder' &&
+			missedTheChance(gift, loss, after.cp);
+
+		if (!missed) {
+			// Already decided — see DECIDED_CP.
+			if (Math.abs(before.cp) > DECIDED_CP) continue;
+
+			// The judgement is on win percentage, not centipawns: how much the
+			// move changed the likely OUTCOME, which is the thing worth a
+			// flashcard.
+			const winDrop = winPercent(before.cp) - winPercent(after.cp);
+			if (winDrop < minWinDrop) continue;
+		}
 
 		// The card needs a move to ask for. Site evaluations do not carry one, so
 		// this is the only place a second search is unavoidable — and it happens
@@ -249,6 +285,7 @@ export async function findMistakes(
 			loss: Math.round(loss),
 			evalBefore: Math.round(before.cp),
 			source: before.source,
+			...(missed ? { motif: 'missed-punish' as const } : {}),
 		});
 	}
 
