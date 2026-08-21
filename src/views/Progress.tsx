@@ -396,11 +396,18 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 				</p>
 
 				{perf.accuracy === null ? (
-					<p style={{ fontSize: 14, color: INK_2 }}>
-						No games with stored evaluations yet.
-						{perf.unmeasured > 0 &&
-							` ${perf.unmeasured} imported game${perf.unmeasured === 1 ? '' : 's'} predate them — re-import from Settings to measure them.`}
-					</p>
+					<div style={{ fontSize: 14, color: INK_2 }}>
+						No games could be scored yet.
+						{perf.reasons.length > 0 && (
+							<ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 13 }}>
+								{perf.reasons.map((r) => (
+									<li key={r.reason}>
+										{r.count} — {r.reason}
+									</li>
+								))}
+							</ul>
+						)}
+					</div>
 				) : (
 					<>
 						<div
@@ -460,12 +467,20 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 						)}
 
 						{perf.unmeasured > 0 && (
-							<p style={{ fontSize: 12, color: INK_2, marginTop: 8 }}>
+							<div style={{ fontSize: 12, color: INK_2, marginTop: 8 }}>
+								{/* A bare "15 excluded" is a number with no remedy attached.
+									Each cause needs a different action, so each is named. */}
 								{perf.unmeasured} game{perf.unmeasured === 1 ? '' : 's'} could not be
-								measured — imported before evaluations were kept, or analysed with gaps.
-								Left out entirely rather than averaged over the moves that happen to have
-								been looked at.
-							</p>
+								measured, left out entirely rather than averaged over whichever moves
+								happen to have been analysed:
+								<ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+									{perf.reasons.map((r) => (
+										<li key={r.reason}>
+											{r.count} — {r.reason}
+										</li>
+									))}
+								</ul>
+							</div>
 						)}
 					</>
 				)}

@@ -1562,6 +1562,77 @@ So it is checked as a property of the tree instead — `test/filenames.test.ts` 
 
 Which is the lesson underneath the lesson: **a regression test is only worth what its failure demonstrates.** Both versions passed on a clean tree; only one of them failed when the bug was put back.
 
+
+### M15.3 — When the error names the wrong thing
+
+A dependency was added to `package.json` and `npm install` was not run. The build failed with:
+
+```
+ENOENT: no such file or directory, open
+'C:\Users\vilhe\...\Schackal\@fontsource-variable\source-sans-3\wght.css'
+```
+
+which reads as a broken path, and is not. Once the package is absent, postcss-import stops treating `@fontsource-variable/...` as a package specifier and resolves it against the **project root** — so the message describes a file nobody ever asked for, at a location nobody chose.
+
+This was the second time the same omission produced an unrelated-looking error. The first was `@types/node`, which surfaced as *"Cannot find name `process`"* in the vite config. **Neither message contains the words "npm install".**
+
+Two changes:
+
+**The font stylesheet is imported from `main.tsx`, not `@import`-ed from CSS.** A bare specifier in CSS goes through postcss-import, whose resolution differs from Vite's own; from TypeScript it takes the ordinary module path, which resolves identically on every platform and fails legibly when it cannot.
+
+**The deploy checks the installation before it builds.** Every name in `package.json` must exist in `node_modules`, or it stops with the list and one instruction. The build would have failed regardless — the point is that it now fails saying what is actually wrong.
+
+The pattern worth extracting: **when a failure mode has produced a misleading error twice, the fix is not a better guess next time — it is a check that speaks first.**
+
+
+### M16 — Showing instead of telling
+
+Three reports from a session of real use, and the first two turned out to be the same complaint.
+
+#### "Sound, but only played 4.99% here" — the deepest bug so far
+
+A move was shown as the engine's top choice and simultaneously rejected as not-book. Reasonable response: *what is this app actually training?*
+
+The cause is that **two different meanings of "best" were sharing one word.** `classifyBook` assigned the verdict `best` to the most-PLAYED sound move; `engine/candidates.ts` ranks by evaluation. Both were on screen at once, disagreeing.
+
+Worse than the naming: frequency was a *gate*. A sound move below the threshold was marked wrong. That trains you to reproduce common moves rather than good ones, which inverts what the app is for, and at the extreme it rejected the engine's own first choice.
+
+The rule now:
+
+> **Soundness decides right and wrong. Frequency decides what is worth saying.**
+
+A sound move is accepted whatever its popularity, with a remark — *"sound, and off the beaten track — 5% of players go this way"* — rather than a rejection. `best` is renamed `main`, which is what it always meant. `repertoire` strictness still narrows to one line, because drilling one line is the entire point of that mode.
+
+And the frequency slider now governs only the opponent: **"Opponent plays replies above X% of games."** That asymmetry is the correct one and worth stating as a principle — *predicting them is a question about what people play; judging yourself is a question about what is good.* One control was answering both.
+
+#### Assertions that could not be checked
+
+The app says *"you are a piece up once the exchange finishes"* and *"a5 is strong for them"*, then prints the supporting moves as a row of notation. That asks the reader to replay the sequence in their head before they can see what the claim was about — which is exactly the work a beginner cannot do yet, and exactly why they are using a trainer.
+
+§1.1 already covered it: never make the learner derive what can be shown. **Five moves in text is derivation.**
+
+`domain/line.ts` replays a quoted sequence into positions; `LinePlayer` steps through it *on the real board* rather than in a second miniature one — same squares, same orientation, nothing new to learn to read. An arrow points at the move about to be played, so what is coming is visible from the current position rather than only after it has happened. Index −1 is the position before the line starts, because a claim has to be checkable from both ends.
+
+A line that does not fully replay is shown as far as it got **and says so**. Silently truncating would turn "the first three of these five moves are legal" into "this line is three moves long".
+
+#### Review could not review your games
+
+It replayed training runs only. The games most worth going back over are the real ones, and those were reachable only as isolated mistake cards — a position with no way to see how it came about.
+
+A run and an imported game are the same object for this purpose, so `domain/reviewable.ts` says so and Review stops caring which it holds. One thing needed care: **runs store evaluations from our point of view and imported games store them from White's**, because that is what the sites send. Mixing them puts the evaluation graph upside down for every game played as Black — right half the time, which is the worst kind of wrong for a number nobody can easily check. Normalising happens once, at the boundary, and there is a test for it.
+
+Imported games never recorded per-move losses, because nothing was watching at the time. They fall out of the stored evaluations, so `lossesFrom` derives them — and skips a ply it cannot measure rather than recording a zero, since a zero would say "played perfectly".
+
+#### Reporting a bug from inside the app
+
+`Report a problem`, in the corner of every tab. It composes a pre-filled GitHub issue: no server, and the repository is already a public writable endpoint.
+
+Three decisions:
+
+- **State is captured when the form OPENS, not when it sends.** By the time a description is typed, a background import may have finished and moved something. The state that matters is the state at the moment you noticed.
+- **The token is never included** — `collect()` reports its length and nothing more.
+- **A dump too large for a URL is trimmed, and the report says it was trimmed.** A truncated diagnostic that looks complete is worse than an obviously partial one. The copy option carries all of it.
+
 ---
 
 ## 10. Risks

@@ -10,7 +10,6 @@ import { MoveList, type MoveChip } from '../components/MoveList';
 import { EvalBar } from '../components/EvalBar';
 import { loadProgress } from '../data/progress';
 import { applySan, INITIAL_FEN } from '../domain/chess';
-import { LINES } from '../domain/lines';
 import {
 	classifyQuality,
 	distribution,
@@ -21,7 +20,9 @@ import {
 	QUALITY_ORDER,
 	type Quality,
 } from '../domain/review';
-import type { AnswerRow, RunRow } from '../domain/progress';
+import type { AnswerRow } from '../domain/progress';
+import { reviewables, type Reviewable } from '../domain/reviewable';
+import { db, type ImportedGameRow } from '../data/db';
 import { color } from '../ui/theme';
 
 const INK = color.ink;
@@ -34,7 +35,10 @@ export function Review({
 }: {
 	onPlayFrom?: (h: { moves: string[]; ply: number; ourColour: 'w' | 'b' }) => void;
 }) {
-	const [runs, setRuns] = useState<RunRow[]>([]);
+	// Runs AND imported games — the real ones are the ones most worth reviewing,
+	// and they were previously reachable only as isolated mistake cards with no
+	// way to see how the position came about.
+	const [items, setItems] = useState<Reviewable[]>([]);
 	const [answers, setAnswers] = useState<AnswerRow[]>([]);
 	const [selected, setSelected] = useState<string | null>(null);
 	const [ply, setPly] = useState(0);
@@ -43,16 +47,21 @@ export function Review({
 	useEffect(() => {
 		void (async () => {
 			const d = await loadProgress();
-			// Only runs recorded with their moves can be replayed.
-			const playable = d.runs.filter((r) => r.moves?.length).sort((a, b) => b.ts - a.ts);
-			setRuns(playable);
+			let games: ImportedGameRow[] = [];
+			try {
+				games = await db.imported.toArray();
+			} catch {
+				/* a review of runs alone beats no review */
+			}
+			const all = reviewables(d.runs, games);
+			setItems(all);
 			setAnswers(d.answers);
-			setSelected(playable[0]?.id ?? null);
+			setSelected(all[0]?.id ?? null);
 			setLoaded(true);
 		})();
 	}, []);
 
-	const run = runs.find((r) => r.id === selected) ?? null;
+	const run = items.find((r) => r.id === selected) ?? null;
 
 	// Replay to every position once, so stepping is instant.
 	const positions = useMemo(() => {
@@ -73,10 +82,11 @@ export function Review({
 	useEffect(() => setPly(0), [selected]);
 
 	if (!loaded) return <p style={{ opacity: 0.6 }}>Loading…</p>;
-	if (!runs.length) {
+	if (!items.length) {
 		return (
 			<p style={{ opacity: 0.7 }}>
-				No finished runs recorded yet. Play a run through to the end on the Train tab and it
+				Nothing to review yet — no imported games with moves, and no finished runs. Import
+				from Settings, or play a run through to the end on the Train tab and it
 				appears here.
 			</p>
 		);
@@ -84,11 +94,11 @@ export function Review({
 	if (!run) return null;
 
 	const ourColour = run.ourColour ?? 'w';
-	const losses = Object.entries(run.losses ?? {}).map(([, v]) => v);
+	const losses: number[] = Object.values(run.losses ?? {});
 	const dist = distribution(losses);
 	const acc = accuracyPercent(losses);
 
-	const chips: MoveChip[] = (run.moves ?? []).map((san, i) => ({
+	const chips: MoveChip[] = (run.moves ?? []).map((san: string, i: number) => ({
 		san,
 		ply: i + 1,
 		mistake: false,
@@ -109,14 +119,37 @@ export function Review({
 					onChange={(e) => setSelected(e.target.value)}
 					style={{ fontSize: 14, maxWidth: 460 }}
 				>
-					{runs.map((r) => (
-						<option key={r.id} value={r.id}>
-							{new Date(r.ts).toLocaleString()} — {namesFor(r)} · {r.plies} plies ·{' '}
-							{r.finished ?? 'unfinished'}
-						</option>
-					))}
+					{/* Grouped, because "a game I played" and "a session I did" are
+						different kinds of thing and a flat list of both invites picking
+						the wrong one. */}
+					<optgroup label="Your games">
+						{items
+							.filter((r) => r.source === 'game')
+							.map((r) => (
+								<option key={r.id} value={r.id}>
+									{new Date(r.ts).toLocaleDateString()} — {r.label}
+								</option>
+							))}
+					</optgroup>
+					<optgroup label="Training runs">
+						{items
+							.filter((r) => r.source === 'run')
+							.map((r) => (
+								<option key={r.id} value={r.id}>
+									{new Date(r.ts).toLocaleString()} — {r.label}
+								</option>
+							))}
+					</optgroup>
 				</select>
-				<span style={{ fontSize: 13, color: INK_2 }}>{runs.length} runs recorded</span>
+				<span style={{ fontSize: 13, color: INK_2 }}>
+					{items.filter((r) => r.source === 'game').length} games ·{' '}
+					{items.filter((r) => r.source === 'run').length} runs
+				</span>
+				{run?.url && (
+					<a href={run.url} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
+						see it on {run.label.split(' ')[0]}
+					</a>
+				)}
 			</div>
 
 			<div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start' }}>
@@ -325,12 +358,6 @@ function EvalGraph({
 			)}
 		</svg>
 	);
-}
-
-function namesFor(r: RunRow): string {
-	if (r.opening) return r.opening;
-	const names = (r.lineIds ?? []).map((id) => LINES.find((l) => l.id === id)?.name ?? id);
-	return names.length > 1 ? `${names[0]} +${names.length - 1}` : (names[0] ?? '—');
 }
 
 function lastMoveOf(

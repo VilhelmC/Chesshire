@@ -105,16 +105,16 @@ function italianBook() {
 	register(['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Nge7']);
 	register(['e4', 'c5']);
 	return bookFrom({
-		'': (f) => [mv(f, 'e4', 0.55, 'best'), mv(f, 'd4', 0.3, 'book')],
-		e4: (f) => [mv(f, 'e5', 0.4, 'best'), mv(f, 'c5', 0.35, 'book', 'Sicilian Defence')],
-		'e4 e5': (f) => [mv(f, 'Nf3', 0.7, 'best'), mv(f, 'Nc3', 0.15, 'book')],
-		'e4 e5 Nf3': (f) => [mv(f, 'Nc6', 0.75, 'best')],
-		'e4 e5 Nf3 Nc6': (f) => [mv(f, 'Bc4', 0.4, 'best'), mv(f, 'Bb5', 0.35, 'book')],
+		'': (f) => [mv(f, 'e4', 0.55, 'main'), mv(f, 'd4', 0.3, 'book')],
+		e4: (f) => [mv(f, 'e5', 0.4, 'main'), mv(f, 'c5', 0.35, 'book', 'Sicilian Defence')],
+		'e4 e5': (f) => [mv(f, 'Nf3', 0.7, 'main'), mv(f, 'Nc3', 0.15, 'book')],
+		'e4 e5 Nf3': (f) => [mv(f, 'Nc6', 0.75, 'main')],
+		'e4 e5 Nf3 Nc6': (f) => [mv(f, 'Bc4', 0.4, 'main'), mv(f, 'Bb5', 0.35, 'book')],
 		'e4 e5 Nf3 Nc6 Bc4': (f) => [
-			mv(f, 'Nf6', 0.32, 'best', 'Two Knights Defence'),
+			mv(f, 'Nf6', 0.32, 'main', 'Two Knights Defence'),
 			mv(f, 'Bc5', 0.28, 'book', 'Giuoco Piano'),
 			mv(f, 'Be7', 0.06, 'book', 'Hungarian Defence'),
-			mv(f, 'h6', 0.008, 'rare'),
+			mv(f, 'h6', 0.008, 'sound'),
 			mv(f, 'Nge7', 0.05, 'blunder'),
 		],
 	});
@@ -165,14 +165,28 @@ describe('a run without any hardcoded lines', () => {
 		expect(wrong.message).toMatch(/sound/i);
 	});
 
-	it('accepts a rare but sound move only under "free"', async () => {
+	it('accepts a sound move whether or not anyone else plays it', async () => {
+		// Frequency governs the OPPONENT — predicting them is a question about
+		// what people play. Judging our own move is a question about what is
+		// good, and the two were sharing one rule.
 		const path = ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4'];
 		let fen = INITIAL_FEN;
 		for (const san of path) fen = applySan(fen, san).fen;
 
 		const moves = italianMovesAt(fen);
-		expect(type_.acceptable(moves, 'book').map((m) => m.san)).not.toContain('h6');
+		expect(type_.acceptable(moves, 'book').map((m) => m.san)).toContain('h6');
 		expect(type_.acceptable(moves, 'free').map((m) => m.san)).toContain('h6');
+	});
+
+	it('still narrows to the main line under "repertoire"', async () => {
+		// The mode that exists precisely to drill one line keeps doing that;
+		// following it IS the exercise there.
+		const path = ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4'];
+		let fen = INITIAL_FEN;
+		for (const san of path) fen = applySan(fen, san).fen;
+
+		const moves = italianMovesAt(fen);
+		expect(type_.acceptable(moves, 'repertoire').length).toBe(1);
 	});
 
 	it('never accepts a move that loses material, at any strictness', async () => {
@@ -349,10 +363,10 @@ describe('the opponent', () => {
 /** The classified moves at the Italian's move-3 node, for the strictness tests. */
 function italianMovesAt(fen: string): BookMove[] {
 	return [
-		mv(fen, 'Nf6', 0.32, 'best'),
+		mv(fen, 'Nf6', 0.32, 'main'),
 		mv(fen, 'Bc5', 0.28, 'book'),
 		mv(fen, 'Be7', 0.06, 'book'),
-		mv(fen, 'h6', 0.008, 'rare'),
+		mv(fen, 'h6', 0.008, 'sound'),
 		mv(fen, 'Nge7', 0.05, 'blunder'),
 	];
 }

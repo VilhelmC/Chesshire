@@ -17,8 +17,14 @@
  * unicode-range, so a reader of English downloads exactly one 32KB woff2.
  *
  * SIL Open Font Licence 1.1 — see README.
+ *
+ * The stylesheet is pulled in from main.tsx, NOT with an `@import` here. A bare
+ * package specifier in CSS goes through postcss-import, which resolves paths
+ * differently from Vite's own module resolver and — when the package is missing
+ * — reports it as a file-not-found against the PROJECT ROOT rather than as an
+ * unresolved dependency. From TypeScript it takes the ordinary import path,
+ * which fails legibly and works the same on every platform.
  */
-@import '@fontsource-variable/source-sans-3/wght.css';
 
 /*
  * The only global stylesheet. Everything else is inline styles on components.

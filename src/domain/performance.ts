@@ -42,23 +42,70 @@ export type GameScore = {
 };
 
 /**
- * A game is measurable only if EVERY ply was evaluated.
+ * The evaluations this game can actually be scored from, or null.
  *
- * A gap is not a smaller sample, it is a different game: skip the plies nobody
- * looked at and the average silently describes the moves that happened to get
- * analysed. Games imported before evaluations were stored have no evals at all
- * and land here too, which is correct — they are not worse data, they are
- * absent data.
+ * ---------------------------------------------------------------------------
+ * A TRAILING gap is not the same as a gap in the middle, and treating them
+ * alike threw away most of the history.
+ *
+ * The import walks the positions either side of each of OUR moves. When the
+ * opponent plays the last move of the game — which is about half of all games —
+ * nothing ever evaluates the final position, so the last entry is null. The
+ * original check demanded every ply and rejected the entire game over it.
+ *
+ * That final position is the one after THEIR move. It contributes nothing to
+ * our accuracy. Dropping it costs nothing; dropping the game cost fifteen games
+ * out of twenty.
+ *
+ * A gap in the MIDDLE is still fatal, and still should be: skip the plies
+ * nobody looked at and the average silently describes the analysis rather than
+ * the play.
+ * ---------------------------------------------------------------------------
  */
+export function measurableEvals(g: MeasurableGame): number[] | null {
+	if (!g.evals?.length || !g.moves?.length) return null;
+
+	// Trim trailing gaps, then require the remainder to be solid.
+	let end = Math.min(g.evals.length, g.moves.length);
+	while (end > 0 && (g.evals[end - 1] === null || g.evals[end - 1] === undefined)) end--;
+
+	if (end < MIN_PLIES) return null;
+	const head = g.evals.slice(0, end);
+	if (head.some((e) => e === null || e === undefined)) return null;
+	return head as number[];
+}
+
+/** Below this there is not enough game to say anything about how it was played. */
+export const MIN_PLIES = 6;
+
 export function isMeasurable(g: MeasurableGame): boolean {
-	if (!g.evals?.length || !g.moves?.length) return false;
-	if (g.evals.length < g.moves.length) return false;
-	return g.evals.slice(0, g.moves.length).every((e) => e !== null && e !== undefined);
+	return measurableEvals(g) !== null;
+}
+
+/**
+ * Why a game contributes nothing, in words.
+ *
+ * "15 of 20 excluded" with no reason is the kind of number this project has
+ * spent a lot of effort not shipping. Each exclusion has a cause and each cause
+ * has a different remedy.
+ */
+export function exclusionReason(g: MeasurableGame): string | null {
+	if (!g.moves?.length) return 'no moves recorded — imported before moves were kept';
+	if (!g.evals?.length) return 'no evaluations — imported before they were kept';
+
+	let end = Math.min(g.evals.length, g.moves.length);
+	while (end > 0 && (g.evals[end - 1] === null || g.evals[end - 1] === undefined)) end--;
+
+	if (end < MIN_PLIES) return 'too short to score';
+	if (g.evals.slice(0, end).some((e) => e === null || e === undefined)) {
+		return 'analysis stopped partway — re-import to finish it';
+	}
+	return null;
 }
 
 export function scoreGame(g: MeasurableGame): GameScore | null {
-	if (!isMeasurable(g)) return null;
-	const evals = (g.evals as number[]).slice(0, g.moves!.length);
+	const evals = measurableEvals(g);
+	if (!evals) return null;
 
 	const acc = gameAccuracy(evals);
 	const mine = g.ourColour === 'w' ? acc.white : acc.black;
@@ -104,6 +151,8 @@ export type PerformanceReport = {
 	scored: GameScore[];
 	/** Games with no usable evaluations — reported, never quietly dropped. */
 	unmeasured: number;
+	/** Why, counted by cause, so the remedy is visible rather than guessed at. */
+	reasons: { reason: string; count: number }[];
 	/** Mean accuracy over the scored games, or null if there are none. */
 	accuracy: number | null;
 	/** Mean accuracy over the most recent `RECENT` games. */
@@ -122,9 +171,18 @@ export function performanceReport(games: MeasurableGame[]): PerformanceReport {
 
 	const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 
+	const tally = new Map<string, number>();
+	for (const g of games) {
+		const why = exclusionReason(g);
+		if (why) tally.set(why, (tally.get(why) ?? 0) + 1);
+	}
+
 	return {
 		scored,
 		unmeasured: games.length - scored.length,
+		reasons: [...tally.entries()]
+			.map(([reason, count]) => ({ reason, count }))
+			.sort((a, b) => b.count - a.count),
 		accuracy: mean(scored.map((s) => s.accuracy)),
 		recent: mean(scored.slice(0, RECENT).map((s) => s.accuracy)),
 		blundersPerGame: mean(scored.map((s) => s.blunders)),
@@ -165,8 +223,8 @@ export function accuracyByBand(games: MeasurableGame[]): BandScore[] {
 	const buckets = BANDS.map(() => [] as number[]);
 
 	for (const g of games) {
-		if (!isMeasurable(g)) continue;
-		const evals = (g.evals as number[]).slice(0, g.moves!.length);
+		const evals = measurableEvals(g);
+		if (!evals) continue;
 		for (const m of gameAccuracy(evals).moves) {
 			if (m.colour !== g.ourColour) continue;
 			const moveNo = Math.ceil(m.ply / 2);

@@ -34,6 +34,9 @@ import { getToken, fetchExplorer } from '../data/explorer';
 import { distributionOf, type Distribution } from '../domain/distribution';
 import { DistributionList } from '../components/Distribution';
 import { ShareMenu, canShareNatively } from '../components/ShareMenu';
+import { LinePlayer, type BoardOverride } from '../components/LinePlayer';
+import { lineFromUci, type Line } from '../domain/line';
+import { color } from '../ui/theme';
 import { markTraining } from '../data/autoImport';
 import { Empty, Button } from '../ui/primitives';
 import type { ToolbarAction } from '../components/Toolbar';
@@ -493,6 +496,9 @@ export function Train({
 	 */
 	const [distribution, setDistribution] = useState<Distribution | null>(null);
 	const [sharing, setSharing] = useState(false);
+	/** A claim being demonstrated on the board rather than described in prose. */
+	const [explain, setExplain] = useState<{ line: Line; label: string } | null>(null);
+	const [explaining, setExplaining] = useState<BoardOverride>(null);
 	async function showDistribution() {
 		if (!state) return;
 		if (distribution) return setDistribution(null);
@@ -761,12 +767,19 @@ export function Train({
 	const line = useMemo(() => replayLine(state?.path ?? []), [state?.path.join(' ')]);
 	const previewing = previewPly !== null && previewPly < (state?.path.length ?? 0);
 	const shown = previewing ? line[previewPly!] : null;
-	const shownFen = shown?.fen ?? state?.fen ?? '';
-	const shownLastMove: [string, string] | undefined = previewing
-		? shown?.uci
-			? [shown.uci.slice(0, 2), shown.uci.slice(2, 4)]
-			: undefined
-		: lastMove(state);
+
+	// An explanation being walked through takes the board over entirely — it is
+	// showing a hypothetical, and mixing it with the real position would be
+	// worse than either. It wins over the preview for the same reason: it is
+	// the thing most recently asked for.
+	const shownFen = explaining?.fen ?? shown?.fen ?? state?.fen ?? '';
+	const shownLastMove: [string, string] | undefined = explaining
+		? explaining.lastMove
+		: previewing
+			? shown?.uci
+				? [shown.uci.slice(0, 2), shown.uci.slice(2, 4)]
+				: undefined
+			: lastMove(state);
 
 	const yourTurn =
 		!!state && !state.finished && (state.expected.length > 0 || state.phase === 'freeplay');
@@ -919,10 +932,18 @@ export function Train({
 				fen={shownFen}
 				ourColour={state?.ourColour ?? 'w'}
 				evalCp={previewing ? null : (state?.evalNow ?? null)}
-				interactive={yourTurn && !busy && !previewing}
+				interactive={yourTurn && !busy && !previewing && !explaining}
 				lastMove={shownLastMove}
 				arrows={
-					previewing ? [] : hint.length ? hint : feedback && !feedback.correct ? feedback.arrows : []
+					explaining
+						? explaining.arrows
+						: previewing
+							? []
+							: hint.length
+								? hint
+								: feedback && !feedback.correct
+									? feedback.arrows
+									: []
 				}
 				onMove={onMove}
 				version={boardVersion}
@@ -1035,6 +1056,36 @@ export function Train({
 							{!feedback.correct && feedback.explanation && (
 								<div style={{ opacity: 0.9, marginTop: 2 }}>{feedback.explanation}</div>
 							)}
+						{/* A sequence in prose asks the reader to replay it in their head
+							before they can check the claim — which is the work they are
+							here to learn. §1.1: never make the learner derive what can be
+							shown. */}
+						{!feedback.correct && feedback.refutation.length > 0 && (
+							<button
+								onClick={() =>
+									setExplain({
+										line: lineFromUci(feedback.fen, [
+											feedback.playedUci,
+											...feedback.refutation,
+										]),
+										label: 'Why that move does not work',
+									})
+								}
+								style={{
+									marginTop: 4,
+									fontSize: 12,
+									border: `1px solid ${color.line}`,
+									background: color.page,
+									color: color.ink,
+									borderRadius: 4,
+									padding: '4px 8px',
+									cursor: 'pointer',
+									minHeight: 32,
+								}}
+							>
+								Show it on the board
+							</button>
+						)}
 							{!feedback.correct && feedback.refutation.length > 0 && (
 								<div
 									style={{
@@ -1131,6 +1182,15 @@ export function Train({
 						</div>
 					)}
 
+					{explain && (
+						<LinePlayer
+							line={explain.line}
+							label={explain.label}
+							onBoard={setExplaining}
+							onClose={() => setExplain(null)}
+						/>
+					)}
+
 					{sharing && state && (
 						<ShareMenu
 							items={[
@@ -1217,7 +1277,7 @@ export function Train({
 							: state.opening
 								? state.opening.name
 								: state.bookHere?.length
-									? `${state.bookHere.filter((m) => m.verdict === 'best' || m.verdict === 'book').length} book replies here`
+									? `${state.bookHere.filter((m) => m.verdict === 'main' || m.verdict === 'book').length} book replies here`
 									: ''}
 					</p>
 				)}
@@ -1349,9 +1409,9 @@ export function Train({
 					</label>
 				))}
 
-				{practice.strictness === 'book' && (
+				{practice.strictness !== 'repertoire' && (
 					<label style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
-						Counts as theory above{' '}
+						Opponent plays replies above{' '}
 						<strong>{(practice.minFreq * 100).toFixed(0)}%</strong> of games
 						<input
 							type="range"
@@ -1362,6 +1422,15 @@ export function Train({
 							onChange={(e) => updatePractice({ minFreq: Number(e.target.value) / 100 })}
 							style={{ width: '100%' }}
 						/>
+						<div style={{ fontSize: 12, opacity: 0.65, marginTop: 2 }}>
+							{/* This used to say "counts as theory", and it governed YOUR
+								moves as well as theirs — which is how a sound move could
+								be marked wrong for being unpopular. It now does only what
+								it should: decide how mainstream an opponent you face. */}
+							How mainstream your opponent is. Lower it to meet rarer replies. It does
+							not judge your own moves — those are judged on whether they give
+							anything away, not on how many other people choose them.
+						</div>
 					</label>
 				)}
 

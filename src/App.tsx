@@ -6,6 +6,7 @@ import { Review } from './views/Review';
 import { Quiz } from './views/Quiz';
 import type { TrainHandoff } from './views/Train';
 import { DebugCorner } from './components/DebugCorner';
+import { BugReport } from './components/BugReport';
 import { InstallBar } from './components/InstallBar';
 import { Footer } from './components/Footer';
 import { completeSignIn, type SignInResult } from './data/lichessAuth';
@@ -199,6 +200,8 @@ export default function App() {
 			{tab === 'settings' && <Settings onImported={() => setDataVersion((v) => v + 1)} />}
 
 			<Footer />
+
+			<BugReport />
 
 			<DebugCorner />
 		</div>

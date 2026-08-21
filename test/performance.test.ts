@@ -7,6 +7,8 @@
 import { describe, it, expect } from 'vitest';
 import {
 	isMeasurable,
+	exclusionReason,
+	measurableEvals,
 	scoreGame,
 	acplOf,
 	performanceReport,
@@ -16,14 +18,43 @@ import {
 	type MeasurableGame,
 } from '../src/domain/performance';
 
+/**
+ * A game long enough to be worth scoring.
+ *
+ * Eight plies rather than four, because `MIN_PLIES` refuses anything shorter —
+ * an "accuracy" derived from two moves is noise wearing a decimal point, and no
+ * real game is that short anyway. The fixtures should look like the input.
+ */
 const game = (over: Partial<MeasurableGame> = {}): MeasurableGame => ({
 	id: 'g1',
 	playedAt: 1,
 	ourColour: 'w',
-	moves: ['e4', 'e5', 'Nf3', 'Nc6'],
-	evals: [20, 10, 25, 5],
+	moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5', 'd3', 'd6'],
+	evals: [20, 10, 25, 5, 30, 12, 28, 8],
 	...over,
 });
+
+/** The same game with one ply's evaluation replaced. */
+const withPly = (i: number, v: number | null): MeasurableGame => {
+	const g = game();
+	(g.evals as (number | null)[])[i] = v;
+	return g;
+};
+
+/**
+ * White throws the game away on ply 3 and Black then HOLDS it.
+ *
+ * The holding matters. Dropping the evaluation and letting it spring back means
+ * Black handed the advantage straight back, which is a second blunder — and the
+ * counter is right to charge it. Isolating one side's mistake means keeping the
+ * evaluation where it landed.
+ */
+const whiteBlunders = (): MeasurableGame => {
+	const g = game();
+	const e = g.evals as number[];
+	for (let i = 2; i < e.length; i++) e[i] = -700;
+	return g;
+};
 
 describe('isMeasurable', () => {
 	it('accepts a game where every ply was evaluated', () => {
@@ -34,14 +65,32 @@ describe('isMeasurable', () => {
 		expect(isMeasurable(game({ evals: undefined }))).toBe(false);
 	});
 
-	it('rejects a game with a gap rather than skipping the gap', () => {
-		// This is the important one. Dropping the null and averaging the rest
-		// would silently describe the moves that got analysed.
-		expect(isMeasurable(game({ evals: [20, null, 25, 5] }))).toBe(false);
+	it('rejects a game with a gap in the MIDDLE rather than skipping it', () => {
+		// Dropping the null and averaging the rest would silently describe the
+		// moves that got analysed rather than the moves that were played.
+		expect(isMeasurable(withPly(3, null))).toBe(false);
+	});
+
+	it('accepts a game whose LAST position was never evaluated', () => {
+		// The bug that cost fifteen games out of twenty. When the opponent plays
+		// the last move of the game, nothing evaluates the final position — and
+		// that position is after THEIR move, so it contributes nothing to our
+		// accuracy. Dropping it costs nothing; dropping the game cost everything.
+		const g = game();
+		(g.evals as (number | null)[])[g.evals!.length - 1] = null;
+		expect(isMeasurable(g)).toBe(true);
+		expect(measurableEvals(g)!.length).toBe(g.moves!.length - 1);
 	});
 
 	it('rejects a game with fewer evaluations than moves', () => {
 		expect(isMeasurable(game({ evals: [20, 10] }))).toBe(false);
+	});
+
+	it('refuses a game too short to say anything about', () => {
+		// Two moves cannot produce an accuracy; a number derived from them would
+		// be noise presented as a measurement.
+		expect(isMeasurable(game({ moves: ['e4', 'e5'], evals: [20, 10] }))).toBe(false);
+		expect(exclusionReason(game({ moves: ['e4', 'e5'], evals: [20, 10] }))).toMatch(/too short/);
 	});
 
 	it('rejects a game with no moves recorded', () => {
@@ -63,13 +112,13 @@ describe('scoreGame', () => {
 
 	it('charges the blunder to us when it is our move', () => {
 		// Ply 3 is White's, and we are White.
-		const s = scoreGame(game({ evals: [20, 10, -700, -700] }))!;
+		const s = scoreGame(whiteBlunders())!;
 		expect(s.blunders).toBe(1);
 	});
 
 	it('does not charge us for the opponent throwing it away', () => {
 		// Same collapse, but we are Black — so the blunder is not ours.
-		const s = scoreGame(game({ ourColour: 'b', evals: [20, 10, -700, -700] }))!;
+		const s = scoreGame({ ...whiteBlunders(), ourColour: 'b' })!;
 		expect(s.blunders).toBe(0);
 	});
 });
@@ -93,15 +142,44 @@ describe('acplOf', () => {
 	});
 });
 
+describe('exclusionReason', () => {
+	it('says nothing about a game it can score', () => {
+		expect(exclusionReason(game())).toBeNull();
+	});
+
+	it('distinguishes never-analysed from stopped-partway', () => {
+		// Different causes, different remedies. "15 excluded" with no reason is
+		// exactly the kind of number this project exists not to ship.
+		expect(exclusionReason(game({ evals: undefined }))).toMatch(/no evaluations/);
+		expect(exclusionReason(withPly(3, null))).toMatch(/stopped partway/);
+	});
+
+	it('names a missing move list separately from missing evaluations', () => {
+		expect(exclusionReason(game({ moves: undefined }))).toMatch(/no moves/);
+	});
+});
+
 describe('performanceReport', () => {
 	it('reports unmeasured games rather than dropping them', () => {
-		const r = performanceReport([game(), game({ id: 'g2', evals: undefined })]);
+		const r = performanceReport([game(), { ...game(), id: 'g2', evals: undefined }]);
 		expect(r.scored.length).toBe(1);
 		expect(r.unmeasured).toBe(1);
 	});
 
+	it('tallies WHY they were excluded', () => {
+		const r = performanceReport([
+			game(),
+			{ ...game(), id: 'a', evals: undefined },
+			{ ...game(), id: 'b', evals: undefined },
+			{ ...withPly(3, null), id: 'c' },
+		]);
+		expect(r.unmeasured).toBe(3);
+		expect(r.reasons[0]).toEqual({ reason: expect.stringMatching(/no evaluations/), count: 2 });
+		expect(r.reasons.map((x) => x.count).reduce((a, b) => a + b, 0)).toBe(3);
+	});
+
 	it('says nothing when nothing is measurable', () => {
-		const r = performanceReport([game({ evals: undefined })]);
+		const r = performanceReport([{ ...game(), evals: undefined }]);
 		expect(r.accuracy).toBeNull();
 		expect(r.recent).toBeNull();
 		expect(r.unmeasured).toBe(1);
@@ -109,8 +187,8 @@ describe('performanceReport', () => {
 
 	it('puts the newest games first, so "recent" means recent', () => {
 		const r = performanceReport([
-			game({ id: 'old', playedAt: 1 }),
-			game({ id: 'new', playedAt: 99 }),
+			{ ...game(), id: 'old', playedAt: 1 },
+			{ ...game(), id: 'new', playedAt: 99 },
 		]);
 		expect(r.scored[0].id).toBe('new');
 	});
@@ -144,8 +222,8 @@ describe('accuracyByBand', () => {
 	it('counts only our own moves into the bands', () => {
 		const bands = accuracyByBand([game({ ourColour: 'w' })]);
 		const total = bands.reduce((n, b) => n + b.moves, 0);
-		// Four plies, two of which are White's.
-		expect(total).toBe(2);
+		// Eight plies, four of which are White's.
+		expect(total).toBe(4);
 	});
 });
 

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
 	classifyBook,
+	isTheory,
+	describeChoice,
 	acceptable,
 	opponentBook,
 	punishable,
@@ -44,14 +46,14 @@ const AFTER_BC4 = data([
 describe('classifyBook', () => {
 	it('marks the most-played sound move as best', () => {
 		const moves = classifyBook(AFTER_BC4);
-		expect(moves.find((m) => m.san === 'Nf6')?.verdict).toBe('best');
+		expect(moves.find((m) => m.san === 'Nf6')?.verdict).toBe('main');
 	});
 
 	it('calls common sound moves book and uncommon ones rare', () => {
 		const moves = classifyBook(AFTER_BC4);
 		expect(moves.find((m) => m.san === 'Bc5')?.verdict).toBe('book');
 		expect(moves.find((m) => m.san === 'd6')?.verdict).toBe('book');
-		expect(moves.find((m) => m.san === 'h6')?.verdict).toBe('rare');
+		expect(moves.find((m) => m.san === 'h6')?.verdict).toBe('sound');
 	});
 
 	it('lets evaluation override popularity', () => {
@@ -60,8 +62,8 @@ describe('classifyBook', () => {
 		const losses = new Map([['g8e7', BLUNDER_CP + 40]]);
 		const moves = classifyBook(AFTER_BC4, { losses });
 		expect(moves.find((m) => m.san === 'Nge7')?.verdict).toBe('blunder');
-		// And it must not be able to claim 'best' by being popular.
-		expect(moves.find((m) => m.san === 'Nf6')?.verdict).toBe('best');
+		// And it must not be able to claim 'main' by being popular.
+		expect(moves.find((m) => m.san === 'Nf6')?.verdict).toBe('main');
 	});
 
 	it('separates an inaccuracy from a blunder', () => {
@@ -83,9 +85,28 @@ describe('acceptable', () => {
 		expect(ok[0].san).toBe('Nf6');
 	});
 
-	it('book accepts the real theory and nothing else', () => {
-		const ok = acceptable(moves, 'book').map((m) => m.san).sort();
-		expect(ok).toEqual(['Bc5', 'Be7', 'Nf6', 'd6']);
+	it('book accepts every sound move, popular or not', () => {
+		// The policy this replaced required a frequency bar, which meant a SOUND
+		// move could be marked wrong for being unpopular — training you to
+		// reproduce common moves rather than good ones. Soundness decides right
+		// and wrong; frequency decides what is worth saying about a move.
+		const ok = acceptable(moves, 'book').map((m) => m.san);
+		expect(ok).toContain('Nf6'); // theory
+		expect(ok).toContain('h6'); // sound, rare — accepted now
+		expect(ok).not.toContain('Nge7'); // unsound, still refused
+	});
+
+	it('still distinguishes theory from merely sound, without punishing either', () => {
+		// The distinction survives; it just stopped being a gate.
+		const theory = acceptable(moves, 'book').filter(isTheory).map((m) => m.san).sort();
+		expect(theory).toEqual(['Bc5', 'Be7', 'Nf6', 'd6']);
+	});
+
+	it('says what is unusual about a sound rarity, and nothing about theory', () => {
+		const rare = moves.find((m) => m.san === 'h6')!;
+		const main = moves.find((m) => m.san === 'Nf6')!;
+		expect(describeChoice(rare)).toMatch(/off the beaten track/i);
+		expect(describeChoice(main)).toBeNull();
 	});
 
 	it('free accepts anything that is not unsound, however rare', () => {

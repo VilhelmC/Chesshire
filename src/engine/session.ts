@@ -675,7 +675,7 @@ async function describeBookMistake(
 		const why =
 			cfg.practice.strictness === 'repertoire'
 				? 'sound, but you are drilling one answer per position'
-				: here.verdict === 'rare'
+				: here.verdict === 'sound'
 					? `sound, but only played ${(here.freq * 100).toFixed(1)}% here`
 					: 'sound, but outside what you are practising';
 		return `${move}${named} — ${why}. Play ${want}.`;

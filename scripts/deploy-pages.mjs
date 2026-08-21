@@ -63,6 +63,42 @@ if (dirty) {
 	console.log('  ! Working tree has uncommitted changes; they WILL be published.');
 }
 
+/**
+ * Check that what package.json declares is actually installed.
+ *
+ * ---------------------------------------------------------------------------
+ * This has now cost two debugging sessions, both with the same shape: a
+ * dependency added to package.json, `npm install` not run, and the build
+ * failing with an error about something else entirely.
+ *
+ *   @types/node   -> "Cannot find name 'process'" in vite.config.ts
+ *   @fontsource   -> "ENOENT ... open 'C:\...\Schackal\@fontsource-variable\
+ *                     source-sans-3\wght.css'" — postcss resolving a bare
+ *                     specifier against the PROJECT ROOT once the package is
+ *                     missing, which reads as a broken path rather than a
+ *                     missing package.
+ *
+ * Neither error names the actual problem. One line here does.
+ * ---------------------------------------------------------------------------
+ */
+function verifyInstalled() {
+	const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+	const declared = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
+	const missing = declared.filter((name) => !existsSync(join(ROOT, 'node_modules', name)));
+
+	if (missing.length) {
+		throw new Error(
+			`These are in package.json but not installed:\n` +
+				missing.map((m) => `  ${m}`).join('\n') +
+				`\n\nRun \`npm install\` and try again.\n` +
+				`(The build would fail anyway, but with an error about something else.)`,
+		);
+	}
+	console.log(`  ok  ${declared.length} declared dependencies installed`);
+}
+
+verifyInstalled();
+
 // ---------------------------------------------------------------------------
 // 2. Build
 // ---------------------------------------------------------------------------

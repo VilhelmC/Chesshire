@@ -60,7 +60,25 @@ export const SOUND_CP = 60;
 /** Beyond this it is not a slip, it is the mistake the drill exists to punish. */
 export const BLUNDER_CP = 120;
 
-export type Verdict = 'best' | 'book' | 'rare' | 'inaccuracy' | 'blunder';
+/**
+ * ---------------------------------------------------------------------------
+ * `main` USED TO BE CALLED `best`, AND THAT NAME WAS A LIE.
+ *
+ * It is assigned to the most-PLAYED sound move, not to the strongest one. The
+ * app also has a genuine best-by-evaluation elsewhere (engine/candidates.ts),
+ * so a move could be shown as the engine's top choice and simultaneously
+ * rejected as not-book — which is what happened with 6...Bd3 in the Queen's
+ * Gambit Accepted, and which quite reasonably put the whole exercise in doubt.
+ *
+ * Two different questions were sharing one word:
+ *
+ *   main   — what players at your band usually play here
+ *   sound  — what does not lose anything
+ *
+ * They are not the same and neither one is "best".
+ * ---------------------------------------------------------------------------
+ */
+export type Verdict = 'main' | 'book' | 'sound' | 'inaccuracy' | 'blunder';
 
 export type BookMove = {
 	uci: string;
@@ -113,9 +131,11 @@ export function classifyBook(
 		let verdict: Verdict;
 		if (loss >= BLUNDER_CP) verdict = 'blunder';
 		else if (loss > SOUND_CP) verdict = 'inaccuracy';
-		else if (popularSound && r.m.uci === popularSound.m.uci) verdict = 'best';
+		else if (popularSound && r.m.uci === popularSound.m.uci) verdict = 'main';
 		else if (r.freq >= minFreq) verdict = 'book';
-		else verdict = 'rare';
+		// Sound but seldom played. NOT an error — see `acceptable`. Rarity is a
+		// fact about other people, not about the move.
+		else verdict = 'sound';
 
 		return {
 			uci: r.m.uci,
@@ -143,20 +163,68 @@ export function acceptable(moves: BookMove[], strictness: Strictness): BookMove[
 	}
 
 	if (strictness === 'repertoire') {
-		const best = moves.find((m) => m.verdict === 'best');
-		return best ? [best] : sound.slice(0, 1);
+		// The one line, deliberately. This is the mode for drilling a specific
+		// repertoire, so following the main line IS the exercise.
+		const main = moves.find((m) => m.verdict === 'main');
+		return main ? [main] : sound.slice(0, 1);
 	}
 
-	// 'book': sound and played often enough to be theory. If nothing clears the
-	// frequency bar, fall back to the soundest single move rather than accepting
-	// nothing — see above.
-	const inBook = moves.filter((m) => m.verdict === 'best' || m.verdict === 'book');
-	return inBook.length ? inBook : sound.slice(0, 1);
+	// ---------------------------------------------------------------------
+	// 'book' NO LONGER MEANS "frequently played".
+	//
+	// It used to require a move to clear a frequency bar, which meant a SOUND
+	// move could be marked wrong for being unpopular — training you to
+	// reproduce common moves rather than good ones. That inverts what the app
+	// is for. At the extreme it rejected the engine's own top choice.
+	//
+	// Soundness decides right and wrong. Frequency decides what is worth
+	// SAYING about a move — "that is theory" versus "that is fine, and almost
+	// nobody plays it" — and `describeChoice` below is where that lives.
+	//
+	// Frequency still governs the OPPONENT (`opponentBook`), and that
+	// asymmetry is the correct one: predicting them is a question about what
+	// people play, judging yourself is a question about what is good.
+	// ---------------------------------------------------------------------
+	return sound;
+}
+
+/**
+ * What to say about a move that was accepted.
+ *
+ * Returns null when there is nothing worth remarking on. The point is that a
+ * remark is not a rejection: playing a sound rarity should tell you it is a
+ * rarity, and then let you get on with the game.
+ */
+export function describeChoice(move: BookMove): string | null {
+	switch (move.verdict) {
+		case 'main':
+			return null;
+		case 'book':
+			return null;
+		case 'sound':
+			return `Sound, and off the beaten track — ${percent(move.freq)} of players go this way.`;
+		case 'inaccuracy':
+			return `Playable, but it gives something up.`;
+		case 'blunder':
+			return null;
+	}
+}
+
+function percent(f: number): string {
+	const p = f * 100;
+	if (p >= 10) return `${Math.round(p)}%`;
+	if (p >= 1) return `${p.toFixed(1)}%`;
+	return 'under 1%';
+}
+
+/** True when a move is theory rather than merely sound. */
+export function isTheory(move: BookMove): boolean {
+	return move.verdict === 'main' || move.verdict === 'book';
 }
 
 /** Replies the opponent may play as "book" — same rule, their side of the board. */
 export function opponentBook(moves: BookMove[], minFreq = DEFAULT_MIN_FREQ): BookMove[] {
-	const ok = moves.filter((m) => m.verdict === 'best' || m.verdict === 'book');
+	const ok = moves.filter((m) => isTheory(m));
 	if (ok.length) return ok;
 	// A position the explorer barely knows still has to continue somehow.
 	return moves.filter((m) => (m.cpLoss ?? 0) <= SOUND_CP && m.freq >= minFreq / 3).slice(0, 3);
