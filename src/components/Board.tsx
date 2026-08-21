@@ -32,6 +32,11 @@ export type BoardProps = {
 	 */
 	arrows?: { orig: string; dest: string; brush: string; label?: string }[];
 	onMove?: (uci: string) => void;
+	/**
+	 * A square was clicked. Used by the Lab to choose what to inspect; ordinary
+	 * boards leave it unset and behave exactly as before.
+	 */
+	onSelectSquare?: (square: string) => void;
 	size?: number;
 	/**
 	 * Bump to force the board back to `fen` even though it has not changed.
@@ -51,6 +56,7 @@ export function Board({
 	lastMove,
 	arrows = [],
 	onMove,
+	onSelectSquare,
 	size = 420,
 	version = 0,
 }: BoardProps) {
@@ -58,6 +64,10 @@ export function Board({
 	const api = useRef<Api | null>(null);
 	const onMoveRef = useRef(onMove);
 	onMoveRef.current = onMove;
+	// Through a ref so the handler can change without rebuilding the board —
+	// the same reason onMove goes through one.
+	const onSelectRef = useRef(onSelectSquare);
+	onSelectRef.current = onSelectSquare;
 
 	const lastFen = useRef<string>('');
 	const lastVersion = useRef<number>(-1);
@@ -88,6 +98,9 @@ export function Board({
 				brushes: {
 					...QUALITY_BRUSHES,
 				},
+			},
+			events: {
+				select: (key) => onSelectRef.current?.(key as string),
 			},
 		});
 

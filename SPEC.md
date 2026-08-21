@@ -1700,6 +1700,61 @@ It is 1500 now, and the state dump does not fit in that — so it goes to the cl
 
 Everything above passed 559 unit tests while the screen was wrong, because the bug lived in the seam between two modules that each behaved correctly. `scripts/review-check.mjs` seeds one imported game played as Black, steps through it, and prints the commentary for every ply. The rule this is the third instance of: **when a defect is invisible to the tests, the answer is a check at the level the defect lives at, not more tests at the level it does not.**
 
+### M19 — the contest at a square, and a place to check it
+
+Will's reaction to a Chessable exercise: a pin — rook, pinned knight, queen behind — taught as a shape, with the defender allowed to guard the knight with a pawn and the attacker to answer with a pawn of its own. His objection is that this teaches the pattern and not the calculation. Committing the rook costs a tempo; if the knight can be cheaply defended or can simply step away, that tempo bought nothing.
+
+**Motif drills cannot teach that, and the reason is structural: the corpus of a motif drill is assembled from positions where the motif works.** Survivorship is built into the teaching set, so the learner acquires a detector with no decision procedure and no sense of when not to fire it.
+
+`EXPLOITABILITY.md` is the spec that came out of it. In one sentence: a pin, a fork, a skewer and "attack it again" are one calculation seen from four angles — who can bring what to bear on a square, in how many moves, at what cost, and whether the prize can leave. Three columns, and every named motif is a statement about one of them:
+
+| quantity | the motifs that are about it |
+|---|---|
+| **arrival** — how many moves each unit needs to join | tempo, the attacking build-up |
+| **affordability** — whether a unit can profitably participate | the exchange, SEE, "defended but not enough" |
+| **escape** — whether the prize can leave | pin, fork, skewer, trapped piece |
+
+Static exchange evaluation answers this for the units *already in contact*. `domain/contest.ts` extends it over arrival and escape, and reports the answer as a table over build-up depth `k` rather than as a verdict — at `k`, both sides have every unit that can arrive within `k` moves, and the fold is run over those.
+
+The worked example is the one that started it. Same pieces both times; only the queen behind the knight differs:
+
+```
+k   attackers        defenders     fold   net   can it run?
+0   Rd1              Pe6 Qd8          0     0   no time
+1   Rd1 Pe2→e4       Pe6 Qd8        220   220   costs 900     <- winnable
+```
+```
+k   attackers        defenders     fold   net   can it run?
+0   Rd1              Pe6              0     0   no time
+1   Rd1 Pe2→e4       Pe6            320   320   yes, free     <- and so, worthless
+```
+
+**The pin does not win the knight. It stops the knight from leaving while the pawn arrives.** The second table has a *larger* fold and is not a plan, because the escape column is free — which is precisely the lesson the exercise could not deliver.
+
+Two things fall out that are worth keeping. The queen behind the knight is both the pin's target and a defender of the contested square: one piece on one ray, two motif names, and the fold needs no special case for either. And a piece can be "defended" while the defence is unaffordable — in the third preset the defending pawn declines to recapture, so the knight is simply free.
+
+**Soundness has a direction, and it is stated rather than assumed.** The table assumes the defender spends their tempi defending, which is conservative for the attacker: "winnable" is sound, "not winnable" is only indicative, because the defender may be answering something else. Every place the procedure would have to guess, it stops instead.
+
+#### The Lab
+
+A sixth tab on a desktop, absent on a phone. It is not a feature — it is where a computation can be **looked at rather than believed**: every unit counted, its arrival and route cost, whether it can legally move, every step of every fold with the number that decides whether the step happens, and every escape priced.
+
+This exists because Will said the quiet part: *"it is easy to make subtle miscalculations when we get into graph theory."* He is right, and the evidence arrived immediately.
+
+- **My first exchange fold was wrong.** It backed the min-max up from the attacker's point of view at every step, which let the attacker "stop" *after* capturing — reporting a free piece where the recapture wins. It is now the standard swap-off recurrence, written in the docstring as one line so the error cannot hide again: `S(j) = max(0, captured(j) − S(j+1))`.
+- **The Lab's first run showed the prize defending itself.** The knight under attack was listed as arriving in one move to defend the square it stands on, via a square it can only reach by abandoning the contest. The unit tables looked plausible. No test I had thought to write asked about it.
+- **The tab bar stopped fitting.** Six labels no longer cross a 360px phone, which is why the Lab is desktop-only — and it is unusable on a phone anyway, being six tables and a FEN field. Absent where it cannot work beats present and broken.
+
+The rule for that screen: **never print a verdict without the numbers that produced it, and never print the numbers without the assumptions they rest on.** Every table carries its own caveat list, because a table without them reads as a proof.
+
+`scripts/lab-check.mjs` drives it in a browser and prints every table for the two presets whose answers are known by hand. Both bugs above were invisible to 579 unit tests and obvious on screen — the same lesson as §M18's `review-check`, which is now three for three: **when a defect is invisible to the tests, the answer is a check at the level the defect lives at.**
+
+#### What is not built
+
+The empty-square contest — a fork square, an outpost — so the unification claimed above is not yet complete in code: forks are the case whose prize is not a captured piece. Nested contests (removing a defender) stop rather than recurse. Routes are found on a frozen board. `k ≤ 2`, because that is what a human counts, not because anything says the interesting contests end there.
+
+And the measurement that decides whether any of this belongs in the trainer proper is untouched: **of the positions in Will's own games where the engine finds a decisive tactic, what share can the contest table account for, and how often does it produce a confident account the engine contradicts?** Coverage and false-account rate, on his distribution rather than on master games. That number comes before any of this reaches the commentary.
+
 ---
 
 ## 10. Risks

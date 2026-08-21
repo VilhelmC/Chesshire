@@ -4,6 +4,7 @@ import { Train } from './views/Train';
 import { Progress } from './views/Progress';
 import { Review } from './views/Review';
 import { Quiz } from './views/Quiz';
+import { Lab } from './views/Lab';
 import type { TrainHandoff } from './views/Train';
 import { DebugCorner } from './components/DebugCorner';
 import { BugReport } from './components/BugReport';
@@ -24,13 +25,20 @@ import { Mark } from './ui/Mark';
  * live folded shut inside Settings. A tab bar should describe what the app is
  * for, not the order in which it was assembled.
  *
+ * The Lab is a sixth on a desktop and absent on a phone. It is not a feature: it
+ * is where an experiment can be looked at rather than believed, showing the
+ * working of computations the rest of the app only reports the conclusions of —
+ * see views/Lab.tsx. It stays at the top level rather than folded into Settings
+ * with the audit tools because it is used while deciding what the app should
+ * say, and something you have to go and find is something you stop checking.
+ *
  * Review earns its own place. It was folded into Progress on the theory that
  * looking at one game is something you do BECAUSE of a number — but the games
  * are the app's own record of what you have played, and "let me look at that
  * game from this morning" is a reason to open the app, not a footnote to a
  * chart. Hidden behind a button, it read as absent.
  */
-type Tab = 'train' | 'quiz' | 'review' | 'progress' | 'settings';
+type Tab = 'train' | 'quiz' | 'review' | 'progress' | 'lab' | 'settings';
 
 export default function App() {
 	const [tab, setTab] = useState<Tab>('train');
@@ -153,6 +161,14 @@ export default function App() {
 				<TabButton compact={vp.phone} active={tab === 'progress'} onClick={() => setTab('progress')}>
 					Progress
 				</TabButton>
+				{/* Not on a phone. Six labels no longer cross a 360px screen, and
+					the Lab is unusable there anyway — it is six tables and a FEN
+					field. Absent where it cannot work beats present and broken. */}
+				{!vp.phone && (
+					<TabButton active={tab === 'lab'} onClick={() => setTab('lab')}>
+						Lab
+					</TabButton>
+				)}
 				<TabButton compact={vp.phone} active={tab === 'settings'} onClick={() => setTab('settings')}>
 					Settings
 				</TabButton>
@@ -180,6 +196,8 @@ export default function App() {
 			{/* Progress keeps its way in, but as a shortcut to a tab that exists
 				rather than as the only door to a hidden screen. */}
 			{tab === 'progress' && <Progress onOpenReview={() => setTab('review')} />}
+
+			{tab === 'lab' && <Lab />}
 
 			{tab === 'settings' && <Settings onImported={() => setDataVersion((v) => v + 1)} />}
 
