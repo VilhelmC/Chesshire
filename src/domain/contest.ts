@@ -21,12 +21,14 @@
 // sound and "not winnable" merely indicative.
 // ---------------------------------------------------------------------------
 
-import { attacks } from 'chessops/attacks';
+import { attacks, between, ray } from 'chessops/attacks';
 import { SquareSet } from 'chessops/squareSet';
 import type { Square, Color, Role, Piece } from 'chessops/types';
 import type { Board } from 'chessops/board';
 import { positionFromFen, makeSquare, parseSquare } from './chess';
 import type { Chess } from 'chessops/chess';
+import { replies, bestCapture, type Reply, type Capture } from './reply';
+import { race, type RaceResult } from './race';
 
 /** Centipawns. The king is priced so it never enters a fold as a target. */
 export const VALUE: Record<Role, number> = {
@@ -52,6 +54,19 @@ export type Unit = {
 	routeCost: number;
 	/** Zero when the unit cannot legally move at all (absolute pin). */
 	available: boolean;
+	/**
+	 * What this unit is already doing that joining here would abandon.
+	 *
+	 * The whole content of "overloaded", as a number rather than a name: simulate
+	 * the unit going where it must go, and see what the other side then wins
+	 * somewhere else. A knight that can defend this square but is the only guard
+	 * of a bishop across the board is not a defender of this square — it is a
+	 * choice between two contests, which is a fork with the two prongs separated
+	 * in space and time rather than sharing one attacker.
+	 */
+	duty: number;
+	/** Where that duty is. */
+	dutyAt?: string;
 	note?: string;
 };
 
@@ -89,8 +104,24 @@ export type Escape = {
 	cost: number;
 	/** Material exposed elsewhere by leaving — the relative-pin term. */
 	exposes: number;
-	/** cost + exposes. Zero or less means a free escape. */
+	/**
+	 * What the escaping piece threatens from where it lands, after the opponent's
+	 * best single reply.
+	 *
+	 * Without this the procedure calls every departure that exposes a queen a
+	 * pin, which is wrong exactly when it matters: a knight that steps off the
+	 * pin WITH a fork is not losing a queen, it is trading one. The threat is
+	 * only counted when it survives the opponent's best reply — a potential fork
+	 * that one move dissolves compels nobody.
+	 */
+	counter: number;
+	/** cost + exposes − counter. Zero or less means a free escape. */
 	total: number;
+	/**
+	 * False when exposure and counter-threat are both material, so the position
+	 * is a sequence to calculate rather than a number to read.
+	 */
+	resolved: boolean;
 };
 
 export type ContestRow = {
@@ -103,6 +134,27 @@ export type ContestRow = {
 	spent: number;
 	/** Fold minus what the build-up cost. */
 	net: number;
+	/**
+	 * Defenders the fold actually depends on AND that owe their presence
+	 * elsewhere — measured by re-running the fold with the unit off the board,
+	 * not inferred.
+	 */
+	critical: { unit: Unit; foldWithout: number }[];
+	/**
+	 * The build-up move this row proposes, and what happens after the defender's
+	 * best answer to it.
+	 *
+	 * Null at k = 0, where the attacker simply takes and the defender never gets
+	 * a move. From k = 1 this is the row's real content: the fold above is what
+	 * the exchange WOULD pay, and this is what survives a defence.
+	 */
+	play?: {
+		move: { from: string; to: string };
+		/** Their best answer, and what it still concedes. */
+		defence: Reply | null;
+		/** What the attacker gets after that answer. The honest number. */
+		survives: number;
+	};
 };
 
 export type Contest = {
@@ -111,13 +163,43 @@ export type Contest = {
 	prize: { role: Role; colour: Color; value: number } | null;
 	/** The side trying to win the prize. */
 	attacker: Color;
+	/** Whose move it actually is — part of the question, not a detail. */
+	turn: Color;
+	/**
+	 * The race for the square: both sides mobilising, tempo by tempo.
+	 *
+	 * This is the verdict's source of truth. The tables below it explain the
+	 * answer — who can reach the square, what the exchange folds to, what each
+	 * defender owes elsewhere — but the answer itself comes from playing the
+	 * race out, because a count cannot price a tempo.
+	 */
+	race: RaceResult;
 	rows: ContestRow[];
-	/** Where the prize can go, and what going there costs it. */
+	/**
+	 * Where the prize can go, and what going there costs it.
+	 *
+	 * Display only, now. Leaving is one of the defender's legal replies and is
+	 * counted there; this table remains because "it can step to f6 for nothing"
+	 * is a useful thing to read, not because any verdict rests on it.
+	 */
 	escapes: Escape[];
 	/** The cheapest escape's total cost. Null when there is no escape at all. */
 	escapeCost: number | null;
 	/** Smallest k whose net is positive AND from which the prize cannot walk. */
 	winnableAt: number | null;
+	/**
+	 * What the table amounts to, including the two answers that are not a number.
+	 *
+	 * 'entangled' — the defence holds only because of a unit that owes its
+	 * presence somewhere else; the position is a choice between two contests.
+	 * 'unresolved' — the prize can leave into a counter-threat, so this is a
+	 * sequence to calculate and the procedure declines to price it.
+	 */
+	verdict: {
+		kind: 'winnable' | 'not-winnable' | 'entangled' | 'unresolved';
+		at?: number;
+		why: string;
+	};
 	/** Everything the caller must not forget while reading the above. */
 	caveats: string[];
 };
@@ -142,6 +224,45 @@ export function bearingOn(board: Board, target: Square, colour: Color, occupied:
 		const piece = board.get(from);
 		if (!piece) continue;
 		if (attacks(piece, from, occupied).has(target)) out.push(from);
+	}
+	return out;
+}
+
+/**
+ * Pieces that cannot legally leave the line they stand on, and where they may
+ * still go.
+ *
+ * A pinned piece is not a defender. The fold is arithmetic on a board and knows
+ * nothing about legality, so without this a pawn pinned to its own king happily
+ * "recaptures" and the count reports a defended piece where the piece is free.
+ *
+ * Returned as the squares the pinned piece may still move to — the ray between
+ * the pinning slider and the king, plus the slider itself — because a piece
+ * pinned along a file can still capture ALONG that file.
+ */
+export function pinnedOn(board: Board, colour: Color): Map<Square, SquareSet> {
+	const out = new Map<Square, SquareSet>();
+	const king = board.kingOf(colour);
+	if (king === undefined) return out;
+
+	for (const from of board[other(colour)]) {
+		const piece = board.get(from);
+		if (!piece || (piece.role !== 'rook' && piece.role !== 'bishop' && piece.role !== 'queen')) {
+			continue;
+		}
+		// Aligned with the king, and aligned the way this piece moves.
+		const line = ray(from, king);
+		if (line.isEmpty()) continue;
+		if (!attacks(piece, from, SquareSet.empty()).has(king)) continue;
+
+		const bt = between(from, king);
+		const blockers = bt.intersect(board.occupied);
+		if (blockers.size() !== 1) continue;
+
+		const blocker = blockers.first();
+		if (blocker === undefined || !board[colour].has(blocker)) continue;
+
+		out.set(blocker, bt.with(from));
 	}
 	return out;
 }
@@ -177,6 +298,18 @@ export function foldAt(
 	let onSquare = VALUE[prize.role];
 	let side = attacker;
 
+	// Computed once, from the starting position. Recomputing after each capture
+	// would be more exact — a pin can be created or broken mid-chain — and it is
+	// not worth the cost here; the common case is a pin that exists before the
+	// exchange starts and persists through it.
+	const pinned = {
+		white: pinnedOn(board, 'white'),
+		black: pinnedOn(board, 'black'),
+	};
+
+	/** Which rank does a pawn of this colour promote on? */
+	const lastRank = (c: Color) => (c === 'white' ? 7 : 0);
+
 	// Units counted at this row of the table although not yet in contact. They
 	// join as if they already bore on the square.
 	const extra = new Map<Square, Color>();
@@ -191,7 +324,14 @@ export function foldAt(
 		const joined = [...extra.entries()]
 			.filter(([s, c]) => c === side && occupied.has(s))
 			.map(([s]) => s);
-		const candidates = [...new Set([...inContact, ...joined])].filter((s) => s !== target);
+		const candidates = [...new Set([...inContact, ...joined])]
+			.filter((s) => s !== target)
+			// A piece pinned to its own king may only act along the pin. Leaving
+			// it in makes a defended piece out of a free one.
+			.filter((s) => {
+				const allowed = pinned[side].get(s);
+				return !allowed || allowed.has(target);
+			});
 		if (!candidates.length) break;
 
 		// Cheapest first. Taking with the queen when a pawn will do is how a fold
@@ -210,10 +350,17 @@ export function foldAt(
 		if (best === null) break;
 		const piece = board.get(best) as Piece;
 
-		seq.push({ colour: side, from: best, role: piece.role, captured: onSquare });
+		// A pawn that captures onto the last rank arrives as a queen: it wins
+		// what it took AND the difference in its own value, and the piece the
+		// opponent must now deal with is a queen. Leaving this out prices a
+		// promoting capture as an ordinary one, which is wrong by eight pawns.
+		const promotes = piece.role === 'pawn' && (target >> 3) === lastRank(side);
+		const bonus = promotes ? VALUE.queen - VALUE.pawn : 0;
+
+		seq.push({ colour: side, from: best, role: piece.role, captured: onSquare + bonus });
 
 		// The capturer now stands on the square and is itself the next prize.
-		onSquare = VALUE[piece.role];
+		onSquare = promotes ? VALUE.queen : VALUE[piece.role];
 		occupied = occupied.without(best);
 		extra.delete(best);
 		side = other(side);
@@ -243,6 +390,72 @@ export function foldAt(
 	}));
 
 	return { value: gains[0], steps, depth };
+}
+
+/**
+ * The best capture `side` has anywhere on the board, by the fold at each square.
+ *
+ * Used to price what a unit is already doing: move it, ask this again, and the
+ * difference is the duty it was carrying.
+ */
+export function bestGainFor(
+	board: Board,
+	side: Color,
+	opts: { exclude?: Square; onlyAttackedBy?: Square } = {},
+): { square: string; value: number } | null {
+	// Restricting to one piece's own targets is what separates "this move
+	// creates a threat" from "a threat exists somewhere on the board", which are
+	// very different claims and were briefly the same line of code.
+	const attacker = opts.onlyAttackedBy !== undefined ? board.get(opts.onlyAttackedBy) : null;
+	const reach =
+		attacker && opts.onlyAttackedBy !== undefined
+			? attacks(attacker, opts.onlyAttackedBy, board.occupied)
+			: null;
+
+	let best: { square: string; value: number } | null = null;
+	for (const s of board[other(side)]) {
+		if (s === opts.exclude) continue;
+		if (reach && !reach.has(s)) continue;
+		const f = foldAt(board, s, side);
+		if (f.value > 0 && (!best || f.value > best.value)) {
+			best = { square: sq(s), value: f.value };
+		}
+	}
+	return best;
+}
+
+/**
+ * What it costs this unit, elsewhere, to take part here.
+ *
+ * Simulated as the move it would actually make — not as vanishing from the
+ * board, which is a perturbation the game cannot perform and would price the
+ * wrong thing. A unit already in contact is simulated as being captured, since
+ * that is how it leaves in a fold.
+ */
+export function dutyOf(
+	board: Board,
+	from: Square,
+	via: Square | null,
+	/** The contest being analysed. Excluded, or every defender is reported as
+	 *  the sole guard of the square it is defending — true, circular, useless. */
+	exclude?: Square,
+): { value: number; at?: string } {
+	const piece = board.get(from);
+	if (!piece) return { value: 0 };
+
+	const before = bestGainFor(board, other(piece.color), { exclude })?.value ?? 0;
+
+	const after = board.clone();
+	after.take(from);
+	if (via !== null) {
+		const taken = after.get(via);
+		if (taken) after.take(via);
+		after.set(via, piece);
+	}
+
+	const then = bestGainFor(after, other(piece.color), { exclude });
+	const value = Math.max(0, (then?.value ?? 0) - before);
+	return value > 0 && then ? { value, at: then.square } : { value: 0 };
 }
 
 /** Squares a piece could move to, on a frozen board. Pseudo-legal. */
@@ -295,6 +508,7 @@ export function arrivals(pos: Chess, target: Square, colour: Color, maxTempi = 2
 		if (!piece || piece.role === 'king') continue;
 
 		if (attacks(piece, from, board.occupied).has(target)) {
+			const duty = dutyOf(board, from, null, target);
 			out.push({
 				from: sq(from),
 				role: piece.role,
@@ -303,6 +517,8 @@ export function arrivals(pos: Chess, target: Square, colour: Color, maxTempi = 2
 				arrival: 0,
 				routeCost: 0,
 				available: canMove(pos, from),
+				duty: duty.value,
+				...(duty.at ? { dutyAt: duty.at } : {}),
 				...(canMove(pos, from) ? {} : { note: 'pinned — cannot move' }),
 			});
 			continue;
@@ -310,6 +526,7 @@ export function arrivals(pos: Chess, target: Square, colour: Color, maxTempi = 2
 
 		const found = search(board, from, piece, target, maxTempi);
 		if (found) {
+			const duty = dutyOf(board, from, found.via, target);
 			out.push({
 				from: sq(from),
 				role: piece.role,
@@ -319,6 +536,8 @@ export function arrivals(pos: Chess, target: Square, colour: Color, maxTempi = 2
 				via: sq(found.via),
 				routeCost: found.cost,
 				available: canMove(pos, from),
+				duty: duty.value,
+				...(duty.at ? { dutyAt: duty.at } : {}),
 				...(canMove(pos, from) ? {} : { note: 'pinned — cannot move' }),
 			});
 		}
@@ -390,6 +609,83 @@ function canMove(pos: Chess, from: Square): boolean {
 	}
 }
 
+/**
+ * What a piece threatens from where it stands, after the opponent's best single
+ * reply.
+ *
+ * This is the one part of the machinery that looks a move ahead, and it is
+ * bounded to exactly one ply of THEIR moves, evaluated on the resulting board.
+ * The reason it cannot be skipped: a threat the opponent dissolves with one
+ * move compels nobody, and a detector that counts geometry rather than
+ * compulsion fires on almost everything and means nothing.
+ */
+export function unrepairableThreat(pos: Chess, mover: Color, onlyAttackedBy?: Square): number {
+	const free = bestGainFor(pos.board, mover, { onlyAttackedBy })?.value ?? 0;
+	if (free <= 0) return 0;
+
+	// It is the opponent's turn: they get one move to make it go away.
+	const view = pos.clone();
+	view.turn = other(mover);
+
+	let worst = free;
+	let replies = 0;
+	for (const [from, tos] of view.allDests()) {
+		for (const to of tos) {
+			replies++;
+			// A bounded sweep. The opponent's realistic repairs are captures,
+			// blocks and moving the target; enumerating every legal move of a
+			// full position is affordable here because the fold is cheap, but
+			// it is capped so a Lab click cannot hang.
+			if (replies > 220) return worst;
+			const after = view.clone();
+			try {
+				after.play({ from, to });
+			} catch {
+				continue;
+			}
+			// The piece may have been captured by the repair, in which case its
+			// threat is gone rather than merely reduced.
+			const stillThere =
+				onlyAttackedBy === undefined || after.board.get(onlyAttackedBy)?.color === mover;
+			const left = stillThere
+				? (bestGainFor(after.board, mover, { onlyAttackedBy })?.value ?? 0)
+				: 0;
+			if (left < worst) worst = left;
+			if (worst <= 0) return 0;
+		}
+	}
+	return worst;
+}
+
+/**
+ * The best LEGAL capture on one square, with the exchange resolved.
+ *
+ * `foldAt` answers "what does this square cost", which is not the same question
+ * as "may I take it" — a pinned attacker, or a king in check, makes the second
+ * answer no while the first is unchanged.
+ */
+export function captureOn(pos: Chess, target: Square): Capture | null {
+	const prize = pos.board.get(target);
+	if (!prize) return null;
+
+	let best: Capture | null = null;
+	for (const [from, tos] of pos.allDests()) {
+		if (!tos.has(target)) continue;
+		const after = pos.clone();
+		try {
+			after.play({ from, to: target });
+		} catch {
+			continue;
+		}
+		const back = foldAt(after.board, target, after.turn);
+		const gain = VALUE[prize.role] - back.value;
+		if (!best || gain > best.gain) {
+			best = { from: sq(from), to: sq(target), gain };
+		}
+	}
+	return best;
+}
+
 /** Where the prize can run, and what running costs it. */
 export function escapesFor(pos: Chess, target: Square): Escape[] {
 	const piece = pos.board.get(target);
@@ -406,25 +702,45 @@ export function escapesFor(pos: Chess, target: Square): Escape[] {
 
 	const out: Escape[] = [];
 	for (const to of dests) {
-		const after = pos.board.clone();
-		after.take(target);
-		const taken = after.get(to);
-		if (taken) after.take(to);
-		after.set(to, piece);
+		const played = view.clone();
+		try {
+			played.play({ from: target, to });
+		} catch {
+			continue;
+		}
 
-		const landing = foldAt(after, to, other(piece.color));
+		const landing = foldAt(played.board, to, other(piece.color));
+		const taken = pos.board.get(to);
 		const cost = Math.max(0, landing.value) - (taken ? VALUE[taken.role] : 0);
 
-		// What leaving exposed: the opponent's best fold anywhere on our side,
-		// which is the relative-pin term without needing a separate concept.
+		// What leaving exposed: the opponent's best fold anywhere else on our
+		// side, which is the relative-pin term without needing a separate idea.
 		let exposes = 0;
-		for (const s of after[piece.color]) {
+		for (const s of played.board[piece.color]) {
 			if (s === to) continue;
-			const f = foldAt(after, s, other(piece.color));
+			const f = foldAt(played.board, s, other(piece.color));
 			if (f.value > exposes) exposes = f.value;
 		}
 
-		out.push({ to: sq(to), cost, exposes, total: cost + exposes });
+		// ...and what the piece threatens from where it landed. Only worth
+		// asking when something was exposed; otherwise the escape is already
+		// free and the answer changes nothing.
+		// Only what THIS piece threatens from where it landed. A threat that was
+		// already available is not compensation for anything — counting it made
+		// an ordinary retreat look like a counterstroke.
+		const counter = exposes > 0 ? unrepairableThreat(played, piece.color, to) : 0;
+
+		// Both material means neither number is the answer: it is a sequence.
+		const resolved = !(exposes > 0 && counter > 0);
+
+		out.push({
+			to: sq(to),
+			cost,
+			exposes,
+			counter,
+			total: cost + exposes - counter,
+			resolved,
+		});
 	}
 	return out.sort((a, b) => a.total - b.total);
 }
@@ -467,15 +783,119 @@ export function contest(fen: string, targetSquare: string, maxTempi = 2): Contes
 			: { value: 0, steps: [], depth: 0 };
 
 		const spent = a.filter((u) => u.arrival > 0).reduce((t, u) => t + u.routeCost, 0);
-		rows.push({ k, attackers: a, defenders: d, fold, spent, net: fold.value - spent });
+
+		// Which defenders is this row's answer actually resting on? Re-run the
+		// fold with each one taken off the board. A defender whose absence does
+		// not change the number is not holding anything, whatever duties it has
+		// elsewhere — and a defender whose absence DOES change it, while being
+		// the only guard of something else, is the entanglement worth naming.
+		// Deliberately measured on the fold alone, not on fold-minus-route-cost:
+		// the question "is this defence on loan from elsewhere" is about the
+		// exchange, and mixing the mobilisation cost into it hid the
+		// entanglement in the one fixture built to show it.
+		const critical: { unit: Unit; foldWithout: number }[] = [];
+		if (prize) {
+			for (const u of d) {
+				if (u.duty <= 0) continue;
+				const lighter = pos.board.clone();
+				lighter.take(parseSquare(u.from) as Square);
+				const without = foldAt(lighter, target, attacker, {
+					extraAttackers: a
+						.filter((x) => x.arrival > 0)
+						.map((x) => parseSquare(x.from) as Square),
+					extraDefenders: d
+						.filter((x) => x !== u && x.arrival > 0)
+						.map((x) => parseSquare(x.from) as Square),
+				});
+				if (without.value > fold.value) {
+					critical.push({ unit: u, foldWithout: without.value });
+				}
+			}
+		}
+
+		if (k === 0) {
+			// Nobody gets a move: the attacker takes, or does not. The number is
+			// the legal capture, not the fold — the fold is arithmetic on a
+			// square and does not know whether the move can be played.
+			const now = attacker === pos.turn ? captureOn(pos, target) : null;
+			rows.push({
+				k,
+				attackers: a,
+				defenders: d,
+				fold,
+				spent: 0,
+				net: now?.gain ?? (attacker === pos.turn ? 0 : fold.value),
+				critical,
+			});
+			continue;
+		}
+
+		// From here the defender has a move, and it can be ANY legal move — not
+		// only "bring another defender", which is what the first version
+		// assumed and is why it called a repairable pin winnable.
+		let play: ContestRow['play'] | undefined;
+		if (k === 1) {
+			const start = pos.clone();
+			start.turn = attacker;
+			let bestPlay: ContestRow['play'] | undefined;
+
+			for (const u of a) {
+				if (u.arrival !== 1 || !u.via) continue;
+				const from = parseSquare(u.from) as Square;
+				const to = parseSquare(u.via) as Square;
+				const after = start.clone();
+				try {
+					after.play({ from, to });
+				} catch {
+					// The route was found on a frozen board; the move may not be
+					// legal in the real position. Skipping it is right, and it is
+					// the reason arrival is a claim about geometry rather than
+					// about play.
+					continue;
+				}
+
+				const answers = replies(after);
+				const defence = answers[0] ?? null;
+				// Net, not gross: what the attacker keeps after the defender's
+				// counter-blow, which is the number the whole plan turns on.
+				const survives = defence ? defence.net : (bestCapture(after)?.gain ?? 0);
+
+				if (!bestPlay || survives > bestPlay.survives) {
+					bestPlay = { move: { from: u.from, to: u.via }, defence, survives };
+				}
+			}
+			play = bestPlay;
+		}
+
+		rows.push({
+			k,
+			attackers: a,
+			defenders: d,
+			fold,
+			spent,
+			// k = 1 has a real answer; k >= 2 is a count of who could be there,
+			// and is NOT a claim about what happens — two build-up moves means
+			// two defensive replies, which this does not model.
+			net: play ? play.survives - spent : fold.value - spent,
+			critical,
+			...(play ? { play } : {}),
+		});
 	}
 
-	// Winnable means the fold pays AND the prize could not have walked away in
-	// the time the build-up took. A pin is what puts a zero in that column.
+	// The race is run from the real position, with the real side to move.
+	const run =
+		attacker === pos.turn
+			? race(pos, target, attacker, maxTempi * 2)
+			: { value: 0, line: [], plies: 0, truncated: false };
+
+	// Winnable now means: the attacker has a move, and what they win survives the
+	// defender's best answer. "The prize can leave" is no longer a column of its
+	// own — leaving is one of the defender's legal replies, and so are breaking
+	// the pin, blocking, and checking.
 	let winnableAt: number | null = null;
 	for (const row of rows) {
-		const canRun = escapeCost !== null && escapeCost <= 0 && row.k > 0;
-		if (row.net > 0 && !canRun) {
+		if (row.k > 1) break; // k >= 2 is a count, not a claim. See ContestRow.
+		if (row.net > 0) {
 			winnableAt = row.k;
 			break;
 		}
@@ -485,11 +905,84 @@ export function contest(fen: string, targetSquare: string, maxTempi = 2): Contes
 		target: targetSquare,
 		prize,
 		attacker,
+		turn: pos.turn,
 		rows,
 		escapes,
 		escapeCost,
 		winnableAt,
+		race: run,
+		verdict: judge(rows, run, attacker === pos.turn),
 		caveats: CAVEATS,
+	};
+}
+
+/**
+ * What the table amounts to — including the two answers that are not a number.
+ *
+ * The order matters. An unresolved escape outranks a winning fold, because a
+ * prize that leaves into a counter-threat makes the fold irrelevant; and
+ * entanglement outranks a losing fold, because "the defence holds" is false if
+ * the defence is on loan from somewhere else.
+ */
+export function judge(
+	rows: ContestRow[],
+	run: RaceResult,
+	attackerToMove: boolean,
+): Contest['verdict'] {
+	if (!attackerToMove) {
+		return {
+			kind: 'unresolved',
+			why: 'It is not the attacking side to move, so there is no race to run. Flip the side to move to ask this question.',
+		};
+	}
+
+	const tempi = Math.ceil(run.line.length / 2);
+	const line = run.line.join(' ');
+
+	if (run.value > 0) {
+		return {
+			kind: 'winnable',
+			at: tempi,
+			why:
+				tempi === 0
+					? `Take it now: ${run.value} after the exchange.`
+					: `${run.value} after ${tempi} tempo${tempi === 1 ? '' : 's'} of build-up${line ? ` — ${line}` : ''}. Their best answers are in the race below.`,
+		};
+	}
+
+	// Does the count say the exchange would pay while the race says it does not?
+	// That gap is the lesson: the tempo buys nothing, and the reason is the
+	// defender's move.
+	const paying = rows.find((r) => r.fold.value - r.spent > 0);
+	if (paying) {
+		const answer = run.line[1] ?? paying.play?.defence
+			? `${paying.play?.defence?.from}–${paying.play?.defence?.to}`
+			: null;
+		return {
+			kind: 'not-winnable',
+			why:
+				`The exchange count says ${paying.fold.value - paying.spent} at k = ${paying.k}, but the race ends at ${run.value}` +
+				(answer ? ` — they answer ${answer} and the tempo buys nothing.` : '.'),
+		};
+	}
+
+	// The defence is on loan from somewhere else, even though nothing wins here.
+	for (const row of rows) {
+		const c = row.critical[0];
+		if (!c) continue;
+		const guaranteed = Math.min(c.foldWithout, c.unit.duty);
+		return {
+			kind: 'entangled',
+			at: row.k,
+			why:
+				`Nothing is winnable here yet, but the defence at k = ${row.k} rests on the ${c.unit.role} on ${c.unit.from} — without it the exchange wins ${c.foldWithout}, ` +
+				`and that piece is the only thing holding ${c.unit.dutyAt ?? 'another square'} (${c.unit.duty}). It cannot do both; they would concede the smaller of the two — ${guaranteed}.`,
+		};
+	}
+
+	return {
+		kind: 'not-winnable',
+		why: `Nothing to win: the race over ${run.plies} plies ends at ${run.value}.`,
 	};
 }
 

@@ -38,17 +38,87 @@ const read = async () => p.evaluate(() => {
 console.log('\n--- preset 1 (pin)');
 console.log(JSON.stringify(await read(), null, 1));
 
-await p.getByRole('button', { name: 'The same pin, no queen behind' }).click();
-await p.waitForTimeout(300);
-console.log('\n--- preset 2 (no queen behind)');
-console.log(JSON.stringify(await read(), null, 1));
+for (const name of [
+	'#2 Rook must commit first',
+	'#3 Neither side is in place',
+	'#4 Nothing can defend it',
+	'#5 No attacker within reach',
+	'#6 A defender with a prior job',
+	'#7 The knight is not pinned — it checks',
+]) {
+	await p.getByRole('button', { name }).click();
+	await p.waitForTimeout(400);
+	console.log('\n---', name);
+	console.log(JSON.stringify(await read(), null, 1));
+}
 
-await p.getByRole('button', { name: 'The pin — worth a tempo' }).click();
+await p.getByRole('button', { name: '#1 Everything already in place' }).click();
 await p.waitForTimeout(200);
 // click k=1 row
 await p.evaluate(() => { const rows=[...document.querySelectorAll('tbody tr')]; rows[1]?.click(); });
 await p.waitForTimeout(200);
 await p.screenshot({ path: 'lab.png', fullPage: false });
+
+// Does the tray actually place a piece, and on the square it was dropped on?
+// The click-to-place version this replaced was landing a square out, and no
+// unit test can see that.
+{
+	const before = await p.inputValue('input[spellcheck="false"]');
+	const box = await p.evaluate(() => {
+		const wrap = document.querySelector('cg-board').getBoundingClientRect();
+		const tray = [...document.querySelectorAll('.cg-wrap piece')]
+			.map((el) => el.getBoundingClientRect())
+			.filter((r) => r.top > wrap.bottom)[0];
+		return {
+			from: { x: tray.left + tray.width / 2, y: tray.top + tray.height / 2 },
+			// a4: file a (0.5/8 across), rank 4 (4.5/8 down from the top)
+			to: { x: wrap.left + wrap.width * (0.5 / 8), y: wrap.top + wrap.height * (4.5 / 8) },
+		};
+	});
+	await p.mouse.move(box.from.x, box.from.y);
+	await p.mouse.down();
+	await p.mouse.move(box.to.x, box.to.y, { steps: 12 });
+	await p.mouse.up();
+	await p.waitForTimeout(400);
+	const after = await p.inputValue('input[spellcheck="false"]');
+	console.log('\ndrag a white pawn to a4:');
+	console.log('  before', before.split(' ')[0]);
+	console.log('  after ', after.split(' ')[0]);
+}
+
+// ...and does dragging a piece OFF the board remove it?
+{
+	const before = await p.inputValue('input[spellcheck="false"]');
+	const box = await p.evaluate(() => {
+		const wrap = document.querySelector('cg-board').getBoundingClientRect();
+		return {
+			from: { x: wrap.left + wrap.width * (0.5 / 8), y: wrap.top + wrap.height * (4.5 / 8) },
+			off: { x: wrap.right + 160, y: wrap.top + wrap.height / 2 },
+		};
+	});
+	await p.mouse.move(box.from.x, box.from.y);
+	await p.mouse.down();
+	await p.mouse.move(box.off.x, box.off.y, { steps: 12 });
+	await p.mouse.up();
+	await p.waitForTimeout(400);
+	const after = await p.inputValue('input[spellcheck="false"]');
+	console.log('\ndrag that pawn off the board:');
+	console.log('  before', before.split(' ')[0]);
+	console.log('  after ', after.split(' ')[0]);
+}
+
+// The one control that flips both the board and the side to move.
+{
+	await p.getByRole('button', { name: /to move/ }).click();
+	await p.waitForTimeout(300);
+	const state = await p.evaluate(() => ({
+		fen: document.querySelector('input[spellcheck="false"]').value,
+		orientation: document.querySelector('.cg-wrap').className,
+		label: [...document.querySelectorAll('button')].find((b) => /to move/.test(b.textContent))
+			.textContent,
+	}));
+	console.log('\nafter flipping:', state.label.trim(), '|', state.fen.split(' ')[1], '|', state.orientation);
+}
 
 // click a square on the board to check the select event works
 const before = await p.evaluate(() => document.querySelector('h3').innerText);

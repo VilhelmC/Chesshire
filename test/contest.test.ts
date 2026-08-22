@@ -1,13 +1,20 @@
 // The contest at a square.
 //
-// These tests are the claim that the arithmetic in domain/contest.ts is the
-// arithmetic EXPLOITABILITY.md describes. They are deliberately written as
-// positions a person can set up on a board and check by hand — a graph
-// computation nobody can verify by eye is exactly the kind of thing that ends
-// up subtly wrong and confidently reported.
+// Two kinds of test, and the split matters.
+//
+// The first kind is arithmetic on a tiny board — who bears on a square, what an
+// exchange folds to — written so a person can set the position up and check it
+// by hand.
+//
+// The second kind is a VERDICT about a position, and those are no longer written
+// by me. They run on the fixtures in src/views/labPresets.ts, whose answers were
+// set by Stockfish and are re-checked by test/adjudicate.test.ts. Every wrong
+// answer this module has produced was one where my derivation and my code agreed
+// with each other and both were wrong; the only way out of that is a referee.
 
 import { describe, it, expect } from 'vitest';
 import { foldAt, bearingOn, arrivals, escapesFor, contest, VALUE } from '../src/domain/contest';
+import { PRESETS } from '../src/views/labPresets';
 import { positionFromFen, parseSquare } from '../src/domain/chess';
 import type { Square } from 'chessops/types';
 
@@ -141,50 +148,109 @@ describe('escapesFor', () => {
 	});
 });
 
-describe('the Chessable pin, as a table', () => {
-	// White Rd1 pins Nd5 to Qd8. The knight is defended by the pawn on e6.
-	// White has a pawn on e2, one move from e4 where it attacks d5.
-	//
-	// The point of the example: the pin does not win the knight. It stops the
-	// knight from leaving while the PAWN arrives. That is a claim about three
-	// columns of a table, and it is checkable.
-	const FEN = '3q2k1/8/4p3/3n4/8/8/4P3/3R2K1 w - - 0 1';
+describe('the adjudicated fixtures', () => {
+	// The answers here come from src/views/labPresets.ts, where they were set by
+	// the engine. This asserts that the CONTEST TABLE agrees with them — which is
+	// the actual claim of the whole module.
 
-	it('is not winnable with the pieces already in contact', () => {
+	// Referred to by number, which is stable when a fixture is renamed.
+	const preset = (n: number) => {
+		const p = PRESETS.find((x) => x.n === n);
+		if (!p) throw new Error(`no preset #${n}`);
+		return p;
+	};
+
+	it.each(PRESETS.filter((p) => p.claim))('#$n $name', (p) => {
+		const c = contest(p.fen, p.target);
+		expect(c.verdict.kind === 'winnable', `I say ${c.verdict.kind}: ${c.verdict.why}`).toBe(
+			p.claim === 'wins',
+		);
+	});
+
+	it('names the move that wins, and how many tempi it costs', () => {
+		const c = contest(preset(1).fen, 'd5');
+		expect(c.verdict.at).toBe(1);
+		expect(c.race.line[0]).toBe('e2e4');
+	});
+
+	it('answers #2 by running the race rather than counting the knot', () => {
+		// The rook is not on the file yet. A count says the exchange would pay;
+		// the race says the knight leaves while the rook is committing.
+		const c = contest(preset(2).fen, 'd5');
+		expect(c.verdict.kind).toBe('not-winnable');
+		expect(c.race.value).toBeLessThanOrEqual(0);
+	});
+});
+
+describe('a defender with a prior job', () => {
+	// The mechanism, checked directly. The verdict for this position is 'nothing'
+	// (the engine says +37), and that is worth keeping as a fixture: the
+	// entanglement is real and does not win, which is a distinction the app has
+	// to be able to draw.
+	const FEN = PRESETS.find((p) => p.n === 6)!.fen;
+
+	it('prices what the knight is already doing, and where', () => {
 		const c = contest(FEN, 'd5');
-		expect(c.rows[0].net).toBeLessThanOrEqual(0);
+		const knight = c.rows[1].defenders.find((u) => u.from === 'g8');
+		expect(knight?.arrival).toBe(1);
+		expect(knight?.duty).toBe(330);
+		expect(knight?.dutyAt).toBe('h6');
 	});
 
-	it('becomes winnable once the pawn arrives, one tempo later', () => {
+	it('does not charge a duty to a defender that owes nothing', () => {
 		const c = contest(FEN, 'd5');
-		expect(c.rows[1].net).toBeGreaterThan(0);
-		expect(c.winnableAt).toBe(1);
+		const bishop = c.rows[0].defenders.find((u) => u.from === 'b7');
+		expect(bishop?.duty).toBe(0);
 	});
 
-	it('names the pawn as the unit that changes the verdict', () => {
+	it('leaves the duty at zero when there is nothing to guard', () => {
+		// Same position with the bishop on h6 removed.
+		const free = FEN.replace('4p2b', '4p3');
+		const c = contest(free, 'd5');
+		const knight = c.rows[1].defenders.find((u) => u.from === 'g8');
+		expect(knight?.duty).toBe(0);
+	});
+});
+
+describe('the pin that is really a trade', () => {
+	const FEN = PRESETS.find((p) => p.n === 7)!.fen;
+
+	it('finds the knight jump the pin was supposed to prevent', () => {
+		// Every static count says the knight cannot move, and it moves — with
+		// check, so the exposure behind it is never collected.
 		const c = contest(FEN, 'd5');
-		const joined = c.rows[1].attackers.filter((u) => u.arrival === 1);
-		expect(joined.map((u) => u.from)).toContain('e2');
+		const defence = c.rows[1].play?.defence;
+		expect(defence?.from).toBe('d5');
+		expect(defence?.check).toBe(true);
 	});
 
-	it('prices the knight’s escape above zero — which is what the pin buys', () => {
+	it('does not claim the pin wins anything', () => {
 		const c = contest(FEN, 'd5');
-		expect(c.escapeCost).toBeGreaterThan(0);
+		expect(c.verdict.kind).not.toBe('winnable');
+	});
+});
+
+describe('the race is the verdict', () => {
+	it('reports the sequence, not only the number', () => {
+		const c = contest(PRESETS[0].fen, 'd5');
+		expect(c.race.line.length).toBeGreaterThan(0);
+		expect(c.verdict.why).toContain(c.race.line[0]);
 	});
 
-	it('reverses when the piece behind is gone', () => {
-		// Same rook, same pawn, same knight — no queen behind, so the knight
-		// simply steps away and the whole plan is two wasted moves. Same
-		// "motif", opposite verdict, and only the escape column changed.
-		const noPin = '6k1/8/4p3/3n4/8/8/4P3/3R2K1 w - - 0 1';
-		const c = contest(noPin, 'd5');
-		expect(c.escapeCost).toBeLessThanOrEqual(0);
-		expect(c.winnableAt).toBeNull();
+	it('runs no race when it is not the attacker to move', () => {
+		const theirTurn = PRESETS[0].fen.replace(' w ', ' b ');
+		expect(contest(theirTurn, 'd5').race.line).toEqual([]);
 	});
+});
 
-	it('carries its caveats with it', () => {
-		// A table without them reads as a proof. It is not one.
-		expect(contest(FEN, 'd5').caveats.length).toBeGreaterThan(3);
+describe('whose move it is', () => {
+	it('declines to answer when it is not the attacker to move', () => {
+		// Will's point: the side to move is part of the question, and a table
+		// that ignores it is answering a different position.
+		const p = PRESETS[0];
+		const theirTurn = p.fen.replace(' w ', ' b ');
+		expect(contest(theirTurn, p.target).verdict.kind).toBe('unresolved');
+		expect(contest(theirTurn, p.target).verdict.why).toContain('side to move');
 	});
 });
 
@@ -192,12 +258,63 @@ describe('the prize is not its own defender', () => {
 	// Found by the Lab on its first run, not by anything I thought to test: the
 	// knight under attack was listed as arriving in one move to DEFEND the square
 	// it stands on — via a square it can only reach by abandoning the contest.
-	// The unit tables looked plausible; the row read `Nd5→c3` as a defender.
 	it('leaves the piece standing on the target out of both sides', () => {
-		const c = contest('3q2k1/8/4p3/3n4/8/8/4P3/3R2K1 w - - 0 1', 'd5');
+		const c = contest(PRESETS[0].fen, 'd5');
 		for (const r of c.rows) {
 			expect(r.attackers.map((u) => u.from)).not.toContain('d5');
 			expect(r.defenders.map((u) => u.from)).not.toContain('d5');
 		}
 	});
-})
+});
+
+describe('the fold, at its edges', () => {
+	// Will: "go back to basics and consider the whole algorithm — I sense you're
+	// getting even the basics wrong." He was right. These four cases are what a
+	// real static exchange evaluation has to handle beyond alternating captures,
+	// and two of them were silently wrong.
+
+	const value = (fen: string, sq: string, side: 'white' | 'black' = 'white') =>
+		foldAt(positionFromFen(fen).board, parseSquare(sq) as Square, side).value;
+
+	it('lets a piece behind another join the chain', () => {
+		// Doubled rooks: the second one is not "bearing on" d5 until the first
+		// has gone, and it joins because the attacker list is recomputed after
+		// every capture rather than fixed at the start.
+		const fen = '6k1/8/4p3/3n4/8/8/3R4/3R2K1 w - - 0 1';
+		expect(value(fen, 'd5')).toBe(0); // R, pxR, R — still not enough
+		expect(foldAt(positionFromFen(fen).board, parseSquare('d5') as Square, 'white').steps.length)
+			.toBeGreaterThan(2);
+	});
+
+	it('does not let a pinned defender recapture', () => {
+		// Black king e8, pawn e6 pinned to it by Re1. The knight on d5 LOOKS
+		// defended and is free: the pawn cannot legally take.
+		expect(value('4k3/8/4p3/3n4/8/8/8/3RR1K1 w - - 0 1', 'd5')).toBe(VALUE.knight);
+	});
+
+	it('still lets a pinned piece capture ALONG the pin', () => {
+		// Black's rook on e6 is pinned to the king on e8 by the rook on e1 — and
+		// may still take that rook, because doing so never leaves the line. A pin
+		// restricts a piece; it does not freeze it, and excluding pinned pieces
+		// outright would report this square as safe.
+		expect(value('4k3/8/4r3/8/8/8/8/4R1K1 b - - 0 1', 'e1', 'black')).toBe(VALUE.rook);
+	});
+
+	it('prices a promotion, because the pawn arrives as a queen', () => {
+		// bxa8=Q wins the rook AND eight pawns of pawn-to-queen. Counting it as
+		// an ordinary capture is wrong by more than the rook.
+		expect(value('r5k1/1P6/8/8/8/8/8/6K1 w - - 0 1', 'a8')).toBe(
+			VALUE.rook + VALUE.queen - VALUE.pawn,
+		);
+	});
+
+	it('will not let a king capture into a defended square', () => {
+		// Two rooks against a knight the king defends: Kxd5 loses the king, so
+		// the fold treats it as unaffordable and White simply wins the piece.
+		// (The king's value is the mechanism — it makes any recapture that hangs
+		// it astronomically bad, which is exactly what the rules say.)
+		expect(value('8/8/2k5/3n4/8/8/3R4/3R2K1 w - - 0 1', 'd5')).toBe(VALUE.knight);
+		// With only one attacker the king DOES recapture, and White declines.
+		expect(value('8/8/2k5/3n4/8/8/8/3R2K1 w - - 0 1', 'd5')).toBe(0);
+	});
+});

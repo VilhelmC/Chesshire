@@ -181,6 +181,8 @@ export function Train({
 	 * nearly every chip did nothing at all.
 	 */
 	const [previewPly, setPreviewPly] = useState<number | null>(null);
+	/** Our move, shown while the engine works out the answer to it. */
+	const [preview, setPreview] = useState<{ fen: string; lastMove: [string, string] } | null>(null);
 	/**
 	 * Plies where the opponent played a mistake, keyed `ply|san`.
 	 *
@@ -428,6 +430,10 @@ export function Train({
 		setStats((s) => ({ ...s, shown: s.shown + 1 }));
 		missedThisItem.current = true;
 		assistedThisItem.current = true;
+		// Long enough to read the arrow, then the move goes on the board — and
+		// `onMove` now puts it there before the engine is asked anything, so the
+		// order on screen is arrow, our move, their reply, rather than arrow,
+		// pause, both moves at once.
 		await new Promise((r) => setTimeout(r, 550));
 		setHint([]);
 		await onMove(uci, { revealed: true });
@@ -558,6 +564,17 @@ export function Train({
 		if (!state.expected.length && state.phase !== 'freeplay') return;
 		busyRef.current = true;
 		setBusy(true);
+
+		// Put our move on the board now, before any thinking. It is cleared in
+		// `finally`, by which point the real state has replaced it — or, if the
+		// move was rejected, the position it was showing is gone and the board
+		// snaps back to where it was.
+		try {
+			const after = applyUci(state.fen, uci);
+			setPreview({ fen: after.fen, lastMove: [uci.slice(0, 2), uci.slice(2, 4)] });
+		} catch {
+			/* an illegal move needs no preview; submitMove will refuse it */
+		}
 		evalStats.reset();
 		const startedAt = performance.now();
 		const before = state;
@@ -738,6 +755,7 @@ export function Train({
 		} catch (e) {
 			setError((e as Error).message);
 		} finally {
+			setPreview(null);
 			lastCost.current = {
 				calls: evalStats.calls,
 				cacheHits: evalStats.cacheHits,
@@ -772,14 +790,22 @@ export function Train({
 	// showing a hypothetical, and mixing it with the real position would be
 	// worse than either. It wins over the preview for the same reason: it is
 	// the thing most recently asked for.
-	const shownFen = explaining?.fen ?? shown?.fen ?? state?.fen ?? '';
+	// Our own move, on the board, before the engine has been asked anything.
+	//
+	// `submitMove` plays our move AND computes their reply before it returns, so
+	// the state — and therefore the board — only changed once, at the end. A
+	// dragged move looked fine because chessground moves the piece optimistically
+	// on drop; a move played FOR the user ("show me") showed an arrow, then
+	// nothing, then both moves animating together. The move was made before the
+	// thinking started; the picture should say so.
+	const shownFen = explaining?.fen ?? shown?.fen ?? preview?.fen ?? state?.fen ?? '';
 	const shownLastMove: [string, string] | undefined = explaining
 		? explaining.lastMove
 		: previewing
 			? shown?.uci
 				? [shown.uci.slice(0, 2), shown.uci.slice(2, 4)]
 				: undefined
-			: lastMove(state);
+			: (preview?.lastMove ?? lastMove(state));
 
 	const yourTurn =
 		!!state && !state.finished && (state.expected.length > 0 || state.phase === 'freeplay');
@@ -928,6 +954,30 @@ export function Train({
 					maxWidth: vp.stacked ? undefined : 560,
 				}}
 			>
+			{/* The line's name belongs above the board, not below it.
+				Underneath it was one short paragraph among the move list, the
+				options, the commentary and the controls — which is to say it was
+				findable rather than visible, and what line you are in is context
+				for the position, not a footnote to it. */}
+			{state && !state.finished && (
+				<p
+					style={{
+						margin: `0 0 ${6}px`,
+						fontSize: 13,
+						color: color.ink2,
+						minHeight: 18,
+					}}
+				>
+					{state.phase === 'punish'
+						? 'Off book — find the strongest continuation.'
+						: state.opening
+							? state.opening.name
+							: state.bookHere?.length
+								? `${state.bookHere.filter((m) => m.verdict === 'main' || m.verdict === 'book').length} book replies here`
+								: ''}
+				</p>
+			)}
+
 			<BoardPanel
 				fen={shownFen}
 				ourColour={state?.ourColour ?? 'w'}
@@ -1270,17 +1320,6 @@ export function Train({
 					)}
 				</div>
 
-				{state && !state.finished && (
-					<p style={{ fontSize: 13, opacity: 0.7 }}>
-						{state.phase === 'punish'
-							? 'Off book — find the strongest continuation.'
-							: state.opening
-								? state.opening.name
-								: state.bookHere?.length
-									? `${state.bookHere.filter((m) => m.verdict === 'main' || m.verdict === 'book').length} book replies here`
-									: ''}
-					</p>
-				)}
 
 				{candidates && (
 					<>

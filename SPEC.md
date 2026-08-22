@@ -1755,6 +1755,117 @@ The empty-square contest — a fork square, an outpost — so the unification cl
 
 And the measurement that decides whether any of this belongs in the trainer proper is untouched: **of the positions in Will's own games where the engine finds a decisive tactic, what share can the contest table account for, and how often does it produce a confident account the engine contradicts?** Coverage and false-account rate, on his distribution rather than on master games. That number comes before any of this reaches the commentary.
 
+#### M19.1 — the family, the obligation, and the refusal
+
+Three follow-ups from Will, each of which broke the first version.
+
+**The neighbouring positions.** Remove either pawn, or both. The procedure has to answer the family or it is a motif drill with extra steps. It does — and the interesting row is the one where the queen behind is gone: *the fold is larger than in the winning case and the position is worthless*, because the knight steps away. A count-only procedure recommends it.
+
+**A defender with a prior job.** A knight within arrival range that is the only guard of something else is not a defender; it is a choice between two contests. Priced by simulation — play the move it would have to make, and ask what the opponent then wins **somewhere other than this square**. That exclusion is load-bearing and its absence was the first bug: without it every defender is reported as the sole guard of the square it is defending, which is true, circular and useless.
+
+The verdict gains a kind, **entangled**, and it names what the defender is forced to concede — the *smaller* of the two losses, because they pick. Will's own framing was better than mine: it is a fork whose prongs are a board apart rather than sharing an attacker, which is exactly why no fork detector sees it. The dependency is measured by re-running the fold with the unit off the board, never inferred.
+
+**The pin that is really a trade.** The knight steps off the pin with `Nc3+`, forking king and queen; the exposure is never collected because of the check. Every static count says pinned. So escapes are now priced as *cost at the destination + what is exposed behind − what the piece threatens from where it lands*, with the threat counted only if it survives the opponent's best single reply, and only if the moving piece created it. When exposure and counter-threat are both material, the answer is **needs calculation** and the procedure declines to price it.
+
+**That refusal is the most important behaviour in the file.** The failure mode that makes an explainer worthless is not silence, it is a confident wrong account — the learner cannot tell the two apart. And it is discriminating: the ordinary pin has no counter-threat and keeps its verdict.
+
+Three more bugs of mine, all found by looking at the screen rather than by testing: the duty of every defender computed as the contest it was defending; the counter-threat counting threats the escape did not create; and a fixture where the "prize" could simply capture the attacker, which the escape table showed as a −500 departure. The Lab is now seven presets, every one with its hand-computed verdict written above the board — if the screen and the sentence disagree, one of them is wrong and both are visible.
+
+
+#### M19.2 — the defender gets to choose, and an engine gets to referee
+
+Four errors, all of them Will's catch, and one of them the model rather than a bug.
+
+**The defender was only allowed to co-operate.** The build-up race gave them `k` tempi and let them spend those tempi on exactly one thing: bringing another defender. So the table never considered moving the prize, breaking the pin, blocking, or checking. In the "pin, no defending pawn" position the answer to the build-up move is `Qg5+` — repair the pin, hand the tempo back — and the table called it winnable.
+
+The fix is a generalisation rather than another column: from `k = 1` the claim is tested against **every legal reply**, and the verdict is what survives their best one. Everything the escape/exposure machinery used to compute by hand is a reply. `domain/reply.ts` is smaller than the code it replaced.
+
+Replies are ranked by **net**, not by what they concede: ranking by concession alone picked `f7–f5` over a knight jump that concedes a queen and wins a rook straight back. And the counter-threat must exclude the square the exchange just happened on — counting the recapture that `concedes` already priced in subtracted the same rook twice, which turned a winning pin into "needs calculation".
+
+**Whose move it is was invisible and unmodelled.** It decides the answer, so it is now a control — a badge that says which side and flips on click — and a table computed for the wrong side refuses instead of assuming.
+
+**The fixtures were the real problem.** Two of them were wrong in ways that made everything downstream meaningless, and both were mine:
+
+- **Bare kings.** A king alone on g1 hands the defender resources no real position offers. Every preset now has a pawn shelter. A sparse board is not a simplified board, it is a different game.
+- **Unbalanced material.** When I first added an engine as referee it reported +475 for a "pin" position and I nearly recorded that as confirmation — it was measuring a position where White was a queen up. Every preset is now materially level, so the tactic is the only thing that is true.
+
+**And the referee itself.** `test/adjudicate.test.ts` runs Stockfish against every preset and fails if my verdict disagrees with its evaluation; `labPresets.ts` records the engine's number and best move; the Lab prints them next to my answer on screen. This is the instrument the last three rounds lacked: **every wrong answer in this thread was one where my derivation and my code agreed with each other**, which no amount of testing the code against the derivation can catch.
+
+(It also caught itself: the first version piped every UCI command at once and let stdin close, which Stockfish reads as a quit — it abandons the search and prints a bestmove from nothing. Every position came back as 0cp, and every fixture "passed".)
+
+**All eight presets now agree with the engine**, including the two Will called out, and the three he asked for — remove either pawn, both pawns, and the rook not yet committed to d1, which is the version that actually asks his question: *is committing the rook worth a tempo when the knight can spend that tempo leaving?*
+
+The Lab gained the tools to ask new questions rather than only re-read mine: a piece tray for building positions by hand, a side-to-move toggle, board flip, and Copy FEN. `views/labEdit.ts` holds the FEN surgery, tested separately — a position that is silently not the one you set up defeats the entire purpose of the screen.
+
+**Still not resolved:** the trade position (`Nc3+` forking) is correctly reported as winning nothing, but the procedure gets there by counting rather than by seeing the fork, and a four-ply forced sequence remains outside what a static count can claim. The honest architecture is that the contest table explains and the engine adjudicates — we already ship Stockfish, and the Lab now demonstrates the pairing.
+
+
+#### M19.3 — the fixtures were asking a question SEE already answers
+
+Will's verdict on the whole preset set: *"this setup is just asking whether we would exchange. Normal SEE calculation. Has nothing to do with a pin."* He was right about every one of them. With the rook already on the file and the pawns already attacking and defending, there is no tempo in the question — only a knot to count, which static exchange evaluation has done since the 1970s.
+
+His formulation of what the exercise is actually for is better than the one this project had been working from:
+
+> Look at the knot **before it happens**, by seeing which pieces are within mobilisation distance of it, and accounting for tempo shifts.
+
+**So the verdict is now a race, not a count.** `domain/race.ts` is a small alternating search over the moves that touch the contested square — plus captures and checks, because a check is how a defence buys a tempo — a few plies deep, with either side free to stop. The arrival/fold/duty tables stay as the explanation; the answer comes from playing the race out, because a count cannot price a tempo.
+
+That is a retreat from a claim in EXPLOITABILITY.md §7.5, and it is written there as one: tactics do *not* fold entirely into a static reading once tempo-gaining defences are in play. What keeps it bounded is narrowness — the branching is the few moves that bear on one square.
+
+Two errors inside the search, both mine, both found by watching every fixture come out as exactly zero:
+
+- **Standing pat does not stop the opponent.** The first leaf evaluation said "the mover takes their best capture and nothing else happens", so the defender could answer any threat by ignoring it.
+- **...but the mover's own resources still count.** Removing that term and evaluating only the opponent's threat was equally wrong: it reported Black winning a rook in a position where the knight that was going to take it can simply be captured first. The leaf now says: if I have something to take I take it, otherwise they collect.
+
+**The seven presets are rebuilt to his specification** — rook not yet on the file, pawns not yet defending but within reach — numbered so they can be referred to in one word, and every claim re-set by Stockfish. #2, #3 and #4 now produce the answer the whole exercise is for: *"the exchange count says 320, but the race ends at 0 — they answer Nb4 and the tempo buys nothing."*
+
+**Interface, from the same round of use:**
+
+- **One control, not two.** Flipping the board and flipping the side to move are the same act; the side to move is always at the bottom.
+- **Clicks landed a square off.** Chessground caches the board's bounding rectangle and maps clicks through it, so anything that changes the layout after mount leaves that cache stale. A `ResizeObserver` on the board and the body now triggers `redrawAll`. It looked like a coordinate bug and was a measurement bug — and it was in the shared `Board`, so it was quietly affecting every board in the app.
+- **The tray is drag-and-drop**, black above the board and white below, using chessground's own `dragNewPiece`; dragging a piece off the board deletes it. The colours were inverted in dark mode because ♙ and ♟ are an *outline* glyph and a *solid* one, not a white one and a black one — the outline takes the page's ink, and in dark mode the ink is light. One solid glyph with an explicit fill and stroke survives both themes.
+- **The app's own eval bar and toolbar**, with Stockfish answering for whatever position is on the board: ask, show its move, show the race. When the engine and the count disagree the screen says so, and says which one to distrust.
+
+**Not fixed, and it should be said rather than buried:** preset #6 no longer demonstrates the entanglement it is named for. The duty is computed correctly — 330 at h6, with a test — but the exchange count already favours White at k = 1 there, so the "entangled" verdict never fires. The mechanism is real and the fixture does not show it, which is a fixture I have not managed to build rather than a feature I have.
+
+
+#### M19.4 — four interface faults, and the one that was hiding a fifth
+
+**The Lab was slow**, and the reason was the race: plain minimax at four plies, 215ms of the 340ms it took to answer a square, run again on every edit of the board. Alpha-beta on the material window — exact cutoffs, nothing heuristic discarded — takes it to **10ms**, and the whole answer to 42ms. The fixtures still adjudicate identically against Stockfish, which is what makes the pruning trustworthy rather than merely faster.
+
+**A React warning on every drag** — `borderLeft` shorthand mixed with `borderLeftWidth` in the verdict panel. The warning is right: the shorthand resets what the longhand set, so which wins depends on the order the style object happens to be applied.
+
+**The tray pieces looked wrong and sat wrong.** Unicode glyphs were the wrong tool twice: ♙ and ♟ are an *outline* and a *solid*, not a white and a black, so they invert with the theme — and forcing a fill plus a stroke on top produced a black king that reads as white. The tray now renders chessground's own sprites inside a `cg-wrap`, so it shows the same pieces as the board. They also stuck out past the board's edge, because the row was centred in a container that included the evaluation bar; it is now the board's width, inset by the bar.
+
+**And the fault that mattered:** dragging a piece off the board did not delete it. `deleteOnDropOff` was set at construction and then quietly turned off, because the effect that re-applies interaction config on every position change re-sent `draggable: { enabled: interactive }` — false in the Lab. Pieces from the **tray** still worked, because `dragNewPiece(..., force)` ignores `draggable.enabled`. Half-working is what made it hard to see.
+
+`scripts/lab-check.mjs` now drives all three by mouse: drag a pawn from the tray (it lands on the square it was dropped on, which is also the regression test for the click-offset bug), drag it off the board (it disappears), and flip (the side to move changes). None of it is visible to a unit test, and all of it was broken.
+
+
+#### M19.5 — back to the exchange itself, where three things were wrong
+
+Will: *"I think we have to go back to basics and consider the whole algorithm, because I sense you're getting even the basics wrong."* He was right, and the way to find out was to write the base algorithm down (`SEE.md`) and test its edges rather than its middle.
+
+His sketch of static exchange evaluation is correct — sorted participants, alternating, either side free to opt out — and needed four refinements, two of which were live defects:
+
+- **The opt-out resolves backwards.** `S(j) = max(0, captured(j) − S(j+1))`. Whether continuing pays depends on everything after it, so a forward "is this step positive" rule gives wrong answers. (Already fixed in M19; restated in SEE.md as one line so it cannot drift again.)
+- **The participant list is recomputed after every capture**, which is what makes batteries and x-rays fall out for free. Already correct.
+- **A pinned piece is not a defender.** The fold is arithmetic on a board and knew nothing about legality, so a pawn pinned to its own king cheerfully recaptured and a free piece was reported as defended. It can still capture *along* the pin — including the pinner — so the test is whether the contested square is on its pin ray, not whether it is pinned.
+- **A pawn capturing onto the last rank arrives as a queen**, winning what it took plus the difference in its own value. Missing this priced a promoting capture eight pawns short.
+
+The king case turns out to be right for the right reason: pricing it absurdly high makes any line where it recaptures into an attack score as catastrophic, so the fold declines it — which is what the rules say.
+
+**And the extension is not a race.** Will's correction:
+
+> Doing the exchange calculation beforehand is the same logic. Not really a race. We simply look at the graph of possible moves and pieces that are one move away from being included in the exchange sort chain.
+
+That is right and the alternating search was over-reach. The correct structure is the same fold over a larger participant list — `participants(k)` = bearing now, plus everything within `k` moves, both sides — with tempo entering as the index rather than as a search. The constant-tempo assumption that standard SEE makes is then *inherited*, and the honest thing is to enumerate how it fails rather than to search past it: the target leaves, a defender arrives sooner, or someone interposes a forcing move. Three checkable lists, which is also what a human should check. `SEE.md` §4–5 states this; the code still answers by search, and that is the next change.
+
+**Three interface faults from the same session.** The tray sat inside a `cg-wrap`, which carries chessground's own geometry and pushed the row past the board's right edge; the class now sits on an inner span that has no layout of its own. The opening's name moved above the board — underneath it was one short paragraph among the move list, the options and the controls, which is findable rather than visible, and what line you are in is context for the position rather than a footnote to it.
+
+**And the animation.** "Show me the move" drew the arrow immediately, then nothing, then both moves at once. `submitMove` plays our move *and* computes the reply before returning, so the board changed once, at the end. A dragged move looked fine only because chessground moves the piece optimistically on drop. Our move now goes on the board before the engine is asked anything, so the order on screen is the order it happened in.
+
+
 ---
 
 ## 10. Risks

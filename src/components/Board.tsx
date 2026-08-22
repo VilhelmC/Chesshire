@@ -37,6 +37,14 @@ export type BoardProps = {
 	 * boards leave it unset and behave exactly as before.
 	 */
 	onSelectSquare?: (square: string) => void;
+	/**
+	 * Edit mode: pieces drag freely, dragging one off the board removes it, and
+	 * every change reports the new board FEN. Used only by the Lab.
+	 */
+	editable?: boolean;
+	onEdit?: (boardFen: string) => void;
+	/** Hands the chessground instance out, so a tray can start a drag onto it. */
+	apiRef?: (api: Api | null) => void;
 	size?: number;
 	/**
 	 * Bump to force the board back to `fen` even though it has not changed.
@@ -57,6 +65,9 @@ export function Board({
 	arrows = [],
 	onMove,
 	onSelectSquare,
+	editable = false,
+	onEdit,
+	apiRef,
 	size = 420,
 	version = 0,
 }: BoardProps) {
@@ -68,6 +79,10 @@ export function Board({
 	// the same reason onMove goes through one.
 	const onSelectRef = useRef(onSelectSquare);
 	onSelectRef.current = onSelectSquare;
+	const onEditRef = useRef(onEdit);
+	onEditRef.current = onEdit;
+	const apiRefRef = useRef(apiRef);
+	apiRefRef.current = apiRef;
 
 	const lastFen = useRef<string>('');
 	const lastVersion = useRef<number>(-1);
@@ -91,8 +106,8 @@ export function Board({
 			turnColor: turnOf(fen),
 			orientation,
 			lastMove: lastMove as Key[] | undefined,
-			movable: { free: false, showDests: true },
-			draggable: { enabled: interactive },
+			movable: { free: editable, color: editable ? 'both' : undefined, showDests: !editable },
+			draggable: { enabled: interactive || editable, deleteOnDropOff: editable },
 			drawable: {
 				enabled: false,
 				brushes: {
@@ -101,8 +116,25 @@ export function Board({
 			},
 			events: {
 				select: (key) => onSelectRef.current?.(key as string),
+				change: () => {
+					const cg = api.current;
+					if (cg && onEditRef.current) onEditRef.current(cg.getFen());
+				},
 			},
 		});
+
+		apiRefRef.current?.(api.current);
+
+		// ------------------------------------------------------------------
+		// Chessground caches the board's bounding rectangle and maps a click to
+		// a square using it. Anything that changes the layout AFTER mount — a
+		// panel appearing above the board, a font finishing loading — leaves
+		// that cache stale, and every click then lands one square off. It looks
+		// like a coordinate bug and is a measurement bug.
+		// ------------------------------------------------------------------
+		const observer = new ResizeObserver(() => api.current?.redrawAll());
+		observer.observe(ref.current);
+		observer.observe(document.body);
 
 		// These refs cache what was last pushed to THIS instance, so they belong to
 		// its lifetime. Leaving them set across a remount is what let the guard in
@@ -111,6 +143,8 @@ export function Board({
 		lastVersion.current = version;
 
 		return () => {
+			observer.disconnect();
+			apiRefRef.current?.(null);
 			api.current?.destroy();
 			api.current = null;
 			lastFen.current = '';
@@ -162,22 +196,32 @@ export function Board({
 		}
 		const turn = turnOf(fen);
 
+		// This effect re-applies the interaction config on every position change,
+		// which is why edit mode has to be repeated here rather than only set at
+		// construction: the first version configured `deleteOnDropOff` once and
+		// this line quietly turned dragging back off a moment later. Dropping a
+		// piece off the board did nothing, and pieces from the tray still worked,
+		// because `dragNewPiece(..., force)` ignores `draggable.enabled` — which
+		// is exactly the kind of half-working that hides the cause.
 		cg.set({
 			orientation,
 			movable: {
-				free: false,
-				color: interactive ? (movableColor === 'both' ? 'both' : turn) : undefined,
-				dests: interactive ? dests : new Map(),
-				showDests: true,
+				free: editable,
+				color: editable ? 'both' : interactive ? (movableColor === 'both' ? 'both' : turn) : undefined,
+				dests: interactive && !editable ? dests : new Map(),
+				showDests: !editable,
 				events: {
 					after: (orig, dest) => {
+						if (editable) return;
 						const promo = isPromotion(fen, orig, dest) ? 'q' : '';
 						onMoveRef.current?.(`${orig}${dest}${promo}`);
 					},
 				},
 			},
-			draggable: { enabled: interactive },
-			selectable: { enabled: interactive },
+			draggable: { enabled: interactive || editable, deleteOnDropOff: editable },
+			// Edit mode needs clicks to select a square; ordinary boards keep the
+			// behaviour they had.
+			selectable: { enabled: interactive || editable },
 			drawable: {
 				enabled: false,
 				autoShapes: arrows.map((a) => ({
@@ -199,7 +243,7 @@ export function Board({
 		// position would be restored with an empty dests map and the board would
 		// simply stop accepting moves. That is the "I can't move on this card" bug.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [fen, orientation, interactive, movableColor, arrowsKey, version, size]);
+	}, [fen, orientation, interactive, editable, movableColor, arrowsKey, version, size]);
 
 	// What chessground ITSELF believes, as opposed to what we asked for. The two
 	// diverging is the whole class of "the board looks right but will not move".
