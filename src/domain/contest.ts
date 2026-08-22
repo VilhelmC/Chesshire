@@ -28,7 +28,7 @@ import type { Board } from 'chessops/board';
 import { positionFromFen, makeSquare, parseSquare } from './chess';
 import type { Chess } from 'chessops/chess';
 import { replies, bestCapture, type Reply, type Capture } from './reply';
-import { race, type RaceResult } from './race';
+import { knot, type Knot, type Rung } from './knot';
 
 /** Centipawns. The king is priced so it never enters a fold as a target. */
 export const VALUE: Record<Role, number> = {
@@ -166,14 +166,15 @@ export type Contest = {
 	/** Whose move it actually is — part of the question, not a detail. */
 	turn: Color;
 	/**
-	 * The race for the square: both sides mobilising, tempo by tempo.
+	 * The knot at this square: one fold per tempo, plus the enumerated ways it
+	 * fails to form.
 	 *
-	 * This is the verdict's source of truth. The tables below it explain the
-	 * answer — who can reach the square, what the exchange folds to, what each
-	 * defender owes elsewhere — but the answer itself comes from playing the
-	 * race out, because a count cannot price a tempo.
+	 * This is the verdict's source of truth, and it is deliberately NOT a search.
+	 * The thing it replaced was one, and a search over the whole board answers
+	 * "what can this side win somewhere" — which it then printed as the answer
+	 * about this square. See knot.ts for the failure that exposed it.
 	 */
-	race: RaceResult;
+	knot: Knot;
 	rows: ContestRow[];
 	/**
 	 * Where the prize can go, and what going there costs it.
@@ -319,19 +320,24 @@ export function foldAt(
 	// The speculative sequence: keep capturing while anyone can.
 	const seq: { colour: Color; from: Square; role: Role; captured: number }[] = [];
 
-	for (let i = 0; i < 32; i++) {
-		const inContact = bearingOn(board, target, side, occupied);
-		const joined = [...extra.entries()]
-			.filter(([s, c]) => c === side && occupied.has(s))
-			.map(([s]) => s);
-		const candidates = [...new Set([...inContact, ...joined])]
+	/** Who could capture on the target right now, for one side, given occupancy. */
+	const capturers = (who: Color, occ: SquareSet): Square[] =>
+		[
+			...new Set([
+				...bearingOn(board, target, who, occ),
+				...[...extra.entries()].filter(([s, c]) => c === who && occ.has(s)).map(([s]) => s),
+			]),
+		]
 			.filter((s) => s !== target)
 			// A piece pinned to its own king may only act along the pin. Leaving
 			// it in makes a defended piece out of a free one.
 			.filter((s) => {
-				const allowed = pinned[side].get(s);
+				const allowed = pinned[who].get(s);
 				return !allowed || allowed.has(target);
 			});
+
+	for (let i = 0; i < 32; i++) {
+		const candidates = capturers(side, occupied);
 		if (!candidates.length) break;
 
 		// Cheapest first. Taking with the queen when a pawn will do is how a fold
@@ -349,6 +355,26 @@ export function foldAt(
 		}
 		if (best === null) break;
 		const piece = board.get(best) as Piece;
+
+		// The king is not a piece like the others, and pricing it at 100000 does
+		// not make it behave. Two rules, both absolute:
+		//
+		//  * A king may only capture into an undefended square. If the other side
+		//    still has a capturer, the king's capture is illegal and the sequence
+		//    ends here — the king is the most expensive capturer, so there is
+		//    nothing cheaper to fall back on.
+		//
+		//  * Once the king stands on the square, nobody can take it. The chain
+		//    ends whether or not anyone would like to continue.
+		//
+		// Without this the fold cheerfully captured the king for 100000, which is
+		// where the Lab's "99680" and "100100" came from: not a rounding error, a
+		// sequence that plays past the end of the game.
+		if (piece.role === 'king') {
+			if (capturers(other(side), occupied.without(best)).length) break;
+			seq.push({ colour: side, from: best, role: 'king', captured: onSquare });
+			break;
+		}
 
 		// A pawn that captures onto the last rank arrives as a queen: it wins
 		// what it took AND the difference in its own value, and the piece the
@@ -401,7 +427,7 @@ export function foldAt(
 export function bestGainFor(
 	board: Board,
 	side: Color,
-	opts: { exclude?: Square; onlyAttackedBy?: Square } = {},
+	opts: { exclude?: Square | Square[]; onlyAttackedBy?: Square } = {},
 ): { square: string; value: number } | null {
 	// Restricting to one piece's own targets is what separates "this move
 	// creates a threat" from "a threat exists somewhere on the board", which are
@@ -412,9 +438,16 @@ export function bestGainFor(
 			? attacks(attacker, opts.onlyAttackedBy, board.occupied)
 			: null;
 
+	const skip =
+		opts.exclude === undefined
+			? []
+			: Array.isArray(opts.exclude)
+				? opts.exclude
+				: [opts.exclude];
+
 	let best: { square: string; value: number } | null = null;
 	for (const s of board[other(side)]) {
-		if (s === opts.exclude) continue;
+		if (skip.includes(s)) continue;
 		if (reach && !reach.has(s)) continue;
 		const f = foldAt(board, s, side);
 		if (f.value > 0 && (!best || f.value > best.value)) {
@@ -453,7 +486,14 @@ export function dutyOf(
 		after.set(via, piece);
 	}
 
-	const then = bestGainFor(after, other(piece.color), { exclude });
+	// The square it travels TO is excluded as well. Standing there and being
+	// taken is a route cost, already priced as one — reporting it as a duty made
+	// a knight "the only thing holding b5" when b5 was the empty square it was
+	// going to be captured on, and produced an 'entangled' verdict about a piece
+	// guarding itself.
+	const then = bestGainFor(after, other(piece.color), {
+		exclude: via !== null ? [...(exclude !== undefined ? [exclude] : []), via] : exclude,
+	});
 	const value = Math.max(0, (then?.value ?? 0) - before);
 	return value > 0 && then ? { value, at: then.square } : { value: 0 };
 }
@@ -882,24 +922,13 @@ export function contest(fen: string, targetSquare: string, maxTempi = 2): Contes
 		});
 	}
 
-	// The race is run from the real position, with the real side to move.
-	const run =
-		attacker === pos.turn
-			? race(pos, target, attacker, maxTempi * 2)
-			: { value: 0, line: [], plies: 0, truncated: false };
+	// The knot is computed from the real position, with the real side to move.
+	const tied = knot(pos, target, attacker, maxTempi);
 
-	// Winnable now means: the attacker has a move, and what they win survives the
-	// defender's best answer. "The prize can leave" is no longer a column of its
-	// own — leaving is one of the defender's legal replies, and so are breaking
-	// the pin, blocking, and checking.
-	let winnableAt: number | null = null;
-	for (const row of rows) {
-		if (row.k > 1) break; // k >= 2 is a count, not a claim. See ContestRow.
-		if (row.net > 0) {
-			winnableAt = row.k;
-			break;
-		}
-	}
+	// Winnable is the knot's answer, and only the knot's: the smallest tempo
+	// count whose exchange pays AND whose spoiler list is empty. The rows below
+	// explain it; they no longer decide it.
+	const winnableAt = tied.at;
 
 	return {
 		target: targetSquare,
@@ -910,8 +939,8 @@ export function contest(fen: string, targetSquare: string, maxTempi = 2): Contes
 		escapes,
 		escapeCost,
 		winnableAt,
-		race: run,
-		verdict: judge(rows, run, attacker === pos.turn),
+		knot: tied,
+		verdict: judge(rows, tied, attacker === pos.turn),
 		caveats: CAVEATS,
 	};
 }
@@ -926,47 +955,58 @@ export function contest(fen: string, targetSquare: string, maxTempi = 2): Contes
  */
 export function judge(
 	rows: ContestRow[],
-	run: RaceResult,
+	tied: Knot,
 	attackerToMove: boolean,
 ): Contest['verdict'] {
 	if (!attackerToMove) {
 		return {
 			kind: 'unresolved',
-			why: 'It is not the attacking side to move, so there is no race to run. Flip the side to move to ask this question.',
+			why: 'It is the defending side to move, so there is nothing to claim yet. Switch the side to move to ask this question.',
 		};
 	}
 
-	const tempi = Math.ceil(run.line.length / 2);
-	const line = run.line.join(' ');
+	const prize = tied.prize
+		? `the ${tied.prize.role} on ${tied.target}`
+		: `the square ${tied.target}`;
 
-	if (run.value > 0) {
+	// ---- It works. Say what the move is, what it wins, and why they must allow it. ----
+	const won = tied.rungs.find((r) => r.holds);
+	if (won) {
+		const worth = won.survives ?? won.count;
+		if (won.k === 0) {
+			return {
+				kind: 'winnable',
+				at: 0,
+				why: `Take ${prize} now — ${trade(won.fold)}, ${material(worth)} in hand.`,
+			};
+		}
 		return {
 			kind: 'winnable',
-			at: tempi,
+			at: won.k,
 			why:
-				tempi === 0
-					? `Take it now: ${run.value} after the exchange.`
-					: `${run.value} after ${tempi} tempo${tempi === 1 ? '' : 's'} of build-up${line ? ` — ${line}` : ''}. Their best answers are in the race below.`,
+				`${won.move ? won.move.text : 'One move of preparation'} first, and ${prize} is worth ` +
+				`${material(worth)} — ${trade(won.fold)}. ${cannotRun(won)}${resistance(won)}`,
 		};
 	}
 
-	// Does the count say the exchange would pay while the race says it does not?
-	// That gap is the lesson: the tempo buys nothing, and the reason is the
-	// defender's move.
-	const paying = rows.find((r) => r.fold.value - r.spent > 0);
-	if (paying) {
-		const answer = run.line[1] ?? paying.play?.defence
-			? `${paying.play?.defence?.from}–${paying.play?.defence?.to}`
-			: null;
+	// ---- The count pays but the position does not. Name which of the three. ----
+	const paid = tied.rungs.find((r) => r.count > 0 && r.spoilers.length);
+	if (paid) {
+		const s = paid.spoilers[0];
 		return {
 			kind: 'not-winnable',
+			at: paid.k,
 			why:
-				`The exchange count says ${paying.fold.value - paying.spent} at k = ${paying.k}, but the race ends at ${run.value}` +
-				(answer ? ` — they answer ${answer} and the tempo buys nothing.` : '.'),
+				`On the count ${prize} looks worth ${material(paid.count)}` +
+				(paid.move ? ` after ${paid.move.text}` : '') +
+				`, but it does not form: ${s.why}` +
+				(paid.spoilers.length > 1
+					? ` They also have ${paid.spoilers.slice(1).map((x) => x.move).join(', ')}.`
+					: ''),
 		};
 	}
 
-	// The defence is on loan from somewhere else, even though nothing wins here.
+	// ---- Nothing wins, but the defence is borrowed from somewhere else. ----
 	for (const row of rows) {
 		const c = row.critical[0];
 		if (!c) continue;
@@ -975,15 +1015,132 @@ export function judge(
 			kind: 'entangled',
 			at: row.k,
 			why:
-				`Nothing is winnable here yet, but the defence at k = ${row.k} rests on the ${c.unit.role} on ${c.unit.from} — without it the exchange wins ${c.foldWithout}, ` +
-				`and that piece is the only thing holding ${c.unit.dutyAt ?? 'another square'} (${c.unit.duty}). It cannot do both; they would concede the smaller of the two — ${guaranteed}.`,
+				`Nothing wins outright, but the defence of ${prize} rests on the ${c.unit.role} on ${c.unit.from}: ` +
+				`take it out of the count and the square is worth ${material(c.foldWithout)}, and that same piece is the only thing ` +
+				`holding ${c.unit.dutyAt ?? 'another square'} (${material(c.unit.duty)}). It cannot do both, so they concede the smaller of the two — ${material(guaranteed)}.`,
 		};
 	}
 
+	const best = tied.rungs.reduce((m, r) => Math.max(m, r.count), 0);
 	return {
 		kind: 'not-winnable',
-		why: `Nothing to win: the race over ${run.plies} plies ends at ${run.value}.`,
+		why:
+			best > 0
+				? `${prize} does not pay: even with a move of preparation the exchange comes to nothing.`
+				: `Nothing to win here — ${prize} is defended at least as well as it is attacked.`,
 	};
+}
+
+/** Centipawns as something a person can picture. */
+export function material(cp: number): string {
+	const n = Math.abs(cp);
+	if (n === 0) return 'nothing';
+	const name =
+		n >= 850 && n <= 950
+			? 'a queen'
+			: n >= 470 && n <= 530
+				? 'a rook'
+				: n >= 300 && n <= 350
+					? 'a piece'
+					: n >= 160 && n <= 200
+						? 'the exchange'
+						: n < 150
+							? n === 100
+								? 'a pawn'
+								: `${(n / 100).toFixed(n % 100 === 0 ? 0 : 1)} pawns`
+							: `${(n / 100).toFixed(1)} pawns`;
+	return cp < 0 ? `minus ${name}` : name;
+}
+
+/**
+ * The exchange in words, read off the fold's own steps.
+ *
+ * "220" is a number; "the knight for a pawn" is the thing that happened. The
+ * steps that actually get played are already in the fold, so this is a reading
+ * of the computation rather than a second opinion about it.
+ */
+function trade(fold: Fold): string {
+	if (!fold.steps.some((s) => s.happens)) return 'nothing changes hands';
+	// Even steps are our captures, so they name what THEY lose; odd steps are
+	// their recaptures, so they name what we lose.
+	const won = list(taken(fold, 0));
+	const given = list(taken(fold, 1));
+	return won === 'nothing' ? 'nothing changes hands' : `${won} for ${given}`;
+}
+
+/** The pieces one side loses in the fold: parity 0 = theirs, 1 = ours. */
+function taken(fold: Fold, parity: number): Role[] {
+	const out: Role[] = [];
+	const played = fold.steps.filter((s) => s.happens);
+	// Step j captures whatever stood on the square: for j = 0 that is the prize,
+	// and from then on it is the previous capturer.
+	played.forEach((_step, j) => {
+		if (j % 2 !== parity) return;
+		const victim = j === 0 ? null : fold.steps[j - 1].role;
+		out.push(victim ?? roleOfPrize(fold));
+	});
+	return out;
+}
+
+function roleOfPrize(fold: Fold): Role {
+	// The first capture's value identifies what stood there.
+	const v = fold.steps[0]?.captured ?? 0;
+	const entries = Object.entries(VALUE) as [Role, number][];
+	const hit = entries.find(([, val]) => val === v);
+	return hit ? hit[0] : 'pawn';
+}
+
+const ARTICLE: Record<Role, string> = {
+	pawn: 'a pawn',
+	knight: 'a knight',
+	bishop: 'a bishop',
+	rook: 'a rook',
+	queen: 'a queen',
+	king: 'the king',
+};
+
+function list(roles: Role[]): string {
+	const words = roles.map((r) => ARTICLE[r]);
+	if (words.length <= 1) return words[0] ?? 'nothing';
+	return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}
+
+/** The escape they would like to have, and what happens when they try it. */
+function cannotRun(r: Rung): string {
+	const e = r.escapeTry;
+	if (!e || e.leaves <= 0) return '';
+	if (e.answer?.at === 'elsewhere') {
+		return `It cannot simply run: ${e.move} lets ${e.answer.text} collect what it was shielding. `;
+	}
+	if (e.answer?.at === 'chase') {
+		return `It cannot simply run: ${e.move} is met by ${e.answer.text}. `;
+	}
+	return `It cannot simply run: ${e.move} still meets ${e.answer?.text ?? 'the same capture'}. `;
+}
+
+/**
+ * What the defender can try, and why it is not enough.
+ *
+ * Assembled from the knot's own numbers — the best try it found, and the
+ * capture that answers it. Nothing here is written for a particular position,
+ * which is the whole requirement: a hardcoded explanation explains the fixture,
+ * and the fixtures were what turned out to be wrong.
+ */
+function resistance(r: Rung): string {
+	const s = r.bestTry ?? r.spoilers[0];
+	if (!s) {
+		return 'They have no answer that changes it: the prize cannot leave, no defender arrives in time, and no check interrupts.';
+	}
+	if (s.answer?.at === 'elsewhere') {
+		return `Their best try is ${s.move}, but it cannot be played for free — ${s.answer.text} collects what it was shielding, so they have to accept the trade.`;
+	}
+	if (s.answer?.at === 'chase') {
+		return `Their best try is ${s.move}, and ${s.answer.text} takes it where it lands: ${material(s.leaves)}.`;
+	}
+	if (s.answer) {
+		return `Their best try is ${s.move}, and ${s.answer.text} still takes it: ${material(s.leaves)}.`;
+	}
+	return `Their best try is ${s.move}, and it still leaves ${material(s.leaves)}.`;
 }
 
 /**

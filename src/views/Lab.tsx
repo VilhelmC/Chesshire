@@ -22,7 +22,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Board } from '../components/Board';
-import { contest, type Contest, type Unit } from '../domain/contest';
+import { contest, material, type Contest, type Unit } from '../domain/contest';
+import { GLYPH, type Spoiler, type SpoilerKind } from '../domain/knot';
 import { PRESETS } from './labPresets';
 import { flipTurn, readable, turnOf } from './labEdit';
 import { EvalBar } from '../components/EvalBar';
@@ -30,6 +31,19 @@ import { Toolbar } from '../components/Toolbar';
 import { engine } from '../engine/stockfish';
 import type { Api } from 'chessground/api';
 import { color, space, radius, text, mono, TOUCH } from '../ui/theme';
+
+/**
+ * The three ways a knot fails to form, named in words rather than in a label
+ * the reader has to look up. 'quiet' is here because calling every ordinary
+ * move forcing explains nothing.
+ */
+const SPOILER_WORD: Record<SpoilerKind, string> = {
+	escape: 'the prize leaves',
+	defender: 'a defender arrives',
+	forcing: 'something bigger interrupts',
+	quiet: 'nothing in particular',
+	illegal: 'the capture cannot be played',
+};
 import { Note, Section, inputStyle } from '../ui/primitives';
 import type { Role, Color } from 'chessops/types';
 
@@ -133,24 +147,31 @@ export function Lab() {
 		return out;
 	}, [c, row]);
 
+	// The rung the verdict rests on: the one that holds, or failing that the one
+	// that proposes a move so the reader can see what was tried and refuted.
+	const plan = useMemo(
+		() =>
+			c?.knot.rungs.find((r) => r.holds && r.move !== null) ??
+			c?.knot.rungs.find((r) => r.move !== null) ??
+			null,
+		[c],
+	);
+
 	const overlay = useMemo(() => {
 		const out: { orig: string; dest: string; brush: string; label?: string }[] = [];
 		if (showBest && live && live.best.length >= 4) {
 			out.push({ orig: live.best.slice(0, 2), dest: live.best.slice(2, 4), brush: 'q0' });
 		}
-		if (showOptions && c?.race.line.length) {
-			// The race, drawn: our moves in one colour, theirs in the other.
-			c.race.line.forEach((m, i) => {
-				out.push({
-					orig: m.slice(0, 2),
-					dest: m.slice(2, 4),
-					brush: i % 2 === 0 ? 'q1' : 'q3',
-					label: String(i + 1),
-				});
-			});
+		if (showOptions && plan) {
+			// The plan, drawn: our build-up move, then their best answer to it.
+			if (plan.move) out.push({ orig: plan.move.from, dest: plan.move.to, brush: 'q1', label: '1' });
+			const foil = plan.spoilers[0];
+			if (foil?.squares) {
+				out.push({ orig: foil.squares[0], dest: foil.squares[1], brush: 'q3', label: '2' });
+			}
 		}
 		return out;
-	}, [showBest, showOptions, live, c]);
+	}, [showBest, showOptions, live, plan]);
 
 	return (
 		<div>
@@ -290,10 +311,10 @@ export function Lab() {
 								},
 								{
 									id: 'options',
-									title: 'Show the race — our moves and theirs, in order',
+									title: 'Show the plan — our build-up move and their best answer',
 									icon: 'options',
 									onClick: () => setShowOptions((v) => !v),
-									disabled: !c?.race.line.length,
+									disabled: !plan,
 									accent: showOptions,
 								},
 								{
@@ -324,7 +345,7 @@ export function Lab() {
 							{c && (
 								<>
 									{' · '}
-									{agrees(c.race.value, live.cp)
+									{agrees(c.knot.value, live.cp)
 										? 'agrees with the count'
 										: '⚠ disagrees with the count below — the count is the one to distrust'}
 								</>
@@ -392,6 +413,7 @@ function ContestReport({
 	onRow: (r: number) => void;
 }) {
 	const shown = c.rows[Math.min(row, c.rows.length - 1)];
+	const shownRung = c.knot.rungs[Math.min(row, c.knot.rungs.length - 1)];
 
 	return (
 		<div>
@@ -437,16 +459,34 @@ function ContestReport({
 							unresolved: 'Needs calculation',
 						}[c.verdict.kind]
 					}
-					{c.verdict.at !== undefined ? ` at k = ${c.verdict.at}` : ''}
+					{/* Only a winnable verdict gets a tempo count in its headline.
+						On the others `at` marks the rung where the COUNT paid,
+						which is not the same statement — "not winnable after one
+						move of preparation" reads as a claim about one move when
+						it is a claim about all of them. */}
+					{c.verdict.kind !== 'winnable' || c.verdict.at === undefined
+						? ''
+						: c.verdict.at === 0
+							? ' straight away'
+							: c.verdict.at === 1
+								? ' after one move of preparation'
+								: ` after ${c.verdict.at} moves of preparation`}
 				</strong>{' '}
 				<span style={{ color: color.ink }}>{c.verdict.why}</span>
 			</div>
 
-			<h4 style={{ margin: `0 0 ${space.tight}px` }}>Build-up</h4>
-			<table style={{ borderCollapse: 'collapse', fontSize: text.body, marginBottom: space.card }}>
+			<h4 style={{ margin: `0 0 ${space.tight}px` }}>Tempo by tempo</h4>
+			<table style={{ borderCollapse: 'collapse', fontSize: text.body, marginBottom: space.tight }}>
 				<thead>
 					<tr style={{ color: color.ink2, fontSize: text.note, textAlign: 'left' }}>
-						{['k', 'attackers', 'defenders', 'fold', 'spent', 'net', 'can it run?'].map((h) => (
+						{[
+							'moves of preparation',
+							'our move',
+							'who is in the exchange',
+							'the exchange pays',
+							'after their best answer',
+							'',
+						].map((h) => (
 							<th key={h} style={{ fontWeight: 400, padding: '2px 12px 4px 0' }}>
 								{h}
 							</th>
@@ -454,7 +494,7 @@ function ContestReport({
 					</tr>
 				</thead>
 				<tbody>
-					{c.rows.map((r, i) => (
+					{c.knot.rungs.map((r, i) => (
 						<tr
 							key={r.k}
 							onClick={() => onRow(i)}
@@ -463,52 +503,57 @@ function ContestReport({
 								background: i === row ? color.accentSoft : 'transparent',
 							}}
 						>
-							<td style={cell}>{r.k}</td>
-							<td style={cell}>{r.attackers.map(nameOf).join(' ') || '—'}</td>
-							<td style={cell}>
-								{r.defenders.length
-									? r.defenders
-											.map((u) =>
-												r.critical.some((x) => x.unit === u)
-													? `${nameOf(u)}*`
-													: nameOf(u),
-											)
-											.join(' ')
-									: '—'}
+							<td style={cell}>{r.k === 0 ? 'none — take it now' : r.k === 1 ? 'one' : `${r.k}`}</td>
+							<td style={cell}>{r.move ? r.move.text : '—'}</td>
+							{/* participants(k), which is the whole extension: the
+								same fold over a longer list. Defenders the count
+								depends on that owe something elsewhere are starred. */}
+							<td style={{ ...cell, maxWidth: 240 }}>
+								{[...r.participants.attackers, ...r.participants.defenders]
+									.map(nameOf)
+									.join(' ') || '—'}
 							</td>
-							<td style={cell}>{r.fold.value}</td>
-							<td style={cell}>{r.spent}</td>
-							<td style={{ ...cell, fontWeight: 700, color: r.net > 0 ? color.good : color.ink }}>
-								{r.net}
+							<td style={cell}>{material(r.count)}</td>
+							{/* Null is not zero, and the difference is the whole
+								honesty of the table: from two moves of preparation
+								this is a COUNT of who could be there, not a claim
+								about what happens. */}
+							<td
+								style={{
+									...cell,
+									fontWeight: 700,
+									color: r.holds ? color.good : color.ink,
+								}}
+							>
+								{r.survives === null ? 'not a claim — see below' : material(r.survives)}
 							</td>
-							{/* The column the motif vocabulary hides. A fold that pays
-								is worth nothing if the prize walks away while you are
-								building up — which is exactly what a pin prevents. */}
-							<td style={cell}>
-								{r.k === 0
-									? 'no time'
-									: c.escapeCost === null
-										? 'nowhere'
-										: c.escapeCost <= 0
-											? 'yes, free'
-											: `costs ${c.escapeCost}`}
+							<td style={{ ...cell, color: color.ink2 }}>
+								{r.holds ? 'holds' : r.spoilers.length ? SPOILER_WORD[r.spoilers[0].kind] : ''}
 							</td>
 						</tr>
 					))}
 				</tbody>
 			</table>
+			<Note style={{ marginBottom: space.card }}>
+				One move of preparation means <em>one move</em>, for both sides. From two
+				onwards this is a count of who could reach the square, not a claim about
+				what happens — two preparing moves give them two replies, and that is not
+				modelled. See SEE.md §4.
+			</Note>
 
-			{shown.play && (
+			{shownRung && (shownRung.spoilers.length > 0 || shownRung.bestTry) && (
 				<>
 					<h4 style={{ margin: `0 0 ${space.tight}px` }}>
-						If we play {shown.play.move.from}–{shown.play.move.to}, their best answers
+						{shownRung.move
+							? `If we play ${shownRung.move.text}, what they can do about it`
+							: 'What they can do about it'}
 					</h4>
 					<table
-						style={{ borderCollapse: 'collapse', fontSize: text.body, marginBottom: space.card }}
+						style={{ borderCollapse: 'collapse', fontSize: text.body, marginBottom: space.tight }}
 					>
 						<thead>
 							<tr style={{ color: color.ink2, fontSize: text.note, textAlign: 'left' }}>
-								{['their move', 'we then win', 'they win back', 'net', ''].map((h) => (
+								{['their move', 'which of the three', 'we still get', 'why'].map((h) => (
 									<th key={h} style={{ fontWeight: 400, padding: '2px 12px 4px 0' }}>
 										{h}
 									</th>
@@ -516,32 +561,33 @@ function ContestReport({
 							</tr>
 						</thead>
 						<tbody>
-							{[shown.play.defence].filter(Boolean).map((d) => (
-								<tr key={`${d!.from}${d!.to}`}>
-									<td style={cell}>
-										{d!.from}–{d!.to}
-										{d!.check ? '+' : ''}
-									</td>
-									<td style={cell}>{d!.concedes}</td>
-									<td style={cell}>{d!.counter}</td>
-									<td style={{ ...cell, fontWeight: 700 }}>{d!.net}</td>
-									<td style={{ ...cell, color: color.ink2 }}>
-										their best defence
-									</td>
+							{(shownRung.spoilers.length
+								? shownRung.spoilers
+								: [shownRung.bestTry as Spoiler]
+							).map((sp) => (
+								<tr key={sp.move}>
+									<td style={cell}>{sp.move}</td>
+									<td style={cell}>{SPOILER_WORD[sp.kind]}</td>
+									<td style={cell}>{material(sp.leaves)}</td>
+									<td style={{ ...cell, color: color.ink2, maxWidth: 380 }}>{sp.why}</td>
 								</tr>
 							))}
 						</tbody>
 					</table>
 					<Note style={{ marginBottom: space.card }}>
-						Every legal reply is tried, not only the ones that add a defender —
-						moving the prize, breaking the pin, blocking and checking are all just
-						replies. Ranked by <em>net</em>, because a defence that gives material
-						back with interest is not a bad defence.
+						Every legal reply is tried, not only the ones that add a defender.
+						Moving the prize, breaking a pin, blocking and checking are all just
+						replies — and a reply that hands something over and takes more back is
+						not a bad reply, which is why they are ranked by what we are left with
+						rather than by what they concede.
 					</Note>
 				</>
 			)}
 
-			<h4 style={{ margin: `0 0 ${space.tight}px` }}>The exchange count at k = {shown.k}</h4>
+			<h4 style={{ margin: `0 0 ${space.tight}px` }}>
+				The exchange itself
+				{shown.k === 0 ? '' : shown.k === 1 ? ', after one move of preparation' : `, after ${shown.k} moves`}
+			</h4>
 			{shown.fold.steps.length === 0 ? (
 				<Note style={{ marginBottom: space.card }}>Nothing to capture.</Note>
 			) : (
@@ -660,10 +706,20 @@ function UnitTable({ units, attacker }: { units: Unit[]; attacker: string }) {
 	);
 }
 
+/** A unit with a piece glyph, and where it has to go to take part. */
 function nameOf(u: Unit): string {
-	const letter = { pawn: 'P', knight: 'N', bishop: 'B', rook: 'R', queen: 'Q', king: 'K' }[u.role];
-	return u.arrival === 0 ? `${letter}${u.from}` : `${letter}${u.from}→${u.via}`;
+	const glyph = (u.colour === 'white' ? GLYPH : DARK_GLYPH)[u.role];
+	return u.arrival === 0 ? `${glyph}${u.from}` : `${glyph}${u.from}→${u.via}`;
 }
+
+const DARK_GLYPH: Record<string, string> = {
+	pawn: '♟',
+	knight: '♞',
+	bishop: '♝',
+	rook: '♜',
+	queen: '♛',
+	king: '♚',
+};
 
 /**
  * A row of pieces to drag onto the board.

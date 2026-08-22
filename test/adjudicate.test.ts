@@ -19,7 +19,10 @@
 import { describe, it, expect } from 'vitest';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { contest } from '../src/domain/contest';
+import { contest, VALUE } from '../src/domain/contest';
+import { positionFromFen, parseSquare } from '../src/domain/chess';
+import type { Chess } from 'chessops/chess';
+import type { Square } from 'chessops/types';
 import { PRESETS } from '../src/views/labPresets';
 
 const ENGINE = ['/usr/games/stockfish', '/usr/bin/stockfish', '/usr/local/bin/stockfish'].find(
@@ -34,7 +37,7 @@ const ENGINE = ['/usr/games/stockfish', '/usr/bin/stockfish', '/usr/local/bin/st
  * It looks exactly like a completed search returning 0cp, which is how the first
  * version of this file "confirmed" every fixture at once.
  */
-function ask(fen: string, depth = 16): Promise<{ cp: number; best: string }> {
+function ask(fen: string, depth = 16): Promise<{ cp: number; best: string; pv: string }> {
 	return new Promise((resolve, reject) => {
 		const proc = spawn(ENGINE as string);
 		let out = '';
@@ -42,11 +45,14 @@ function ask(fen: string, depth = 16): Promise<{ cp: number; best: string }> {
 			proc.kill();
 			if (e) return reject(e);
 			let cp = 0;
+			let pv = '';
 			for (const line of out.split('\n')) {
 				const m = /score (cp|mate) (-?\d+)/.exec(line);
 				if (m) cp = m[1] === 'mate' ? (Number(m[2]) > 0 ? 10_000 : -10_000) : Number(m[2]);
+				const p = /\bpv ((?:[a-h][1-8][a-h][1-8][qrbn]?\s*)+)/.exec(line);
+				if (p) pv = p[1].trim();
 			}
-			resolve({ cp, best: /bestmove (\S+)/.exec(out)?.[1] ?? '' });
+			resolve({ cp, pv, best: /bestmove (\S+)/.exec(out)?.[1] ?? '' });
 		};
 
 		const timer = setTimeout(() => done(new Error('engine timed out')), 60_000);
@@ -65,6 +71,99 @@ function ask(fen: string, depth = 16): Promise<{ cp: number; best: string }> {
 	});
 }
 
+/**
+ * Does the engine's own line win material AT THIS SQUARE?
+ *
+ * Walk the principal variation to the first capture that lands on the target,
+ * take the material balance there, play out the exchange on that square, and
+ * take it again. Only what happens on the square is counted — attributing a
+ * bishop won two moves earlier to this square is precisely the error the whole
+ * of `knot.ts` exists to avoid, and a referee that makes it cannot detect it.
+ */
+function pvWinsAt(fen: string, pv: string, target: string, plies = 4): boolean {
+	if (!pv) return false;
+	const moves = pv.split(/\s+/);
+	let pos: Chess;
+	try {
+		pos = positionFromFen(fen);
+	} catch {
+		return false;
+	}
+	const mover = pos.turn;
+	const balance = (p: Chess): number => {
+		let w = 0;
+		let b = 0;
+		for (const s of p.board.occupied) {
+			const piece = p.board.get(s);
+			if (!piece || piece.role === 'king') continue;
+			if (piece.color === 'white') w += VALUE[piece.role];
+			else b += VALUE[piece.role];
+		}
+		return mover === 'white' ? w - b : b - w;
+	};
+	const play = (m: string): boolean => {
+		const from = parseSquare(m.slice(0, 2));
+		const to = parseSquare(m.slice(2, 4));
+		if (from === undefined || to === undefined) return false;
+		try {
+			pos.play({ from, to });
+			return true;
+		} catch {
+			return false;
+		}
+	};
+
+	let i = 0;
+	for (; i < moves.length && i < plies; i++) {
+		const to = moves[i].slice(2, 4);
+		if (to === target && pos.board.get(parseSquare(target) as Square) !== undefined) break;
+		if (!play(moves[i])) return false;
+	}
+	if (i >= moves.length || i >= plies) return false;
+
+	const before = balance(pos);
+	if (!play(moves[i])) return false;
+	for (i++; i < moves.length && moves[i].slice(2, 4) === target; i++) {
+		if (!play(moves[i])) return false;
+	}
+	return balance(pos) - before >= 100;
+}
+
+/** Material the side to move nets over the first `plies` of the engine's line. */
+function pvNets(fen: string, pv: string, plies: number): number {
+	if (!pv) return 0;
+	let pos: Chess;
+	try {
+		pos = positionFromFen(fen);
+	} catch {
+		return 0;
+	}
+	const mover = pos.turn;
+	const balance = (p: Chess): number => {
+		let w = 0;
+		let b = 0;
+		for (const s of p.board.occupied) {
+			const piece = p.board.get(s);
+			if (!piece || piece.role === 'king') continue;
+			if (piece.color === 'white') w += VALUE[piece.role];
+			else b += VALUE[piece.role];
+		}
+		return mover === 'white' ? w - b : b - w;
+	};
+	const before = balance(pos);
+	for (const m of pv.split(/\s+/).slice(0, plies)) {
+		const from = parseSquare(m.slice(0, 2));
+		const to = parseSquare(m.slice(2, 4));
+		if (from === undefined || to === undefined) break;
+		try {
+			pos.play({ from, to });
+		} catch {
+			break;
+		}
+	}
+	return balance(pos) - before;
+}
+
 const suite = ENGINE ? describe : describe.skip;
 
 suite('the Lab presets, adjudicated', () => {
@@ -73,23 +172,35 @@ suite('the Lab presets, adjudicated', () => {
 
 		it(`${preset.name}: the engine agrees with the claim`, async () => {
 			const c = contest(preset.fen, preset.target);
-			const { cp: eval0 } = await ask(preset.fen);
+			const { cp, pv, best } = await ask(preset.fen);
 
-			// The presets are sparse positions built around one contest, so the
-			// engine's evaluation of the whole position IS an evaluation of the
-			// claim. This would not hold on a real middlegame, which is why this
-			// test covers fixtures and not games.
-			if (preset.claim === 'wins') {
-				expect(
-					eval0,
-					`${preset.name}: I say ${c.verdict.kind} (${c.verdict.why}), engine says ${eval0}cp`,
-				).toBeGreaterThan(150);
-			} else {
-				expect(
-					eval0,
-					`${preset.name}: I say ${c.verdict.kind} (${c.verdict.why}), engine says ${eval0}cp`,
-				).toBeLessThan(150);
-			}
+			// Adjudicated on the SQUARE, not on the position.
+			//
+			// This test used to compare the engine's whole-board evaluation with
+			// the claim, on the reasoning that a sparse fixture is "about" one
+			// contest. It is not, and the generator proved it: one preset has
+			// White better by 285 centipawns for reasons that have nothing to do
+			// with the square under test, and the old test called that a
+			// disagreement. The engine's opinion about a square is expressed in
+			// its own line — does it capture there, and does the material stay?
+			// A claim that needs a preparing move gets a second route to
+			// agreement, and it is not a loophole — it is the shape of the claim.
+			// When the prize runs from a square it was shielding, the material
+			// changes hands somewhere else: in preset #2 the engine plays the
+			// algorithm's ♙e2–e4, the knight runs, and the QUEEN comes off on d8.
+			// Requiring the capture to land on the target square would mark that
+			// as a disagreement when the two agree completely, including on the
+			// move.
+			const rung = c.knot.rungs.find((r) => r.holds && r.move);
+			const agreesOnPlan =
+				!!rung?.move &&
+				best === `${rung.move.from}${rung.move.to}` &&
+				pvNets(preset.fen, pv, 4) >= 100;
+
+			expect(
+				pvWinsAt(preset.fen, pv, preset.target) || agreesOnPlan,
+				`${preset.name}: I say ${c.verdict.kind} (${c.verdict.why}); engine ${cp}cp, pv ${pv}`,
+			).toBe(preset.claim === 'wins');
 		});
 
 		it(`${preset.name}: my verdict matches the claim`, () => {
@@ -109,12 +220,8 @@ suite('the Lab presets, adjudicated', () => {
 		for (const preset of PRESETS) {
 			if (preset.claim !== 'wins') continue;
 			const c = contest(preset.fen, preset.target);
-			const mine =
-				c.verdict.at === 0
-					? null
-					: c.rows[1]?.play
-						? `${c.rows[1].play.move.from}${c.rows[1].play.move.to}`
-						: null;
+			const rung = c.knot.rungs.find((r) => r.holds && r.move);
+			const mine = c.verdict.at === 0 || !rung?.move ? null : `${rung.move.from}${rung.move.to}`;
 			if (!mine) continue;
 			expect((await ask(preset.fen)).best, `${preset.name}`).toBe(mine);
 		}
