@@ -30,7 +30,7 @@ export type BoardProps = {
 	 * below as a quality ramp: one hue, strong-to-faint, thick-to-thin, so move
 	 * quality is carried by two channels rather than colour alone.
 	 */
-	arrows?: { orig: string; dest: string; brush: string; label?: string }[];
+	arrows?: { orig: string; dest?: string; brush: string; label?: string }[];
 	onMove?: (uci: string) => void;
 	/**
 	 * A square was clicked. Used by the Lab to choose what to inspect; ordinary
@@ -54,6 +54,69 @@ export type BoardProps = {
 	 * a move that was never accepted.
 	 */
 	version?: number;
+};
+
+/**
+ * The graph overlay's palette (DEFICIENCY.md §7, PLAN.md M1f).
+ *
+ * White and Black get different hues rather than two shades of one, because the
+ * question asked of this picture is almost always "whose?" — and a board covered
+ * in one colour at two opacities answers it slowly. Latent edges are the same
+ * hue at low opacity and half the width: present, and visibly not acting.
+ */
+const GRAPH_BRUSHES = {
+	gWhite: { key: 'gWhite', color: '#1f6feb', opacity: 0.55, lineWidth: 6 },
+	gBlack: { key: 'gBlack', color: '#d2691e', opacity: 0.55, lineWidth: 6 },
+	gWhiteX: { key: 'gWhiteX', color: '#1f6feb', opacity: 0.28, lineWidth: 3 },
+	gBlackX: { key: 'gBlackX', color: '#d2691e', opacity: 0.28, lineWidth: 3 },
+	gSense: { key: 'gSense', color: '#8957e5', opacity: 0.5, lineWidth: 4 },
+	// Square facts (PLAN-OVERLAY.md). Amber for a contested square, red for one
+	// only the enemy bears on, violet for the pin family — so hue alone says
+	// which KIND of fact it is, before any reading.
+	gExchange: { key: 'gExchange', color: '#d29922', opacity: 0.75, lineWidth: 5 },
+	gLoose: { key: 'gLoose', color: '#da3633', opacity: 0.8, lineWidth: 5 },
+	gPin: { key: 'gPin', color: '#a371f7', opacity: 0.85, lineWidth: 6 },
+	gPinSoft: { key: 'gPinSoft', color: '#a371f7', opacity: 0.5, lineWidth: 4 },
+	gPinFaint: { key: 'gPinFaint', color: '#a371f7', opacity: 0.3, lineWidth: 3 },
+	// Distance, cool to warm: one ply away is close, four is nearly out of reach.
+	// The number is drawn on the square too — a colour ramp alone is read as
+	// "roughly", and a deadline is not a roughly.
+	gD1: { key: 'gD1', color: '#3fb950', opacity: 0.7, lineWidth: 4 },
+	gD2: { key: 'gD2', color: '#9e6a03', opacity: 0.6, lineWidth: 4 },
+	gD3: { key: 'gD3', color: '#bd561d', opacity: 0.5, lineWidth: 4 },
+	gD4: { key: 'gD4', color: '#8b949e', opacity: 0.4, lineWidth: 4 },
+	// A square on every minimal route: block it and the journey lengthens.
+	gGate: { key: 'gGate', color: '#f0883e', opacity: 0.9, lineWidth: 7 },
+	// The ledger's rows (M3f). Amber for a debt owed now, faint for one that is
+	// latent — recorded and not yet collectable. A latent row is drawn rather
+	// than hidden, because hiding it is what made races invisible.
+	gOwed: { key: 'gOwed', color: '#ffa657', opacity: 0.85, lineWidth: 6 },
+	gOwedX: { key: 'gOwedX', color: '#ffa657', opacity: 0.35, lineWidth: 3 },
+	// Γ (M4). One hue per discharge type, per AMEND-2-ARRIVES §1's table, and the
+	// `X` variant for a cover that needs more than one tempo — the same live and
+	// latent convention the attack layers use, because a cost-3 cover is exactly
+	// as real and exactly as not-yet-acting as a blocked x-ray.
+	gCovEvade: { key: 'gCovEvade', color: '#3fb950', opacity: 0.8, lineWidth: 5 },
+	gCovEvadeX: { key: 'gCovEvadeX', color: '#3fb950', opacity: 0.3, lineWidth: 3 },
+	gCovCapture: { key: 'gCovCapture', color: '#f85149', opacity: 0.8, lineWidth: 5 },
+	gCovCaptureX: { key: 'gCovCaptureX', color: '#f85149', opacity: 0.3, lineWidth: 3 },
+	gCovBlock: { key: 'gCovBlock', color: '#58a6ff', opacity: 0.8, lineWidth: 5 },
+	gCovBlockX: { key: 'gCovBlockX', color: '#58a6ff', opacity: 0.3, lineWidth: 3 },
+	gCovDefend: { key: 'gCovDefend', color: '#2dd4bf', opacity: 0.8, lineWidth: 5 },
+	gCovDefendX: { key: 'gCovDefendX', color: '#2dd4bf', opacity: 0.3, lineWidth: 3 },
+	// An obligation with no discharge in time. An absence cannot be an arrow.
+	gUncovered: { key: 'gUncovered', color: '#da3633', opacity: 0.95, lineWidth: 8 },
+	// Couplings (M5). The piece doing two jobs is the loudest thing on the board
+	// because §6.6 says it is the thing to look for: "not the threatened piece —
+	// the defender that cannot be in two places."
+	gTwoJobs: { key: 'gTwoJobs', color: '#e3b341', opacity: 0.95, lineWidth: 7 },
+	// A resolution coupling, by direction: green where running one chain OPENS
+	// another, blue where it closes it. Cause to effect.
+	gOpens: { key: 'gOpens', color: '#56d364', opacity: 0.7, lineWidth: 5 },
+	gCloses: { key: 'gCloses', color: '#79c0ff', opacity: 0.7, lineWidth: 5 },
+	// Every exchange square, faintly, so a coupling reads as a relation between
+	// two of them rather than a fact about two arbitrary squares.
+	gChain: { key: 'gChain', color: '#8b949e', opacity: 0.3, lineWidth: 3 },
 };
 
 export function Board({
@@ -88,6 +151,20 @@ export function Board({
 	const lastVersion = useRef<number>(-1);
 	const lastMoveKey = lastMove ? lastMove.join('') : '';
 	const arrowsKey = arrows.map((a) => `${a.orig}${a.dest}${a.brush}${a.label ?? ''}`).join(',');
+	// Built once, from the props, for both the initial config and the update
+	// effect below. Two copies of this mapping is how a shape type gets supported
+	// in one path and silently dropped in the other.
+	const autoShapes = arrows.map((a) => ({
+		orig: a.orig as Key,
+		// A shape with no destination is a circle on its origin. The graph overlay
+		// needs it: "this square's occupancy changes an edge" is a fact about the
+		// square, and an arrow would invent a direction the fact does not have.
+		...(a.dest ? { dest: a.dest as Key } : {}),
+		brush: a.brush,
+		// Chessground draws this at the arrow head. Putting the number on the board
+		// means the arrow's weight and its value are read in one place.
+		...(a.label ? { label: { text: a.label } } : {}),
+	}));
 
 	useEffect(() => {
 		if (!ref.current) return;
@@ -112,6 +189,7 @@ export function Board({
 				enabled: false,
 				brushes: {
 					...QUALITY_BRUSHES,
+					...GRAPH_BRUSHES,
 				},
 			},
 			events: {
@@ -224,15 +302,7 @@ export function Board({
 			selectable: { enabled: interactive || editable },
 			drawable: {
 				enabled: false,
-				autoShapes: arrows.map((a) => ({
-					orig: a.orig as Key,
-					dest: a.dest as Key,
-					brush: a.brush,
-					// Chessground draws this at the arrow head. Putting the evaluation
-					// on the board means the arrow's weight and its actual value are
-					// read in one place, rather than eye-tracking to a side list.
-					...(a.label ? { label: { text: a.label } } : {}),
-				})),
+				autoShapes,
 			},
 		});
 		// `version` is in here as well as in the position effect, and it has to be.
@@ -244,6 +314,19 @@ export function Board({
 		// simply stop accepting moves. That is the "I can't move on this card" bug.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [fen, orientation, interactive, editable, movableColor, arrowsKey, version, size]);
+
+	// Shapes, on their own, through the call chessground provides for them.
+	//
+	// They were riding along inside the `set()` above, which merges config and
+	// redraws the board but leaves the drawable layer holding its first contents.
+	// The symptom was an overlay frozen on whatever it drew first — including
+	// refusing to clear when the layer was switched off.
+	useEffect(() => {
+		api.current?.setAutoShapes(autoShapes);
+		// `arrowsKey` is the dependency rather than `autoShapes`, which is a fresh
+		// array every render and would make this fire on every keystroke elsewhere.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [arrowsKey, version]);
 
 	// What chessground ITSELF believes, as opposed to what we asked for. The two
 	// diverging is the whole class of "the board looks right but will not move".
@@ -313,6 +396,16 @@ const QUALITY_BRUSHES = {
 	q2: { key: 'q2', color: '#4aa877', opacity: 0.65, lineWidth: 9 },
 	q3: { key: 'q3', color: '#86bfa2', opacity: 0.5, lineWidth: 7 },
 	q4: { key: 'q4', color: '#b9d6c8', opacity: 0.4, lineWidth: 5 },
+	/**
+	 * The move that was just played, drawn in grey rather than anywhere on the
+	 * quality ramp.
+	 *
+	 * The ramp is one hue precisely so that position in it means quality; a past
+	 * move has no quality being asserted about it, and borrowing `q4` for it
+	 * would say "this was a poor move" to anyone reading the board the way the
+	 * ramp teaches them to.
+	 */
+	past: { key: 'pa', color: '#7d7d7d', opacity: 0.55, lineWidth: 6 },
 };
 
 /** True if moving orig->dest is a pawn reaching the last rank. */

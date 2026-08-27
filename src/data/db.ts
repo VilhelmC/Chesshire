@@ -105,6 +105,29 @@ export type ImportedGameRow = {
 	ourColour?: 'w' | 'b';
 };
 
+/**
+ * A note written in the Lab, against one ply of one puzzle.
+ *
+ * Kept in the browser because that is where it is written, and exported to a
+ * file because that is where it is useful: a document in the repo is something
+ * both of us can read.
+ */
+export type LabNote = {
+	/** `${puzzleId}:${ply}` — the position the note is about. */
+	id: string;
+	puzzleId: string;
+	ply: number;
+	text: string;
+	updatedAt: number;
+};
+
+/** A file the app keeps up to date on disk. See data/fileLink.ts. */
+export type LinkedHandle = {
+	id: string;
+	/** FileSystemFileHandle — typed as unknown so this file stays DOM-agnostic. */
+	handle: unknown;
+};
+
 export class OffbookDb extends Dexie {
 	nodes!: Table<RepertoireNode, string>;
 	drills!: Table<Drill, string>;
@@ -118,6 +141,8 @@ export class OffbookDb extends Dexie {
 	session!: Table<SavedSession, string>;
 	mistakes!: Table<MistakeCard, string>;
 	imported!: Table<ImportedGameRow, string>;
+	labNotes!: Table<LabNote, string>;
+	handles!: Table<LinkedHandle, string>;
 
 	constructor() {
 		super('offbook');
@@ -144,6 +169,19 @@ export class OffbookDb extends Dexie {
 		});
 		this.version(6).stores({
 			imported: 'id, platform, playedAt',
+		});
+		this.version(7).stores({
+			// Keyed by puzzle AND ply: a note belongs to a position, not to a
+			// puzzle, and the whole point is knowing which move it was written
+			// about.
+			labNotes: 'id, puzzleId, updatedAt',
+		});
+		this.version(8).stores({
+			// A FileSystemFileHandle is structured-cloneable, so IndexedDB can keep
+			// it and the file picker becomes a once-ever event rather than a
+			// once-per-session one. localStorage cannot: it stringifies, and a
+			// handle stringifies to "[object Object]".
+			handles: 'id',
 		});
 		// AnswerRow gained `path` (the move sequence, replacing `lineIds`) without
 		// a version bump: it is not an index, and Dexie stores undeclared fields

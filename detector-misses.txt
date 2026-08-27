@@ -1,0 +1,113 @@
+# Detector failures — from the Lab's own 1031 puzzles, scored by the shipped search
+
+https://lichess.org/training/KSeRW   ply 11   rated 2431
+  7r/Q4pp1/R2bk2p/3p2q1/1P2P3/2P2P1b/6nP/1N1R2K1 w - - 0 1
+  puzzle plays a6d6 (engine 555, detector ranks it 4/37); detector plays e4d5 (engine 0) — gap 555cp
+  themes: attraction fork
+
+https://lichess.org/training/Uqazm   ply 3   rated 2456
+  r3b1k1/p1p2Rpp/2pq4/3pr1PQ/3N4/2P5/P1P3PP/5RK1 w - - 0 1
+  puzzle plays f7f8 (engine 454, detector ranks it 11/46); detector plays d4c6 (engine -239) — gap 693cp
+  themes: quietMove
+
+https://lichess.org/training/gDsoy   ply 1   rated 2460
+  r4q2/bb1k1pN1/5Q2/1pp1P3/5p2/2P4P/1Pr2PP1/4R1K1 w - - 0 1
+  puzzle plays e5e6 (engine 162, detector ranks it 25/37); detector plays f6f5 (engine -528) — gap 690cp
+  themes: intermezzo pin
+
+https://lichess.org/training/bPZ7h   ply 1   rated 2285
+  r1bqr1k1/1pp2ppp/p1nb4/8/2B1Q3/2B2N2/P4PPP/3R1RK1 w - - 0 1
+  puzzle plays c4f7 (engine 304, detector ranks it 18/60); detector plays f3e5 (engine -233) — gap 537cp
+  themes: deflection
+
+https://lichess.org/training/Xuqli   ply 3   rated 2220
+  1r6/p5P1/P4P2/3k2K1/8/1pp5/4R3/8 b - - 0 1
+  puzzle plays c3c2 (engine 542, detector ranks it 2/18); detector plays b3b2 (engine -286) — gap 828cp
+  themes: advancedPawn
+
+https://lichess.org/training/xRlrE   ply 1   rated 2144
+  1r4k1/6p1/7p/Q4p2/2Pqn3/P1n2N2/5PPP/R3R1K1 b - - 0 1
+  puzzle plays d4f2 (engine 200, detector ranks it 2/49); detector plays c3e2 (engine -166) — gap 366cp
+  themes: quietMove
+
+https://lichess.org/training/PsyHA   ply 1   rated 2180
+  r4rk1/p4p1p/b1pp2pQ/2p3P1/4PpP1/2NP1R2/PqP4P/R6K w - - 0 1
+  puzzle plays f3h3 (engine 196, detector ranks it 11/33); detector plays a1b1 (engine -418) — gap 614cp
+  themes: defensiveMove discoveredAttack quietMove sacrifice
+
+https://lichess.org/training/ymXvr   ply 1   rated 2795
+  r1b1k2r/ppppbppp/5n1q/8/2P5/1PBB2P1/P4P1P/2RQR1K1 w - - 0 1
+  puzzle plays e1e7 (engine 166, detector ranks it 41/44); detector plays d1e2 (engine -75) — gap 241cp
+  themes: attraction clearance quietMove sacrifice
+
+https://lichess.org/training/ymXvr   ply 7   rated 2795
+  r1b2k1r/pppp1p1p/5n1q/6p1/2P5/1PBB2P1/P3QP1P/4R1K1 w - - 0 1
+  puzzle plays e2b2 (engine 318, detector ranks it 15/45); detector plays e2e5 (engine 0) — gap 318cp
+  themes: attraction clearance quietMove sacrifice
+
+https://lichess.org/training/Kuuvd   ply 1   rated 2089
+  7k/5p1p/2Npr2q/Q3p2b/P3Pp2/1P1BbPr1/2P1R1PP/5R1K b - - 0 1
+  puzzle plays h5f3 (engine 107, detector ranks it 18/33); detector plays g3g8 (engine -237) — gap 344cp
+  themes: pin
+
+https://lichess.org/training/Kuuvd   ply 3   rated 2089
+  3Q3k/5p1p/2Npr2q/4p3/P3Pp2/1P1Bbbr1/2P1R1PP/5R1K b - - 0 1
+  puzzle plays h8g7 (engine 200, detector ranks it 2/4); detector plays g3g8 (engine -9) — gap 209cp
+  themes: pin
+
+https://lichess.org/training/5tbgO   ply 1   rated 2374
+  8/R7/pp4rk/2p5/8/P6P/5PPK/8 b - - 0 1
+  puzzle plays g6c6 (engine 273, detector ranks it 7/15); detector plays b6b5 (engine -145) — gap 418cp
+  themes: quietMove
+
+https://lichess.org/training/knh7a   ply 3   rated 2244
+  8/8/8/4p2p/5P2/5k2/8/3K4 w - - 0 1
+  puzzle plays f4f5 (engine 696, detector ranks it 2/6); detector plays f4e5 (engine 0) — gap 696cp
+  themes: advancedPawn promotion quietMove
+
+https://lichess.org/training/ScNio   ply 3   rated 2091
+  5rk1/3q2p1/p1P2p1p/7Q/1P6/P7/3p1PPP/3R2K1 b - - 0 1
+  puzzle plays f8e8 (engine 405, detector ranks it 13/29); detector plays d7c6 (engine 0) — gap 405cp
+  themes: advancedPawn quietMove
+
+https://lichess.org/training/5SOAW   ply 3   rated 2132
+  rq2r1k1/5pp1/p7/3n1BpQ/1Pp5/4P3/PP3PP1/2K4R b - - 0 1
+  puzzle plays g8f8 (engine 279, detector ranks it 5/36); detector plays f7f6 (engine -403) — gap 682cp
+  themes: defensiveMove hangingPiece
+
+https://lichess.org/training/zhAbL   ply 3   rated 2248
+  6k1/4bppp/p1b1pn2/q2pB3/P2P4/1Q2P3/NP2BPPP/6K1 b - - 0 1
+  puzzle plays a5e1 (engine 242, detector ranks it 9/33); detector plays c6a4 (engine -146) — gap 388cp
+  themes: clearance fork pin
+
+https://lichess.org/training/zhAbL   ply 7   rated 2248
+  6k1/4bppp/p1b1p3/3pB3/P2Pn3/4P3/NPQ2PPP/4qBK1 b - - 0 1
+  puzzle plays c6a4 (engine 258, detector ranks it 3/44); detector plays e4d2 (engine 37) — gap 221cp
+  themes: clearance fork pin
+
+https://lichess.org/training/Oa3vz   ply 1   rated 1903
+  8/4p3/6P1/p1p1kP2/8/3KN3/PP6/7r w - - 0 1
+  puzzle plays e3g4 (engine 428, detector ranks it 5/18); detector plays g6g7 (engine -200) — gap 628cp
+  themes: advancedPawn
+
+https://lichess.org/training/kGcrB   ply 3   rated 2392
+  q4rk1/2pnb1p1/2n1p1Pp/r2pP3/2bP1P2/PpN1BN2/1P1Q4/1K1R1B1R w - - 0 1
+  puzzle plays h1h6 (engine 201, detector ranks it 36/38); detector plays f1c4 (engine -53) — gap 254cp
+  themes: sacrifice
+
+https://lichess.org/training/VREdE   ply 3   rated 1582
+  8/8/p2Pk3/1p2P3/1P3pPp/5B1P/r7/6K1 w - - 0 1
+  puzzle plays f3d5 (engine 410, detector ranks it 13/13); detector plays f3d1 (engine -628) — gap 1038cp
+  themes: advancedPawn sacrifice
+
+https://lichess.org/training/jSfmM   ply 1   rated 2517
+  r2q1r2/1b1nppk1/p2p1np1/1p5p/2p1P2P/2PPNN1R/PP1QBPP1/R3K3 w - - 0 1
+  puzzle plays e3f5 (engine 349, detector ranks it 34/35); detector plays e4e5 (engine -151) — gap 500cp
+  themes: sacrifice
+
+https://lichess.org/training/mjrUe   ply 5   rated 2570
+  1r2r1k1/p3Pppp/3p4/1q4B1/1p6/2P1Q3/P4PPP/2KR3R w - - 0 1
+  puzzle plays c3c4 (engine 174, detector ranks it 28/44); detector plays d1d6 (engine -90) — gap 264cp
+  themes: advancedPawn defensiveMove
+
+# 22 plies from 19 puzzles with a failing solver ply

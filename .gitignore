@@ -4,3 +4,9 @@ public/engine/
 .DS_Store
 *.local
 .shots/
+
+# Puzzle database — 300MB, downloaded from database.lichess.org, not committed.
+# scripts/puzzle-sample.mjs regenerates data/puzzle_sample.csv from it.
+data/lichess_db_puzzle.csv.zst
+data/*.csv
+!data/puzzle_sample.csv

@@ -38,7 +38,19 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	const [queue, setQueue] = useState<MistakeCard[]>([]);
 	const [current, setCurrent] = useState<MistakeCard | null>(null);
 	const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+	/**
+	 * THE ANSWER IS ON SCREEN. Only the reveal button sets this.
+	 *
+	 * It used to mean two things at once and that is the bug Will hit: "when I
+	 * click 'show options' the 'show solution' button is greyed out and becomes
+	 * unclickable — that's annoying and wrong behaviour." Quite. `showOptions`
+	 * set `reveal` because using help stops the card counting, and the reveal
+	 * button is disabled on `reveal`, so asking for one kind of help withdrew the
+	 * other. The two facts are now separate fields.
+	 */
 	const [reveal, setReveal] = useState(false);
+	/** Help of ANY kind was used, so a correct answer no longer counts. */
+	const [helped, setHelped] = useState(false);
 	const [loaded, setLoaded] = useState(false);
 	const [done, setDone] = useState(0);
 	const [boardVersion, setBoardVersion] = useState(0);
@@ -79,6 +91,7 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 			position: describePosition(current?.fen),
 			boardVersion,
 			reveal,
+			helped,
 			feedback,
 			queueLength: queue.length,
 			answeredThisSession: done,
@@ -138,8 +151,10 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		setBusy(true);
 		try {
 			setCandidates(await candidateMoves(current.fen, current.ourColour, 5));
-			// Using help means the answer no longer counts, exactly as in the trainer.
-			setReveal(true);
+			// Using help means the answer no longer counts, exactly as in the trainer
+			// — but it does not mean the answer has been SHOWN. Weighted options are a
+			// hint; the solution is still a separate thing to ask for.
+			setHelped(true);
 		} catch (e) {
 			setFeedback({ ok: false, text: (e as Error).message });
 		} finally {
@@ -218,7 +233,10 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 				id: 'reveal',
 				title: 'Show me the move (stops this card counting)',
 				icon: 'reveal',
-				onClick: () => setReveal(true),
+				onClick: () => {
+					setReveal(true);
+					setHelped(true);
+				},
 				disabled: !current || reveal,
 			},
 			{
@@ -236,6 +254,7 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		setCurrent(fromQueue[0] ?? null);
 		setFeedback(null);
 		setReveal(false);
+		setHelped(false);
 		setCandidates(null);
 		// Back to the position being asked about. Carrying a preview across cards
 		// would show one card's history under another card's question.
@@ -252,7 +271,9 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		// Not string equality — a card whose answer is castling was stored with
 		// chessops' king-takes-rook spelling and could never be answered.
 		const correct = sameMove(current.fen, uci, current.expectedUci);
-		const updated = answer(current, correct && !reveal, Date.now());
+		// ANY help, not only the revealed answer — the weighted-options list names
+		// the move too. `reveal` is about what is on screen; `helped` is about score.
+		const updated = answer(current, correct && !helped, Date.now());
 		await saveCard(updated);
 		setCards((cs) => cs.map((c) => (c.id === updated.id ? updated : c)));
 
@@ -266,8 +287,8 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		if (correct) {
 			setFeedback({
 				ok: true,
-				text: reveal
-					? `${san} — correct, but you were shown it. The card stays in the deck.`
+				text: helped
+					? `${san} — correct, but you used help. The card stays in the deck.`
 					: updated.retired
 						? `${san} — correct ${RETIRE_STREAK} times running. Retired.`
 						: `${san} — correct. ${RETIRE_STREAK - updated.streak} more to retire it.`,
@@ -275,7 +296,7 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 			setDone((d) => d + 1);
 			// Correct answers leave the queue; a shown one goes to the back.
 			const rest = queue.slice(1);
-			setTimeout(() => next(reveal ? [...rest, updated] : rest), 900);
+			setTimeout(() => next(helped ? [...rest, updated] : rest), 900);
 		} else {
 			// Straight back to the same card.
 			setBoardVersion((v) => v + 1);
@@ -327,24 +348,28 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 						version={boardVersion}
 						actions={actions()}
 						busy={busy}
-						arrows={
-							candidates
-								? candidates.map((c) => ({
-										orig: c.uci.slice(0, 2),
-										dest: c.uci.slice(2, 4),
-										brush: brushForGrade(c.grade),
-										label: `${c.cp > 0 ? '+' : ''}${(c.cp / 100).toFixed(1)}`,
-									}))
-								: reveal
-									? [
-											{
-												orig: current.expectedUci.slice(0, 2),
-												dest: current.expectedUci.slice(2, 4),
-												brush: 'green',
-											},
-										]
-									: []
-						}
+						// BOTH KINDS OF HELP CAN BE ON SCREEN AT ONCE, and the solution is
+						// drawn last so it sits on top of the weighted options rather than
+						// being replaced by them. This used to be an either/or, which is
+						// the same conflation as the button being greyed out: asking for
+						// options meant you could not also be shown the move.
+						arrows={[
+							...(candidates ?? []).map((c) => ({
+								orig: c.uci.slice(0, 2),
+								dest: c.uci.slice(2, 4),
+								brush: brushForGrade(c.grade),
+								label: `${c.cp > 0 ? '+' : ''}${(c.cp / 100).toFixed(1)}`,
+							})),
+							...(reveal
+								? [
+										{
+											orig: current.expectedUci.slice(0, 2),
+											dest: current.expectedUci.slice(2, 4),
+											brush: 'green',
+										},
+									]
+								: []),
+						]}
 					>
 						<div style={{ marginTop: 10, minHeight: 96 }}>
 							{brokenReason(current) ? (

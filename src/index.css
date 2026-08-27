@@ -160,3 +160,11 @@ body {
 		opacity: 0.7;
 	}
 }
+
+
+/* The graph overlay's latent edges are drawn dashed: present, and visibly not
+   acting. See PLAN-OVERLAY.md. */
+.cg-shapes line[marker-end="url(#arrowhead-gWhiteX)"],
+.cg-shapes line[marker-end="url(#arrowhead-gBlackX)"] {
+	stroke-dasharray: 0.1 0.09;
+}

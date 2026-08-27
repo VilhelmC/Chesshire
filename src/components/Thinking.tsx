@@ -49,7 +49,20 @@ export function Thinking({
 						borderRadius: '50%',
 						background: '#1565c0',
 						display: 'inline-block',
-						animation: show ? 'schackal-pulse 1.1s ease-in-out infinite' : 'none',
+						// LONGHAND ONLY, NEVER THE SHORTHAND BESIDE IT.
+						//
+						// This was `animation: '…'` plus `animationDelay`, and React warns on
+						// every rerender that changes one: "Updating a style property during
+						// rerender (animation) when a conflicting property is set
+						// (animationDelay) can lead to styling bugs." It is not a false alarm
+						// — the shorthand RESETS `animation-delay` to zero, so whichever of
+						// the two React happens to write last decides whether the three dots
+						// are staggered or move as one. It looked right only because the
+						// write order happened to be stable until `show` started toggling.
+						animationName: show ? 'schackal-pulse' : 'none',
+						animationDuration: '1.1s',
+						animationTimingFunction: 'ease-in-out',
+						animationIterationCount: 'infinite',
 						// Staggered, so the group reads as one travelling wave.
 						animationDelay: `${i * 0.16}s`,
 					}}
@@ -85,7 +98,13 @@ export function ThinkingBar({ show = true, width }: { show?: boolean; width?: nu
 					height: '100%',
 					background: '#1565c0',
 					borderRadius: 2,
-					animation: show ? 'schackal-sweep 1.2s ease-in-out infinite' : 'none',
+					// Longhand here too. Nothing sets a delay beside it today, but a
+					// shorthand that silently zeroes every other `animation-*` is a trap
+					// for whoever adds one.
+					animationName: show ? 'schackal-sweep' : 'none',
+					animationDuration: '1.2s',
+					animationTimingFunction: 'ease-in-out',
+					animationIterationCount: 'infinite',
 				}}
 			/>
 		</div>

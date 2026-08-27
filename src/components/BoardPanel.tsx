@@ -28,6 +28,33 @@ const MAX_BOARD = 520;
 
 const GAP = 10;
 
+/**
+ * How big the board should be here.
+ *
+ * Extracted so that every board in the app is the same size in the same space.
+ * The Lab hardcoded 420 and sat visibly smaller than Train beside it, which is
+ * the kind of difference that reads as a bug in the app rather than a choice.
+ *
+ * `reserved` is horizontal space the caller has already spent — the evaluation
+ * bar, in BoardPanel's case, and nothing in the Lab's.
+ */
+export function useBoardSize(reserved = 0): [React.RefObject<HTMLDivElement>, number] {
+	const [ref, available] = useMeasure<HTMLDivElement>();
+	const vp = useViewport();
+	// Height binds only in landscape: a phone turned sideways has 393px of it,
+	// and a board sized purely from the width puts its own controls off-screen.
+	const chrome = vp.phone ? 250 : 200;
+	const byHeight = Math.max(MIN_BOARD, vp.height - chrome);
+	// `available === 0` means "not measured yet", not "no room". Rendering a
+	// zero-width board for a frame makes chessground animate up from nothing.
+	const size = available
+		? clamp(Math.min(available - reserved, byHeight), MIN_BOARD, MAX_BOARD)
+		: vp.phone
+			? MIN_BOARD
+			: 420;
+	return [ref, size];
+}
+
 export function BoardPanel({
 	fen,
 	ourColour,
@@ -58,27 +85,12 @@ export function BoardPanel({
 	note?: string;
 	children?: React.ReactNode;
 }) {
-	const [ref, available] = useMeasure<HTMLDivElement>();
 	const vp = useViewport();
-
 	// Narrower on a phone, but not so narrow that the number clips: "+0.3" at the
 	// smallest legible weight needs about 20px, and a bar showing "+0.." is worse
 	// than one 6px wider.
 	const barWidth = vp.phone ? 24 : 30;
-
-	// Height matters as much as width, and only in landscape does it bind: a
-	// phone turned sideways has 393px of height, and a board sized purely from
-	// the width would put its own controls off the bottom of the screen.
-	const chrome = vp.phone ? 250 : 200;
-	const byHeight = Math.max(MIN_BOARD, vp.height - chrome);
-
-	// `available === 0` means "not measured yet", not "no room". Rendering a
-	// zero-width board for a frame makes chessground animate up from nothing.
-	const size = available
-		? clamp(Math.min(available - barWidth - GAP, byHeight), MIN_BOARD, MAX_BOARD)
-		: vp.phone
-			? MIN_BOARD
-			: 420;
+	const [ref, size] = useBoardSize(barWidth + GAP);
 
 	return (
 		<div ref={ref} style={{ width: '100%', maxWidth: MAX_BOARD + barWidth + GAP }}>

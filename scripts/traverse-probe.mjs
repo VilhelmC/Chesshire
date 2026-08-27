@@ -1,0 +1,33 @@
+// What the traversal says, read before anything is asserted about it.
+import { writeFileSync, unlinkSync, mkdtempSync, readFileSync } from 'node:fs';
+import { build as esb } from 'esbuild';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+const d = mkdtempSync(join(tmpdir(), 'tp-'));
+const e = join(process.cwd(), '.probe-entry.ts');
+writeFileSync(e, `export { complex, material } from './src/domain/complex';
+export { gamma } from './src/domain/gamma';
+export { traverse, deficient, say } from './src/domain/traverse';
+export { positionFromFen } from './src/domain/chess';
+export { makeSquare } from 'chessops/util';`);
+const o = join(d, 'b.mjs');
+await esb({ entryPoints: [e], bundle: true, format: 'esm', outfile: o, platform: 'node', logLevel: 'silent' });
+const M = await import(o); unlinkSync(e);
+const sq = (s) => M.makeSquare(s);
+const look = (label, fen) => {
+	const pos = M.positionFromFen(fen);
+	const c = M.complex(pos);
+	const t = M.traverse(c);
+	console.log(`\n=== ${label}   (${pos.turn} to move)`);
+	console.log(`   material now ${M.material(pos.board)}  ->  after the traversal ${t.value}`);
+	for (const o2 of c.obligations) console.log(`   row ${sq(o2.square)} w=${o2.weight} τ=${o2.deadline} to ${o2.claimant}`);
+	console.log(`   ${M.say(c, t)}`);
+};
+look('a hanging rook, its owner to move', '4k3/8/8/4r3/8/8/8/4RK2 b - - 0 1');
+look('the same, the other side to move', '4k3/8/8/4r3/8/8/8/4RK2 w - - 0 1');
+look('a knight forking king and rook', '4k3/8/8/8/8/8/2n5/R3K3 w - - 0 1');
+look('a knight forking two rooks', '4k3/2R3R1/4n3/8/8/8/8/4K3 w - - 0 1');
+look('checkmate', 'r4rnQ/ppp2pk1/6q1/3p2P1/3P4/2P4R/PP4P1/5RK1 b - - 6 24');
+look('a race the king answers in time', '8/8/8/P7/4k3/8/8/6K1 b - - 0 1');
+look('the same race, one tempo short', '8/8/8/P7/4k3/8/8/6K1 w - - 0 1');
+look('quiet opening', 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');

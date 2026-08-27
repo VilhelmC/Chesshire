@@ -1,0 +1,271 @@
+https://lichess.org/training/eCTH5   ply 1   rated 2853
+  1r3r1k/1b4p1/3b4/2p2p1p/4p3/1B1P3N/Pq2PQ2/3R1KR1 w - - 0 1
+  puzzle plays g1g5 (engine 100); chain tied, chose d1e1 (engine -324) — gap 424cp
+  chain stopped: 39 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage capturingDefender kingsideAttack middlegame pin veryLong
+
+https://lichess.org/training/eCTH5   ply 5   rated 2853
+  1r5k/1b4p1/3b3r/2p2p1R/4p3/1B1P3N/Pq2PQ2/3R1K2 w - - 0 1
+  puzzle plays f2h4 (engine 357); chain missed, chose f2f5 (engine -459) — gap 816cp
+  chain stopped: 53 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage capturingDefender kingsideAttack middlegame pin veryLong
+
+https://lichess.org/training/iEarY   ply 1   rated 1972
+  r2q1rk1/1pp1bppp/3p4/n2nP2b/8/pPBBQN1P/P1PN1PP1/R4RK1 w - - 0 1
+  puzzle plays e3e4 (engine 472); chain missed, chose d3h7 (engine -91) — gap 563cp
+  chain stopped: 207 on a wide reply set, 0 with nothing coercive, 9 at the ply cap
+  themes: advantage middlegame short
+
+https://lichess.org/training/KSeRW   ply 11   rated 2431
+  7r/Q4pp1/R2bk2p/3p2q1/1P2P3/2P2P1b/6nP/1N1R2K1 w - - 0 1
+  puzzle plays a6d6 (engine 555); chain missed, chose e4d5 (engine 0) — gap 555cp
+  chain stopped: 496 on a wide reply set, 0 with nothing coercive, 251 at the ply cap
+  themes: attraction crushing fork master middlegame veryLong
+
+https://lichess.org/training/jg2HB   ply 1   rated 2429
+  2r1rbk1/2BR1Rp1/7p/1p6/5Q2/7P/6PK/q7 w - - 0 1
+  puzzle plays c7e5 (engine 464); chain missed, chose g2g3 (engine -558) — gap 1022cp
+  chain stopped: 173 on a wide reply set, 0 with nothing coercive, 17 at the ply cap
+  themes: crushing master middlegame veryLong
+
+https://lichess.org/training/FBMWK   ply 1   rated 1949
+  2r3k1/7p/p2p2p1/1p1q1p2/3b4/3Q1RPP/P4PK1/1R1Br3 w - - 0 1
+  puzzle plays d1b3 (engine 562); chain tied, chose b1a1 (engine -528) — gap 1090cp
+  chain stopped: 28 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: crushing discoveredAttack middlegame pin short
+
+https://lichess.org/training/7f8WM   ply 1   rated 1825
+  r1bqk2r/ppp3pp/2n1p3/3p4/1BPPp3/4PN2/PP2BPPP/R2QK2R b - - 0 1
+  puzzle plays e4f3 (engine 262); chain missed, chose c6b4 (engine -95) — gap 357cp
+  chain stopped: 29 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage intermezzo opening veryLong
+
+https://lichess.org/training/UlpKx   ply 1   rated 1738
+  r2q1k1r/pp4pp/3bPn2/4p3/2Q5/2N1B3/P1n2PPP/R2R2K1 w - - 0 1
+  puzzle plays d1d6 (engine 526); chain missed, chose a1b1 (engine -37) — gap 563cp
+  chain stopped: 98 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: crushing long master middlegame pin sacrifice
+
+https://lichess.org/training/VhnmA   ply 1   rated 2325
+  r2q1rk1/pQ1n1ppp/5n2/3p2B1/3Np3/2P1P3/PP3PPP/R3K2R b - - 0 1
+  puzzle plays d7c5 (engine 234); chain tied, chose a7a5 (engine -95) — gap 329cp
+  chain stopped: 23 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage middlegame veryLong
+
+https://lichess.org/training/VhnmA   ply 3   rated 2325
+  r2q1rk1/p4ppp/2Q2n2/2np2B1/3Np3/2P1P3/PP3PPP/R3K2R b - - 0 1
+  puzzle plays a8c8 (engine 236); chain missed, chose c5d3 (engine 18) — gap 218cp
+  chain stopped: 37 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage middlegame veryLong
+
+https://lichess.org/training/6XeCT   ply 1   rated 2252
+  5rk1/5p2/r5pp/pN2R2n/2p4Q/P4q2/BPP4P/R5K1 b - - 0 1
+  puzzle plays h5f4 (engine 574); chain tied, chose f3c6 (engine -397) — gap 971cp
+  chain stopped: 104 on a wide reply set, 0 with nothing coercive, 1 at the ply cap
+  themes: crushing kingsideAttack long middlegame quietMove xRayAttack
+
+https://lichess.org/training/YVxcT   ply 1   rated 1356
+  rn1q1r1k/ppp3bp/4Q1pn/3p4/5P2/N1PB3P/PP4P1/R1B2RK1 b - - 0 1
+  puzzle plays f8e8 (engine 449); chain tied, chose d5d4 (engine 11) — gap 438cp
+  chain stopped: 44 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: crushing master middlegame short trappedPiece
+
+https://lichess.org/training/gDsoy   ply 1   rated 2460
+  r4q2/bb1k1pN1/5Q2/1pp1P3/5p2/2P4P/1Pr2PP1/4R1K1 w - - 0 1
+  puzzle plays e5e6 (engine 162); chain missed, chose f6f5 (engine -528) — gap 690cp
+  chain stopped: 1008 on a wide reply set, 0 with nothing coercive, 318 at the ply cap
+  themes: advantage exposedKing intermezzo middlegame pin veryLong
+
+https://lichess.org/training/orAcb   ply 1   rated 2424
+  3rrk2/pp3n2/3q2Q1/2pbNpP1/3p1P2/1P2P3/PKP5/4RB1R b - - 0 1
+  puzzle plays d6g6 (engine 233); chain missed, chose f7e5 (engine -440) — gap 673cp
+  chain stopped: 38 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage long master masterVsMaster middlegame
+
+https://lichess.org/training/aTd8J   ply 1   rated 1922
+  8/2Q2pkp/1pNr1qp1/p2P4/n7/4rB1P/P5P1/5RK1 w - - 0 1
+  puzzle plays f3d1 (engine 322); chain tied, chose f1b1 (engine -560) — gap 882cp
+  chain stopped: 41 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: crushing middlegame short
+
+https://lichess.org/training/1QPyJ   ply 1   rated 1724
+  1r3rk1/4qppp/pBRb4/7n/3Pp3/PQ2P3/1P3PPP/5RK1 w - - 0 1
+  puzzle plays b3d5 (engine 152); chain tied, chose f1a1 (engine -214) — gap 366cp
+  chain stopped: 48 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage middlegame short
+
+https://lichess.org/training/PdWNx   ply 3   rated 2026
+  4r1k1/p2b2pp/8/3P4/Pp2qp2/4pQ2/2P1R1PP/5RK1 w - - 0 1
+  puzzle plays f3f4 (engine 221); chain tied, chose f1a1 (engine -216) — gap 437cp
+  chain stopped: 27 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage long middlegame
+
+https://lichess.org/training/T5mo2   ply 1   rated 2045
+  2kr4/pp1r1ppp/1qp1p3/4P3/5nP1/1BP1bR2/PP1BQ2P/3RK3 w - - 0 1
+  puzzle plays d2e3 (engine 407); chain missed, chose e2e3 (engine -574) — gap 981cp
+  chain stopped: 31 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage fork middlegame short
+
+https://lichess.org/training/wKGIX   ply 1   rated 2137
+  2rr2k1/5p1p/1pqp1Qp1/p1n1p3/P1PB4/R4P2/5P1P/3R2K1 w - - 0 1
+  puzzle plays d4e5 (engine 446); chain tied, chose d4a1 (engine -343) — gap 789cp
+  chain stopped: 56 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: crushing discoveredAttack long middlegame
+
+https://lichess.org/training/bPZ7h   ply 1   rated 2285
+  r1bqr1k1/1pp2ppp/p1nb4/8/2B1Q3/2B2N2/P4PPP/3R1RK1 w - - 0 1
+  puzzle plays c4f7 (engine 304); chain missed, chose f3e5 (engine -233) — gap 537cp
+  chain stopped: 502 on a wide reply set, 0 with nothing coercive, 152 at the ply cap
+  themes: advantage deflection kingsideAttack middlegame short
+
+https://lichess.org/training/6Pky9   ply 1   rated 2389
+  2r3k1/1p5p/3p1rn1/1B1P4/P4p2/3QqP2/4R2P/R6K b - - 0 1
+  puzzle plays c8c1 (engine 201); chain tied, chose e3d3 (engine 0) — gap 201cp
+  chain stopped: 77 on a wide reply set, 1 with nothing coercive, 6 at the ply cap
+  themes: crushing long middlegame
+
+https://lichess.org/training/6Pky9   ply 5   rated 2389
+  6k1/1p5p/3p1rn1/1B1P4/P4p2/3Q1P2/4R1KP/2q5 b - - 0 1
+  puzzle plays g6e5 (engine 342); chain tied, chose c1a1 (engine 0) — gap 342cp
+  chain stopped: 63 on a wide reply set, 0 with nothing coercive, 27 at the ply cap
+  themes: crushing long middlegame
+
+https://lichess.org/training/W9RYW   ply 1   rated 2274
+  2k1r2r/1ppq1pb1/p1p4p/8/4N3/3P1P2/PPP2P1P/R1B1QRK1 b - - 0 1
+  puzzle plays h8g8 (engine 332); chain tied, chose c6c5 (engine -223) — gap 555cp
+  chain stopped: 39 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage discoveredAttack discoveredCheck middlegame quietMove short
+
+https://lichess.org/training/OjcPs   ply 1   rated 2145
+  rn1r4/1Q3ppk/p3p2q/4Nb2/P2P4/8/1P3P1P/R3K1R1 w - - 0 1
+  puzzle plays e5f7 (engine 242); chain missed, chose b7a8 (engine -264) — gap 506cp
+  chain stopped: 170 on a wide reply set, 0 with nothing coercive, 26 at the ply cap
+  themes: advantage fork long middlegame trappedPiece
+
+https://lichess.org/training/JevZN   ply 1   rated 893
+  1r3rk1/p1p3pp/2Bp4/4p3/1Pn2p2/2P2N2/P4K2/R1B5 w - - 0 1
+  puzzle plays c6d5 (engine 160); chain tied, chose a1b1 (engine -187) — gap 347cp
+  chain stopped: 89 on a wide reply set, 0 with nothing coercive, 205 at the ply cap
+  themes: advantage fork middlegame short
+
+https://lichess.org/training/W2sQ2   ply 3   rated 2034
+  5rk1/1p4bp/2p5/p7/PnP3Q1/BP2q1P1/6BP/3R3K b - - 0 1
+  puzzle plays b4d3 (engine 551); chain missed, chose e3b3 (engine -226) — gap 777cp
+  chain stopped: 72 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: crushing defensiveMove kingsideAttack master middlegame short
+
+https://lichess.org/training/pMx7V   ply 3   rated 1646
+  5rk1/pp3ppp/6q1/2P2n2/3r1B2/5Q2/PPP2PPP/R4RK1 b - - 0 1
+  puzzle plays f5h4 (engine 314); chain tied, chose d4a4 (engine -229) — gap 543cp
+  chain stopped: 101 on a wide reply set, 0 with nothing coercive, 3 at the ply cap
+  themes: advantage fork long middlegame
+
+https://lichess.org/training/xRlrE   ply 1   rated 2144
+  1r4k1/6p1/7p/Q4p2/2Pqn3/P1n2N2/5PPP/R3R1K1 b - - 0 1
+  puzzle plays d4f2 (engine 200); chain missed, chose c3e2 (engine -166) — gap 366cp
+  chain stopped: 257 on a wide reply set, 0 with nothing coercive, 8 at the ply cap
+  themes: crushing long middlegame quietMove
+
+https://lichess.org/training/xRlrE   ply 3   rated 2144
+  1r4k1/6p1/7p/Q4p2/2P1n3/P1n2N2/5qPP/R3R2K b - - 0 1
+  puzzle plays b8b2 (engine 134); chain tied, chose f2c5 (engine -373) — gap 507cp
+  chain stopped: 218 on a wide reply set, 0 with nothing coercive, 12 at the ply cap
+  themes: crushing long middlegame quietMove
+
+https://lichess.org/training/PsyHA   ply 1   rated 2180
+  r4rk1/p4p1p/b1pp2pQ/2p3P1/4PpP1/2NP1R2/PqP4P/R6K w - - 0 1
+  puzzle plays f3h3 (engine 196); chain missed, chose a1b1 (engine -418) — gap 614cp
+  chain stopped: 82 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage defensiveMove discoveredAttack middlegame quietMove sacrifice veryLong
+
+https://lichess.org/training/bIVtN   ply 1   rated 1431
+  5r1k/1p3ppp/p5b1/3Q2R1/1PB4q/P7/5P2/3R2K1 b - - 0 1
+  puzzle plays g6e4 (engine 455); chain tied, chose h4e4 (engine -550) — gap 1005cp
+  chain stopped: 76 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage middlegame short
+
+https://lichess.org/training/pdj9u   ply 1   rated 1464
+  r4rk1/5pp1/p2Q4/8/3PN2p/4PqP1/PP3P1P/R4RK1 b - - 0 1
+  puzzle plays h4h3 (engine 585); chain missed, chose f3e4 (engine -425) — gap 1010cp
+  chain stopped: 64 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: crushing long middlegame
+
+https://lichess.org/training/LkhLW   ply 1   rated 1954
+  3q1rk1/Q3bppp/3pp3/2n5/3N4/3nB3/P4PPP/1NR3K1 w - - 0 1
+  puzzle plays d4c6 (engine 319); chain tied, chose c1d1 (engine -191) — gap 510cp
+  chain stopped: 44 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage long middlegame
+
+https://lichess.org/training/ymXvr   ply 1   rated 2795
+  r1b1k2r/ppppbppp/5n1q/8/2P5/1PBB2P1/P4P1P/2RQR1K1 w - - 0 1
+  puzzle plays e1e7 (engine 166); chain missed, chose c1a1 (engine -248) — gap 414cp
+  chain stopped: 177 on a wide reply set, 0 with nothing coercive, 108 at the ply cap
+  themes: attraction clearance crushing opening quietMove sacrifice veryLong
+
+https://lichess.org/training/ymXvr   ply 3   rated 2795
+  r1b4r/ppppkppp/5n1q/8/2P5/1PBB2P1/P4P1P/2RQ2K1 w - - 0 1
+  puzzle plays d1e2 (engine 308); chain tied, chose c1a1 (engine -467) — gap 775cp
+  chain stopped: 771 on a wide reply set, 0 with nothing coercive, 410 at the ply cap
+  themes: attraction clearance crushing opening quietMove sacrifice veryLong
+
+https://lichess.org/training/ymXvr   ply 5   rated 2795
+  r1b2k1r/pppp1ppp/5n1q/8/2P5/1PBB2P1/P3QP1P/2R3K1 w - - 0 1
+  puzzle plays c1e1 (engine 262); chain tied, chose c1a1 (engine -440) — gap 702cp
+  chain stopped: 194 on a wide reply set, 0 with nothing coercive, 40 at the ply cap
+  themes: attraction clearance crushing opening quietMove sacrifice veryLong
+
+https://lichess.org/training/ymXvr   ply 7   rated 2795
+  r1b2k1r/pppp1p1p/5n1q/6p1/2P5/1PBB2P1/P3QP1P/4R1K1 w - - 0 1
+  puzzle plays e2b2 (engine 318); chain tied, chose e1a1 (engine -308) — gap 626cp
+  chain stopped: 614 on a wide reply set, 0 with nothing coercive, 171 at the ply cap
+  themes: attraction clearance crushing opening quietMove sacrifice veryLong
+
+https://lichess.org/training/cji1o   ply 1   rated 2330
+  5rrk/ppb4n/2p1q1bQ/3pPN2/3P4/5R1P/PPB2PP1/R5K1 w - - 0 1
+  puzzle plays f5h4 (engine 213); chain tied, chose f5g3 (engine -255) — gap 468cp
+  chain stopped: 55 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage exposedKing kingsideAttack long middlegame sacrifice
+
+https://lichess.org/training/zmIEk   ply 1   rated 2658
+  r2qk2r/pQpnbppp/5n2/4p1B1/2B3b1/1P1P1P2/P1P3PP/RN2K1NR b - - 0 1
+  puzzle plays d7c5 (engine 416); chain tied, chose g4f5 (engine -92) — gap 508cp
+  chain stopped: 44 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage defensiveMove long middlegame
+
+https://lichess.org/training/zmIEk   ply 3   rated 2658
+  r2qk2r/p1p1bppp/5n2/1Qn1p1B1/2B3b1/1P1P1P2/P1P3PP/RN2K1NR b - - 0 1
+  puzzle plays c7c6 (engine 421); chain missed, chose g4d7 (engine -130) — gap 551cp
+  chain stopped: 6 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage defensiveMove long middlegame
+
+https://lichess.org/training/ayWJs   ply 3   rated 2786
+  2r5/1b1nBBkp/p2P2p1/q3r3/Pp1Q4/2N5/1P4PP/2K2R2 w - - 0 1
+  puzzle plays f7e6 (engine 270); chain tied, chose d4g4 (engine -518) — gap 788cp
+  chain stopped: 94 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage master middlegame pin veryLong
+
+https://lichess.org/training/IPvbR   ply 3   rated 2189
+  r1bb2k1/6pp/p3p3/1p3p2/q7/P1P3QP/1P3PP1/1R3RK1 w - - 0 1
+  puzzle plays g3d6 (engine 358); chain tied, chose b1a1 (engine -349) — gap 707cp
+  chain stopped: 31 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage middlegame veryLong
+
+https://lichess.org/training/IPvbR   ply 5   rated 2189
+  r1b3k1/6pp/p2Qpb2/1p3p2/q7/P1P4P/1P3PP1/1R3RK1 w - - 0 1
+  puzzle plays d6c6 (engine 351); chain tied, chose b1a1 (engine -323) — gap 674cp
+  chain stopped: 42 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage middlegame veryLong
+
+https://lichess.org/training/NAGLw   ply 1   rated 2987
+  r4rk1/pb3ppp/1p2p3/3p4/4qP2/1N1Q4/PPP4P/1K1R2R1 w - - 0 1
+  puzzle plays d3g3 (engine 182); chain tied, chose d1f1 (engine -312) — gap 494cp
+  chain stopped: 237 on a wide reply set, 0 with nothing coercive, 56 at the ply cap
+  themes: advantage long middlegame
+
+https://lichess.org/training/NAGLw   ply 3   rated 2987
+  r4rk1/pb3p1p/1p2p1p1/3p4/4qP2/1N4Q1/PPP4P/1K1R2R1 w - - 0 1
+  puzzle plays b3d4 (engine 222); chain tied, chose b1c1 (engine -150) — gap 372cp
+  chain stopped: 47 on a wide reply set, 0 with nothing coercive, 0 at the ply cap
+  themes: advantage long middlegame
+
+# 45 long-attack failures from 90 non-endgame puzzles
