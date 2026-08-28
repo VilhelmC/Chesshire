@@ -86,3 +86,41 @@ describe('describeBalance', () => {
 		expect(describeBalance(-3)).toBe('You are a piece down');
 	});
 });
+
+// ---------------------------------------------------------------------------
+// WHOSE MEN ARE IN EACH ROW.
+//
+// Will: "the capture array (you've taken, they've taken) is using wrong colours:
+// taken pieces display as white for white player and black for black player, but
+// we capture the opponent's pieces so it should be the opposite."
+//
+// The report was already right, and these pin that down — because the fault was
+// in the GLYPHS, not the data, and a fix aimed at the wrong layer would have had
+// to change what is asserted here. `♙`–`♕` are outline shapes stroked in the
+// current text colour, so in dark mode an outline pawn reads as black and a
+// filled `♟` reads as white: the two sets swap meaning with the theme. Swapping
+// the colours would have fixed dark mode and broken light mode, and this test is
+// what says so.
+// ---------------------------------------------------------------------------
+describe('who owns the men in each row', () => {
+	// White is missing a knight and a bishop; Black is missing a rook.
+	const FEN = 'r2qkbnr/pppppppp/8/8/8/8/PPPPPPPP/1NBQKBNR w KQkq - 0 1';
+
+	it('puts the OPPONENT’s men in "you have taken"', () => {
+		const asWhite = materialReport(FEN, 'w');
+		// White has taken Black's men, so `weTook` must be Black's missing pieces.
+		expect(asWhite.weTook).toEqual(['knight', 'bishop']);
+		expect(asWhite.theyTook).toEqual(['rook']);
+
+		// And the same board read from the other side is the exact mirror. A bug
+		// that swapped the two rows would satisfy either assertion alone.
+		const asBlack = materialReport(FEN, 'b');
+		expect(asBlack.weTook).toEqual(asWhite.theyTook);
+		expect(asBlack.theyTook).toEqual(asWhite.weTook);
+	});
+
+	it('signs the balance from the reader’s side', () => {
+		expect(materialReport(FEN, 'w').balance).toBe(1);
+		expect(materialReport(FEN, 'b').balance).toBe(-1);
+	});
+});

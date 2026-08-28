@@ -417,26 +417,44 @@ export function Train({
 	}
 
 	/**
-	 * Show the move by playing it, not by naming it.
+	 * Show the moves the line allows — ALL of them — and then get out of the way.
 	 *
-	 * Reading "Nxe5" and watching the knight take on e5 are not the same thing —
-	 * the second leaves a visual trace, the first leaves a token. The arrow goes
-	 * up first so the eye has somewhere to land before the piece moves.
+	 * Will: "'show move' displays one arrow and executes the move. That's wrong
+	 * behaviour. Many openings have multiple acceptable line positions. The button
+	 * should show those options (one arrow for each) and then defer to user to
+	 * actually make any move they want."
+	 *
+	 * Two faults, and they are separate. The first is arithmetic: `expected` is an
+	 * ARRAY, and `book`/`free` strictness routinely put several moves in it (see
+	 * `domain/book.ts`'s `acceptable`), so drawing `expected[0]` claimed the line
+	 * had one continuation when it had three. The second is about who is playing:
+	 * the button then called `onMove` itself. Showing you the answer and answering
+	 * for you are different favours, and only the first was asked for — the move is
+	 * the part that builds the memory, so handing it over is the one thing help
+	 * should not do.
+	 *
+	 * It still counts as help. Seeing the moves is seeing the answer, whether or not
+	 * a hand moved the piece.
 	 */
-	async function showMe() {
+	function showMe() {
 		if (!state || busyRef.current || !state.expected.length) return;
-		const uci = state.expected[0].uci;
-		setHint([arrowFor(uci, 'green')]);
+		// Every acceptable move, not the first. Labelled when there is more than
+		// one, because three green arrows with no numbers reads as a single line
+		// with a fork in it rather than as three separate answers.
+		const many = state.expected.length > 1;
+		setHint(
+			state.expected.map((e) => ({
+				...arrowFor(e.uci, 'green'),
+				...(many ? { label: e.san } : {}),
+			})),
+		);
 		setStats((s) => ({ ...s, shown: s.shown + 1 }));
 		missedThisItem.current = true;
 		assistedThisItem.current = true;
-		// Long enough to read the arrow, then the move goes on the board — and
-		// `onMove` now puts it there before the engine is asked anything, so the
-		// order on screen is arrow, our move, their reply, rather than arrow,
-		// pause, both moves at once.
-		await new Promise((r) => setTimeout(r, 550));
-		setHint([]);
-		await onMove(uci, { revealed: true });
+		// Deliberately no timeout and no clear. The arrows stay until the user
+		// moves — `onMove` clears them — because the whole point is that they get
+		// to choose, and a hint that vanishes after 550ms is a hint you have to
+		// race.
 	}
 
 	/**
@@ -516,8 +534,29 @@ export function Train({
 		}
 	}
 
+	/**
+	 * Every legal move, weighted — and available after the line is over.
+	 *
+	 * Will: "after reaching end of line the 'show options' button is disabled, but
+	 * we should be able to see Stockfish evaluations of continuations same as any
+	 * board position."
+	 *
+	 * It was gated on `yourTurn`, which is false once `state.finished` is set. But
+	 * `yourTurn` is a fact about the DRILL — is there an answer being asked for —
+	 * and this button is a fact about the POSITION, which is still a position with
+	 * legal moves and evaluations. The two got conflated because for most of the
+	 * run they coincide.
+	 *
+	 * The scoring lines below are the part that genuinely belongs to the drill, so
+	 * they are skipped once it is over: there is no item left to mark as missed and
+	 * nothing to withhold credit from. Counting a look at a finished line as help
+	 * would penalise the one moment when help cannot possibly be cheating.
+	 *
+	 * "Show me the move" stays disabled here, and correctly — there is no canon
+	 * move left to show. That is a different fact, and it keeps its own gate.
+	 */
 	async function showOptions() {
-		if (!state || busyRef.current || !yourTurn) return;
+		if (!state || busyRef.current || !canInspect) return;
 		busyRef.current = true;
 		setBusy(true);
 		try {
@@ -531,9 +570,11 @@ export function Train({
 					label: `${c.cp > 0 ? '+' : ''}${(c.cp / 100).toFixed(1)}`,
 				})),
 			);
-			missedThisItem.current = true;
-			assistedThisItem.current = true;
-			setStats((s) => ({ ...s, shown: s.shown + 1 }));
+			if (yourTurn) {
+				missedThisItem.current = true;
+				assistedThisItem.current = true;
+				setStats((s) => ({ ...s, shown: s.shown + 1 }));
+			}
 		} catch (e) {
 			setError((e as Error).message);
 		} finally {
@@ -604,12 +645,22 @@ export function Train({
 				// The run does not advance on a wrong book move, so the position on
 				// screen is still the one the arrow refers to.
 				arrows.length = 0;
-				arrows.push({ orig: uci.slice(0, 2), dest: uci.slice(2, 4), brush: 'red' });
+				// A NOVELTY IS DRAWN IN BLUE, NOT RED. It is off the line, so the line's
+				// move is still shown — but it is not a mistake, and the colour is the
+				// first thing read. Blue is already the trainer's "accepted, something
+				// was better" hue, which is the nearest existing meaning.
+				arrows.push({
+					orig: uci.slice(0, 2),
+					dest: uci.slice(2, 4),
+					brush: out.novelty ? 'blue' : 'red',
+				});
 				arrows.push(arrowFor(before.expected[0].uci, 'green'));
 			}
 
 			setFeedback({
-				correct: out.correct,
+				// A novelty is not `out.correct` — the run has not moved — but it must
+				// not be shown in the failure tone either. See `MoveOutcome.novelty`.
+				correct: out.correct || !!out.novelty,
 				message: out.message,
 				refutation: out.refutation,
 				fen: before.fen,
@@ -618,7 +669,10 @@ export function Train({
 				explanation: explained.text,
 				arrows,
 			});
-			setAttempts((a) => (out.correct ? 0 : a + 1));
+			// A novelty does not count as a failed attempt. Attempts drive the
+			// escalating help, and escalating help at someone who just played a move
+			// the engine likes is the app arguing with itself.
+			setAttempts((a) => (out.correct || out.novelty ? 0 : a + 1));
 			// A rejected move leaves the piece where it was dropped until the board
 			// is told otherwise — the run state has not moved on.
 			if (!out.correct) setBoardVersion((v) => v + 1);
@@ -686,7 +740,13 @@ export function Train({
 						cpLoss: out.cpLoss,
 					});
 				}
-			} else if (!loggedThisItem.current) {
+			} else if (!loggedThisItem.current && !out.novelty) {
+				// A NOVELTY IS NOT AN ANSWER, so it is not logged as one. The position
+				// has not moved and the drill is still asking; whatever is played next
+				// is the answer, and `loggedThisItem` is deliberately left false so that
+				// move still gets its row. Logging this one as `correct: false` was the
+				// first version, and it put the error back in through the progress
+				// record after the card had been kept out of the mistakes bin.
 				loggedThisItem.current = true;
 				logAnswer({
 					id: `${runId.current}-${before.path.length}-${Date.now()}`,
@@ -703,7 +763,13 @@ export function Train({
 			}
 			if (before.phase === 'punish') sawMistake.current = true;
 
-			if (!out.correct) {
+			if (out.novelty) {
+				// NOT A MISS. Will: "it should not count as error ... The card does not
+				// go into the opening mistakes bin." So no `missedThisItem` — which would
+				// mark the position as failed for spaced repetition — and no card. The
+				// position is unchanged, so the drill simply waits for the line's move.
+				setBoardVersion((v) => v + 1);
+			} else if (!out.correct) {
 				missedThisItem.current = true;
 				// Only the FIRST miss on a position becomes a card; retries of the
 				// same slip within one encounter are one mistake, not several.
@@ -735,7 +801,8 @@ export function Train({
 			setState(out.state);
 			setStats((s) => ({
 				...s,
-				moves: s.moves + 1,
+				// The run did not advance on a novelty, so it is not a move played.
+				moves: s.moves + (out.novelty ? 0 : 1),
 				// A move you were shown is not a move you recalled.
 				correct: s.correct + (out.correct && !opts.revealed ? 1 : 0),
 				punished: s.punished + (out.state.finished === 'punished' ? 1 : 0),
@@ -809,6 +876,17 @@ export function Train({
 
 	const yourTurn =
 		!!state && !state.finished && (state.expected.length > 0 || state.phase === 'freeplay');
+
+	/**
+	 * Is there a POSITION to ask the engine about — as opposed to a MOVE being
+	 * asked of you?
+	 *
+	 * `yourTurn` answers the second question and was being used for both. A
+	 * finished line still has a position, and Stockfish has just as much to say
+	 * about it; the drill is what ended, not the board. Anything that inspects
+	 * rather than answers hangs off this instead.
+	 */
+	const canInspect = !!state && !previewing;
 
 	/** Resume training from a position earlier in this run. */
 	async function playFromPly(ply: number) {
@@ -887,17 +965,26 @@ export function Train({
 			},
 			{
 				id: 'reveal',
-				title: 'Show me the move',
+				// It no longer plays the move — it draws every move the line allows and
+				// leaves the board to you.
+				title:
+					(state?.expected.length ?? 0) > 1
+						? `Show the ${state!.expected.length} moves the line allows — you still play`
+						: 'Show the move the line allows — you still play',
 				icon: 'reveal',
 				onClick: showMe,
 				disabled: !yourTurn || busy || state?.phase === 'freeplay',
 			},
 			{
 				id: 'options',
-				title: 'Show every option, weighted by how good it is (stops this move counting)',
+				// NOT gated on `yourTurn`. A finished line is still a position, and the
+				// engine has as much to say about it as about any other.
+				title: yourTurn
+					? 'Show every option, weighted by how good it is (stops this move counting)'
+					: 'Show every option, weighted by how good it is',
 				icon: 'options',
 				onClick: showOptions,
-				disabled: !yourTurn || busy,
+				disabled: !canInspect || busy,
 			},
 			{
 				id: 'stats',

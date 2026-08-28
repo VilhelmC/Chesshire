@@ -12,11 +12,11 @@ import { analysePosition, toColourPov } from '../data/cloudEval';
 import { candidateMoves, brushForGrade, colourForGrade, type Candidate } from '../engine/candidates';
 import { loadMistakes, saveCard, clearMistakes, deleteCard } from '../data/mistakes';
 import {
-	answer,
 	due,
 	summarise,
 	inCategories,
 	countByCategory,
+	applyAnswer,
 	CATEGORIES,
 	RETIRE_STREAK,
 	type MistakeCard,
@@ -30,6 +30,7 @@ import { nameForPath } from '../domain/openings';
 import { registerDebug, describePosition } from '../data/debug';
 import { useViewport } from '../components/useViewport';
 import { color } from '../ui/theme';
+import { recall, remember } from '../data/viewState';
 
 const INK_2 = color.ink2;
 
@@ -59,8 +60,28 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	const [candidates, setCandidates] = useState<Candidate[] | null>(null);
 	const [busy, setBusy] = useState(false);
 	const vp = useViewport();
-	/** Categories to draw from. Empty means all of them, not none. */
-	const [categories, setCategories] = useState<MistakeCard['phase'][]>([]);
+	/**
+	 * Categories to draw from. Empty means all of them, not none.
+	 *
+	 * Will: "the toggled categories do not persist when the app is reloaded or when
+	 * I switch tab and return. When I return to the mistakes tab it should be as I
+	 * left it with same choices selected in the UI."
+	 *
+	 * Restored through `viewState`, which validates on the way out — a category id
+	 * written by an older build and since removed is dropped rather than restored,
+	 * because a filter naming a phase that no longer exists selects nothing and
+	 * presents as an empty deck. Note this view is also REMOUNTED on every game
+	 * import (`<Quiz key={dataVersion}>` in App.tsx), so the initialiser runs far
+	 * more often than a reload would suggest, and losing the selection there was
+	 * most of what made it feel arbitrary.
+	 */
+	const [categories, setCategories] = useState<MistakeCard['phase'][]>(
+		() =>
+			(recall(
+				'quizCategories',
+				(v) => Array.isArray(v) && v.every((x) => CATEGORIES.some((c) => c.id === x)),
+			) as MistakeCard['phase'][] | undefined) ?? [],
+	);
 
 	async function reload(cats: MistakeCard['phase'][] = categories) {
 		const all = await loadMistakes();
@@ -71,12 +92,17 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		setLoaded(true);
 	}
 
-	function toggleCategory(id: MistakeCard['phase']) {
-		const next = categories.includes(id)
-			? categories.filter((c) => c !== id)
-			: [...categories, id];
+	/** One place to change the selection, so nothing can set it without storing it. */
+	function chooseCategories(next: MistakeCard['phase'][]) {
 		setCategories(next);
+		remember({ quizCategories: next });
 		void reload(next);
+	}
+
+	function toggleCategory(id: MistakeCard['phase']) {
+		chooseCategories(
+			categories.includes(id) ? categories.filter((c) => c !== id) : [...categories, id],
+		);
 	}
 
 	useEffect(() => {
@@ -273,9 +299,33 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		const correct = sameMove(current.fen, uci, current.expectedUci);
 		// ANY help, not only the revealed answer — the weighted-options list names
 		// the move too. `reveal` is about what is on screen; `helped` is about score.
-		const updated = answer(current, correct && !helped, Date.now());
+		// `applyAnswer`, not `answer` — it hands back the card AND the deck, so there
+		// is no second copy left to go stale. See its comment for the failure it is
+		// named after.
+		const step = applyAnswer(current, cards, correct && !helped, Date.now());
+		const updated = step.card;
 		await saveCard(updated);
-		setCards((cs) => cs.map((c) => (c.id === updated.id ? updated : c)));
+		setCards(step.deck);
+		// THE CARD IN HAND MUST BE THE CARD THAT WAS JUST SAVED.
+		//
+		// Will: "the 'three-correct-in-a-row' principle is not enforced (I suspect
+		// cards are retired after three correct, not resetting count if there was an
+		// error in between)."
+		//
+		// The rule itself is right — `answer()` does `correct ? streak + 1 : 0`. What
+		// was wrong is that on a WRONG answer nothing replaced `current`. The reset
+		// card went to the database and to `cards`, and the stale one stayed on
+		// screen, so the next attempt incremented from the streak the card had
+		// BEFORE the failure:
+		//
+		//   streak 2 → wrong → saved as 0, `current` still says 2
+		//                    → correct → answer(2, true) = 3 → RETIRED
+		//
+		// Three correct in a row, from two corrects with a failure between them.
+		// `next()` hid it on the correct path by replacing the card wholesale, which
+		// is why it only ever showed up after a miss.
+		setCurrent(updated);
+		setQueue((q) => q.map((c) => (c.id === updated.id ? updated : c)));
 
 		let san = uci;
 		try {
@@ -510,10 +560,7 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 									.join(' and ')}
 								;{' '}
 								<button
-									onClick={() => {
-										setCategories([]);
-										void reload([]);
-									}}
+									onClick={() => chooseCategories([])}
 									style={{ fontSize: 13 }}
 								>
 									show all
@@ -562,10 +609,7 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 				</div>
 				{categories.length > 0 && (
 					<button
-						onClick={() => {
-							setCategories([]);
-							void reload([]);
-						}}
+						onClick={() => chooseCategories([])}
 						style={{ fontSize: 11, marginBottom: 8 }}
 					>
 						Show all categories

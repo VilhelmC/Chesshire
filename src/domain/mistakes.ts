@@ -161,7 +161,23 @@ export function inCategories(
 	return cards.filter((c) => categories.includes(c.phase));
 }
 
-/** How many cards, and how many due, in each category. */
+/**
+ * How many cards, and how many due, in each category — RETIRED ONES EXCLUDED.
+ *
+ * Will: "retired cards are still counted in the category totals. That's
+ * annoying. when they are gone they no longer contribute to the number of cards
+ * in the category."
+ *
+ * `total` used to mean "cards that have ever existed in this category", which is
+ * a fact about your history rather than about the deck, and it sat beside `due`
+ * — which has always excluded retired cards — as though the two were the same
+ * kind of number. Learning ten openings and retiring them left "0/10" beside a
+ * category with nothing in it, so the chip stayed enabled and the count never
+ * fell. Both halves now count the same population: cards still in the deck.
+ *
+ * The retired ones are not lost — `summarise` still reports them, which is where
+ * a number about what you have finished belongs.
+ */
 export function countByCategory(
 	cards: MistakeCard[],
 	now: number,
@@ -170,12 +186,43 @@ export function countByCategory(
 	for (const c of CATEGORIES) out[c.id] = { total: 0, due: 0 };
 	const dueSet = new Set(due(cards, now).map((c) => c.id));
 	for (const c of cards) {
+		if (c.retired) continue;
 		const row = out[c.phase];
 		if (!row) continue;
 		row.total++;
 		if (dueSet.has(c.id)) row.due++;
 	}
 	return out;
+}
+
+/**
+ * One answer, applied to the card AND to the deck it lives in.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS EXISTS RATHER THAN JUST `answer`.
+ *
+ * `answer` was correct and unit-tested — `correct ? streak + 1 : 0` — and the
+ * three-in-a-row rule was still broken in the app, because the view kept the
+ * PRE-answer card on screen after a miss. The reset went to the database; the
+ * stale copy stayed in hand; the next correct answer incremented from the streak
+ * the card had before it failed:
+ *
+ *   streak 2 → wrong → saved as 0, held copy still says 2
+ *                    → correct → answer(2, true) = 3 → RETIRED
+ *
+ * A pure function cannot be tested into catching that, because the defect is in
+ * which value the caller keeps. So the update returns BOTH halves, and the caller
+ * has nothing left to get out of step: whatever it renders next comes from here.
+ * ---------------------------------------------------------------------------
+ */
+export function applyAnswer(
+	card: MistakeCard,
+	deck: MistakeCard[],
+	correct: boolean,
+	now: number,
+): { card: MistakeCard; deck: MistakeCard[] } {
+	const updated = answer(card, correct, now);
+	return { card: updated, deck: deck.map((c) => (c.id === updated.id ? updated : c)) };
 }
 
 export function due(cards: MistakeCard[], now: number): MistakeCard[] {

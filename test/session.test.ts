@@ -160,9 +160,19 @@ describe('a run without any hardcoded lines', () => {
 		expect(s.expected.map((e) => e.san)).toEqual(['e4']);
 
 		const wrong = await submitMove(s, c, applySan(s.fen, 'd4').uci);
+		// The run does NOT advance — one move is the repertoire, and it is still
+		// waiting for it.
 		expect(wrong.correct).toBe(false);
-		// d4 is sound — it must not be called a blunder.
-		expect(wrong.message).toMatch(/sound/i);
+		// But d4 is sound, and it must not be called a blunder. The engine rates it
+		// level with e4, so it now comes back as a NOVELTY: off the repertoire, not
+		// an error, and no mistake card. Will: "when user picks a move that is not
+		// in the line options, but is higher rated than the line moves by Stockfish
+		// it should not count as error."
+		expect(wrong.novelty).toBeDefined();
+		expect(wrong.message).toMatch(/not canon/i);
+		// And it names what the repertoire actually is, which is the point of saying
+		// anything at all.
+		expect(wrong.message).toMatch(/e4/);
 	});
 
 	it('accepts a sound move whether or not anyone else plays it', async () => {
@@ -370,3 +380,112 @@ function italianMovesAt(fen: string): BookMove[] {
 		mv(fen, 'Nge7', 0.05, 'blunder'),
 	];
 }
+
+// ---------------------------------------------------------------------------
+// OFF THE LINE AND NOT A MISTAKE.
+//
+// Will: "when user picks a move that is not in the line options, but is higher
+// rated than the line moves by Stockfish it should not count as error. Message
+// should be something like 'That move is better than line moves but not canon.'
+// The card does not go into the opening mistakes bin."
+//
+// The rule is a comparison against the LINE MOVE at the same budget, not against
+// `state.evalNow` — see engine/score.ts for why comparing a cached deep eval with
+// a fresh shallow one measures the depth gap rather than the move. These drive
+// the mocked engine directly, so the boundary is exact rather than approximate.
+// ---------------------------------------------------------------------------
+describe('a novelty — off the line, and the engine does not mind', () => {
+	/** Set the evaluation the mocked engine reports for the position after `san`. */
+	function evalAfter(fen: string, san: string, cp: number) {
+		EVALS[board(applySan(fen, san).fen)] = { cp, pv: '' };
+	}
+
+	const strict = () =>
+		cfg({ practice: { ...DEFAULT_PRACTICE, deviationChance: 0, strictness: 'repertoire' } });
+
+	it('is not an error when the engine likes it more', async () => {
+		const c = strict();
+		const s = await startRun(c);
+		expect(s.expected.map((e) => e.san)).toEqual(['e4']);
+		evalAfter(s.fen, 'e4', 30);
+		evalAfter(s.fen, 'd4', 90); // clearly better
+
+		const out = await submitMove(s, c, applySan(s.fen, 'd4').uci);
+		expect(out.novelty?.edge).toBe(60);
+		expect(out.cpLoss).toBe(0);
+		expect(out.message).toMatch(/better than the line/i);
+		expect(out.message).toMatch(/not canon/i);
+		// THE POSITION DOES NOT MOVE. The drill is about learning this line, so it
+		// waits for the line's move — that is what Will chose over playing on.
+		expect(out.state).toBe(s);
+		expect(out.state.path).toEqual([]);
+	});
+
+	it('is not an error when the engine calls it level', async () => {
+		const c = strict();
+		const s = await startRun(c);
+		evalAfter(s.fen, 'e4', 30);
+		evalAfter(s.fen, 'd4', 30);
+
+		const out = await submitMove(s, c, applySan(s.fen, 'd4').uci);
+		expect(out.novelty).toBeDefined();
+		// Worded differently from the "better" case, because claiming a move is
+		// better when the engine called it level is a small lie that the user can
+		// check.
+		expect(out.message).toMatch(/as good as the line/i);
+		expect(out.message).not.toMatch(/better than/i);
+	});
+
+	it('holds the boundary at the noise tolerance', async () => {
+		// Ten centipawns is "at least as good, allowing for noise". Two different
+		// positions at the same depth disagree by about this much for reasons that
+		// have nothing to do with the moves, so a strict `>` would mark a move that
+		// ties the line by two centipawns as a mistake.
+		const c = strict();
+		const s = await startRun(c);
+
+		evalAfter(s.fen, 'e4', 100);
+		evalAfter(s.fen, 'd4', 90); // exactly 10 behind — inside the tolerance
+		expect((await submitMove(s, c, applySan(s.fen, 'd4').uci)).novelty).toBeDefined();
+
+		evalAfter(s.fen, 'd4', 89); // one centipawn further — outside it
+		const out = await submitMove(s, c, applySan(s.fen, 'd4').uci);
+		expect(out.novelty).toBeUndefined();
+		expect(out.correct).toBe(false);
+	});
+
+	it('is still an error when the move actually costs something', async () => {
+		const c = strict();
+		const s = await startRun(c);
+		evalAfter(s.fen, 'e4', 30);
+		evalAfter(s.fen, 'd4', -300); // a real blunder
+
+		const out = await submitMove(s, c, applySan(s.fen, 'd4').uci);
+		expect(out.novelty).toBeUndefined();
+		expect(out.correct).toBe(false);
+		// And the cost is measured against the LINE MOVE, at the same budget —
+		// 30 − (−300) — rather than against whatever `evalNow` happened to hold.
+		expect(out.cpLoss).toBe(330);
+	});
+
+	it('never fires while walking into a pinned root', async () => {
+		// Pinning a root is the user saying "drill me on THIS opening". The moves
+		// accepted on the way in are a filter they set, not a judgement about which
+		// move is best — so an equally good move that leaves the subject is still
+		// out of scope. Without this the rule waves through precisely the move that
+		// abandons the drill.
+		const root = { path: ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4'], name: 'Italian Game' };
+		const c = cfg({
+			practice: { ...DEFAULT_PRACTICE, deviationChance: 0, roots: [root], playFromStart: true },
+		});
+		const s = await startRun(c);
+		expect(s.expected.map((e) => e.san)).toEqual(['e4']);
+		evalAfter(s.fen, 'e4', 30);
+		evalAfter(s.fen, 'd4', 500); // far better, and still not the point
+
+		const out = await submitMove(s, c, applySan(s.fen, 'd4').uci);
+		expect(out.novelty).toBeUndefined();
+		expect(out.correct).toBe(false);
+		expect(out.message).toMatch(/leaves Italian Game/i);
+	});
+});

@@ -36,6 +36,21 @@ import { materialBalance as balanceOf, describeBalance } from '../domain/materia
 const EVAL_DEPTH = 20;
 const ACCEPT_MARGIN = 60;
 const MISTAKE_CP = 60;
+/**
+ * How far below the line move an off-book move may sit and still not be an error.
+ *
+ * Ten centipawns, which is "at least as good, allowing for noise" rather than
+ * "better". Two different positions searched to the same depth by the same engine
+ * disagree by about this much for reasons that have nothing to do with the moves,
+ * so a strict `>` would mark a move that ties the line by two centipawns as a
+ * mistake — arbitrary, and exactly the kind of thing that teaches superstition
+ * (the same reason the punish phase has `ACCEPT_MARGIN` at all).
+ *
+ * It is deliberately an order of magnitude below `MISTAKE_CP`: this decides
+ * whether something counts against you, and it should never be the reason a real
+ * error gets waved through.
+ */
+const NOVELTY_TOLERANCE = 10;
 const BLUNDER_CP = 120;
 /** Our moves demanded after a mistake before the run is called won. */
 const MAX_PUNISH_PLIES = 3;
@@ -154,6 +169,23 @@ export type MoveOutcome = {
 	/** Engine reply to a wrong move — the consequence to show. */
 	refutation: string[];
 	played: string;
+	/**
+	 * OFF THE LINE, AND NOT A MISTAKE.
+	 *
+	 * Will: "when user picks a move that is not in the line options, but is higher
+	 * rated than the line moves by Stockfish it should not count as error."
+	 *
+	 * A third answer, because two were never enough. `correct` conflates "you
+	 * answered the question" with "the run advanced", and this is neither: the
+	 * position does NOT move — you still have to play your line to continue — but
+	 * nothing is scored against you and no card is written. Callers must test this
+	 * before treating `correct: false` as a mistake.
+	 *
+	 * `edge` is centipawns better than the best line move, from our side, measured
+	 * against that move at the SAME budget. It can be slightly negative: see
+	 * `NOVELTY_TOLERANCE`.
+	 */
+	novelty?: { edge: number };
 };
 
 // --- the book ---------------------------------------------------------------
@@ -520,7 +552,66 @@ export async function submitMove(
 			try {
 				const mine = await analysePosition(after, EVAL_DEPTH, 1);
 				const theirs = toColourPov(mine.pvs[0]?.cpWhite ?? 0, state.ourColour);
-				loss = Math.max(0, Math.round((state.evalNow ?? theirs) - theirs));
+
+				// THE BASELINE IS THE LINE MOVE, MEASURED THE SAME WAY.
+				//
+				// `engine/score.ts` sets out why at length: centipawn loss is a
+				// DIFFERENCE, so both halves must come from the same engine at the same
+				// budget, and `state.evalNow` may be a cached deep cloud entry. Against
+				// a fresh depth-20 search that gap alone can be tens of centipawns —
+				// and since the result is clamped at zero the error only ever flatters.
+				//
+				// So the line move gets its own search, from the same position, at the
+				// same budget. It costs one extra analysis on a move that was off-book
+				// anyway, and it buys both an honest cost AND the comparison Will asked
+				// for, which cannot be made against a baseline of unknown depth.
+				// NOT WHILE WALKING INTO A PINNED ROOT.
+				//
+				// This exception is the whole reason the rule needs a scope. Pinning a
+				// root is the user saying "drill me on the Italian"; the moves accepted
+				// on the way in are a FILTER they set, not a judgement about which move
+				// is best. ♙d4 is exactly as good as ♙e4 and the engine will always say
+				// so, so without this the rule waves through the one move that leaves
+				// the subject — and the better the alternative, the more freely it is
+				// waved through. "Not an error" and "not what you asked to practise"
+				// are different claims, and only the first is the engine's to make.
+				//
+				// Caught by a test that already existed: "still confines you to the
+				// pinned line while walking into it".
+				const towardsRoot = movesTowardRoots(state.path, cfg.practice.roots).length > 0;
+				const bestLine = towardsRoot ? undefined : state.expected[0];
+				let lineCp: number | null = null;
+				if (bestLine) {
+					try {
+						const b = await analysePosition(applyUci(state.fen, bestLine.uci).fen, EVAL_DEPTH, 1);
+						lineCp = toColourPov(b.pvs[0]?.cpWhite ?? 0, state.ourColour);
+					} catch {
+						/* fall back to evalNow below */
+					}
+				}
+
+				if (lineCp !== null && theirs >= lineCp - NOVELTY_TOLERANCE) {
+					// Off the line and the engine does not mind. Not an error, no card,
+					// and the position deliberately does NOT advance: the drill is about
+					// learning this line, so it waits for the line's move. Saying so is
+					// the whole value — silently accepting it would teach nothing, and
+					// marking it wrong would teach something false.
+					const edge = Math.round(theirs - lineCp);
+					return {
+						state,
+						correct: false,
+						novelty: { edge },
+						cpLoss: 0,
+						message:
+							edge > NOVELTY_TOLERANCE
+								? `${withGlyph(san, state.ourColour)} is better than the line by ${(edge / 100).toFixed(2)} — but it is not canon. The line goes ${withGlyph(bestLine!.san, state.ourColour)}.`
+								: `${withGlyph(san, state.ourColour)} is as good as the line, but it is not canon. The line goes ${withGlyph(bestLine!.san, state.ourColour)}.`,
+						refutation: [],
+						played: san,
+					};
+				}
+
+				loss = Math.max(0, Math.round((lineCp ?? state.evalNow ?? theirs) - theirs));
 				if (loss >= MISTAKE_CP) refutation = mine.pvs[0]?.pv.slice(0, 4) ?? [];
 			} catch {
 				/* naming still works without an evaluation */

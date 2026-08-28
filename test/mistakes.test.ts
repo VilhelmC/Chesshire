@@ -10,6 +10,7 @@ import {
 	CATEGORIES,
 	inCategories,
 	countByCategory,
+	applyAnswer,
 } from '../src/domain/mistakes';
 
 const T0 = 1_700_000_000_000;
@@ -160,5 +161,78 @@ describe('categories', () => {
 	it('covers every phase a card can have', () => {
 		const ids = CATEGORIES.map((c) => c.id).sort();
 		expect(ids).toEqual(['book', 'freeplay', 'game', 'punish']);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// THE THREE FIXES OF 2026-08-28, each named after what it was reported as.
+// ---------------------------------------------------------------------------
+
+describe('applyAnswer — the streak survives the caller', () => {
+	it('does not retire on three corrects with a miss between them', () => {
+		// Will: "the 'three-correct-in-a-row' principle is not enforced (I suspect
+		// cards are retired after three correct, not resetting count if there was an
+		// error in between)."
+		//
+		// `answer` alone always got this right; the app got it wrong because the
+		// view kept the pre-answer card and incremented from ITS streak. This test
+		// therefore threads the RETURNED card through, which is the only thing
+		// `applyAnswer` makes it possible to do — feed it a stale card and you are
+		// back to the bug, which is why the deck comes back with it.
+		let held = card();
+		let deck = [held];
+		const step = (correct: boolean) => {
+			const r = applyAnswer(held, deck, correct, T0);
+			held = r.card;
+			deck = r.deck;
+		};
+		step(true);
+		step(true);
+		expect(held.streak).toBe(2);
+		step(false); // the miss that used to be forgotten
+		expect(held.streak).toBe(0);
+		step(true);
+		expect(held.retired).toBe(false);
+		step(true);
+		expect(held.retired).toBe(false);
+		step(true); // only NOW is it three in a row
+		expect(held.retired).toBe(true);
+	});
+
+	it('returns a deck that agrees with the card', () => {
+		// The invariant the view could not hold by hand: one object, not two.
+		const a = card({ expectedUci: 'a2a3' });
+		const b = card({ expectedUci: 'b2b3' });
+		const r = applyAnswer(a, [a, b], false, T0);
+		expect(r.deck.find((c) => c.id === a.id)).toBe(r.card);
+		// And nothing else is touched.
+		expect(r.deck.find((c) => c.id === b.id)).toBe(b);
+	});
+});
+
+describe('countByCategory', () => {
+	it('drops retired cards from the total, not just from due', () => {
+		// Will: "retired cards are still counted in the category totals. That's
+		// annoying. when they are gone they no longer contribute to the number of
+		// cards in the category."
+		let retiredCard = card({ expectedUci: 'a2a3' });
+		for (let i = 0; i < RETIRE_STREAK; i++) retiredCard = answer(retiredCard, true, T0);
+		expect(retiredCard.retired).toBe(true);
+		const live = card({ expectedUci: 'b2b3' });
+
+		const counts = countByCategory([retiredCard, live], T0 + 1e9);
+		const phase = live.phase;
+		expect(counts[phase].total).toBe(1);
+		expect(counts[phase].due).toBe(1);
+	});
+
+	it('reports a fully retired category as empty, so its chip goes quiet', () => {
+		let c = card();
+		for (let i = 0; i < RETIRE_STREAK; i++) c = answer(c, true, T0);
+		const counts = countByCategory([c], T0 + 1e9);
+		expect(counts[c.phase]).toEqual({ total: 0, due: 0 });
+		// The cards are not lost — they moved to the finished pile, which is where
+		// a number about what you have completed belongs.
+		expect(summarise([c], T0 + 1e9).retired).toBe(1);
 	});
 });

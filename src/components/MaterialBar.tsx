@@ -11,10 +11,38 @@
 
 import { materialReport, VALUE, type Colour, type Role } from '../domain/material';
 
-const GLYPH: Record<Colour, Record<Role, string>> = {
-	w: { pawn: '♙', knight: '♘', bishop: '♗', rook: '♖', queen: '♕', king: '♔' },
-	b: { pawn: '♟', knight: '♞', bishop: '♝', rook: '♜', queen: '♛', king: '♚' },
+/**
+ * ONE glyph set, coloured — never two sets distinguished by which glyph.
+ *
+ * Will: "taken pieces display as white for white player and black for black
+ * player, but we capture the opponent's pieces so it should be the opposite."
+ *
+ * The logic below was already right — `weTook` is passed `theirColour`. What was
+ * wrong is that a glyph's colour is not in the glyph. `♙`–`♕` are OUTLINE shapes:
+ * they are stroked in the current text colour with a transparent interior. On a
+ * light page that reads as "white". In DARK MODE the stroke is light ink and the
+ * interior is the dark page, so an outline pawn reads as BLACK — while the filled
+ * `♟` renders solid light and reads as WHITE. The two sets swap meaning with the
+ * theme, which is exactly the inversion being reported.
+ *
+ * So swapping the colours would fix dark mode and break light mode. Instead this
+ * uses the fix already proven in `ComplexPanel`'s `Man`: one FILLED set, coloured
+ * literally, standing on a fixed board-coloured square. Nothing in the theme can
+ * reach it, and there is no second glyph set to get out of step.
+ */
+const GLYPH: Record<Role, string> = {
+	pawn: '♟',
+	knight: '♞',
+	bishop: '♝',
+	rook: '♜',
+	queen: '♛',
+	king: '♚',
 };
+
+/** Literal, not tokens: `color.page` and `color.ink` SWAP between themes. */
+const INK: Record<Colour, string> = { w: '#ffffff', b: '#101010' };
+/** A fixed board colour, so a near-black man is never on a near-black panel. */
+const SQUARE = '#b6a98f';
 
 export function MaterialBar({ fen, ourColour }: { fen: string; ourColour: Colour }) {
 	// Fills whatever it is given rather than taking a pixel width: the board's
@@ -84,8 +112,18 @@ function Row({
 			<span style={{ fontSize: 11, color: '#8a8a86', width: 92, flexShrink: 0 }}>{label}</span>
 			{pieces.length ? (
 				pieces.map((role, i) => (
-					<span key={i} aria-hidden>
-						{GLYPH[colour][role]}
+					<span
+						key={i}
+						aria-hidden
+						style={{
+							color: INK[colour],
+							background: SQUARE,
+							borderRadius: 2,
+							padding: '0 1px',
+							lineHeight: 1,
+						}}
+					>
+						{GLYPH[role]}
 					</span>
 				))
 			) : (

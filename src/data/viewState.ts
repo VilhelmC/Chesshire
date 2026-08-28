@@ -29,6 +29,14 @@ export type ViewState = {
 	labPly?: number;
 	labTheme?: string;
 	labOnly?: string;
+	/**
+	 * Mistake categories selected in the Quiz tab. Empty means ALL of them.
+	 *
+	 * `string[]` rather than the narrowed union: this module is the boundary with
+	 * storage, and storage holds whatever an older build wrote. The caller narrows
+	 * on the way out through its `ok` predicate, which is the point of `recall`.
+	 */
+	quizCategories?: string[];
 };
 
 /**
