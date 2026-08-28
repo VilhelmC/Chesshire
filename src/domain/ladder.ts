@@ -148,3 +148,146 @@ export function mateGoal(attacker: Color, opts: MateOpts = {}): Problem<Chess> {
 			: undefined,
 	};
 }
+
+// ---------------------------------------------------------------------------
+// MATERIAL RUNGS
+//
+// Mate has a one-call terminal test. "Wins a rook in three" does not, and that
+// is the whole difficulty of this milestone: what counts as WON has to be
+// defined, and defined in a way that cannot be gamed by a line that stops
+// mid-exchange with a piece hanging.
+// ---------------------------------------------------------------------------
+
+import { V, other, seeValue } from './exchange';
+import type { Board } from 'chessops/board';
+
+/**
+ * Material from one side's point of view, kings excluded.
+ *
+ * Written here rather than imported from `complex.ts`, which is scheduled for
+ * the attic. Five lines is cheaper than a dependency on a module we are
+ * replacing.
+ */
+export function materialFor(board: Board, side: Color): number {
+	let n = 0;
+	for (const square of board.occupied) {
+		const piece = board.get(square);
+		if (!piece || piece.role === 'king') continue;
+		n += piece.color === side ? V[piece.role] : -V[piece.role];
+	}
+	return n;
+}
+
+/**
+ * What the position is worth once the exchange in progress settles.
+ *
+ * A raw material count at the horizon is not an evaluation, it is a snapshot of
+ * a trade halfway through: a line that ends with our queen taken but our
+ * recapture unplayed reads as a disaster, and one that ends with a piece
+ * hanging reads as a triumph. So the side to move is credited with the best
+ * exchange available to them, which is a single ply of quiescence.
+ *
+ * SEE IS EXACT FOR THAT, and that is not a hopeful assumption: the opt-out
+ * bound (offbook/AMEND-RUNG-ORDER.md) says the gain at a square never exceeds
+ * the value of the man standing there, because nobody recaptures into a loss.
+ * What this does NOT capture is interaction BETWEEN squares — two hanging men,
+ * only one of which can be saved. That is a real limit of the horizon and it is
+ * why the search has a depth rather than relying on this.
+ */
+export function settled(board: Board, mover: Color, attacker: Color): number {
+	// SEE ONLY WHAT IS ACTUALLY ATTACKED, and this is not a micro-optimisation.
+	//
+	// The first version ran a full exchange on every enemy man: sixteen SEEs at
+	// every terminal node, 160 microseconds a call, and since a material goal
+	// terminates on an EVALUATION rather than on `isCheckmate()` this is the
+	// single hottest thing in the search. It made M3 unmeasurable — a 3-ply
+	// puzzle solved in 5 nodes and 7ms, a 9-ply one did not finish.
+	//
+	// Almost none of those men are attacked. Building the mover's attack set once
+	// costs one pass over their pieces and turns the SEEs from sixteen into the
+	// handful that could actually change hands.
+	let reach = SquareSet.empty();
+	for (const from of board[mover]) {
+		const piece = board.get(from);
+		if (piece) reach = reach.union(attacks(piece, from, board.occupied));
+	}
+	let best = 0;
+	for (const square of board[other(mover)].intersect(reach)) {
+		const v = seeValue(board, square, mover);
+		if (Number.isFinite(v) && v > best) best = v;
+	}
+	return materialFor(board, attacker) + (mover === attacker ? best : -best);
+}
+
+export type MaterialOpts = {
+	seed?: boolean;
+};
+
+// ---------------------------------------------------------------------------
+// THE ZONE FILTER DOES NOT TRANSFER TO MATERIAL, and it was measured rather
+// than assumed. There is no `target` option here, and that absence is the
+// finding.
+//
+// PLAN-PNS-LADDER.md assumed the mate generator would carry over: narrow our
+// moves to the target's zone the way the king rung narrows to his. Over twelve
+// material puzzles at three plies, the full generator proved nine and the
+// narrowed one proved six. `eCTH5`, `FkBOW` and `PxKx3` were all lost.
+//
+// The reason is structural, not a tuning failure. A KING cannot be traded and
+// cannot be replaced, so every configuration that mates him bears on his zone —
+// which is why 334/334 answers survived that filter. A MATERIAL goal is a
+// SWING, not a square: the winning line may deflect a defender on the far side
+// of the board, clear a line, or simply win a different man than the one being
+// pursued. None of those touch the nominated target's zone, and all of them are
+// answers.
+//
+// The shape of the right generator is known and is not this. A configuration's
+// requirements include its DEFENDERS and its LINES, so the moves that serve it
+// are those that bear on the target's zone PLUS those that capture or deflect
+// what defends it PLUS those that clear the way — which is the `clears` /
+// `fills` / `kills` triple from CHECKPOINT-GRAPH-EDITS-2.md, asked of a
+// configuration instead of a move. That is the next thing to build, and it has
+// to pass the same no-answer-lost gate M2 passed before it goes anywhere near
+// a price.
+// ---------------------------------------------------------------------------
+
+/**
+ * "Can `attacker` force a material gain of at least `want`, within the depth?"
+ *
+ * `want` is measured against `base`, the settled value at the root, so the
+ * question is about the SWING rather than about the absolute count.
+ *
+ * The generator narrows to a target's zone exactly as the king rung narrows to
+ * his — and for the same reason. A move that neither touches the target square
+ * nor bears on anywhere the target could run cannot be part of winning it on
+ * this ply. As with mate, the narrowing is applied to US and never to them.
+ */
+export function materialGoal(attacker: Color, want: number, base: number, opts: MaterialOpts = {}): Problem<Chess> {
+	return {
+		key: positionKey,
+		children: (pos) => allMoves(pos).map((m) => after(pos, m)),
+		terminal: (pos, depthLeft) => {
+			// Mate settles any material question — it is worth more than the board.
+			if (pos.isCheckmate()) return 'moverLoses';
+			if (pos.isStalemate() || pos.isInsufficientMaterial()) {
+				// A draw banks nothing, so the attacker succeeds only if they wanted
+				// nothing. Stated rather than assumed, because `want <= 0` is a real
+				// question the rung ladder asks at its bottom.
+				const ok = want <= 0;
+				return pos.turn === attacker ? (ok ? 'moverWins' : 'moverLoses') : ok ? 'moverLoses' : 'moverWins';
+			}
+			if (depthLeft <= 0) {
+				const ok = settled(pos.board, pos.turn, attacker) - base >= want;
+				return pos.turn === attacker ? (ok ? 'moverWins' : 'moverLoses') : ok ? 'moverLoses' : 'moverWins';
+			}
+			return null;
+		},
+		init: opts.seed
+			? (pos) => {
+					let n = 0;
+					for (const dests of pos.allDests().values()) n += dests.size();
+					return [1, Math.max(1, n)];
+				}
+			: undefined,
+	};
+}
