@@ -60,15 +60,26 @@ import type { Shape } from './Board';
  *
  * It reaches nothing else: the material rungs are a one-ply minimum over the
  * defender's replies with SEE at the leaf, and take no depth at all. So this is a
- * mate horizon, not a search depth, and it was measured rather than picked
- * (`offbook/FINDING-THE-MATE-HORIZON.md`, 2,656 solver plies):
+ * mate horizon, not a search depth — and it is READ OFF THE CORPUS rather than
+ * searched for. A Lichess mate in K is 2K−1 plies from the position we are asked
+ * about, and `scripts/mate-depth.sh` counts them over all 6,100,960 puzzles:
  *
- *   3 → 5   found +89, wrong −51 (10.8% → 8.9%), mates +114 all correct, ×1.9
- *   5 → 7   nothing at all, ×3.2
+ *   depth 1   mateIn1    898,212    46.37% of mates
+ *   depth 3   mateIn2    807,423    88.06% cumulative
+ *   depth 5   mateIn3    196,470    98.20% cumulative   ← here
+ *   depth 7   mateIn4     28,698    99.68%
+ *   depth 9+  mateIn5+     6,198   100%      (deepest: 22 plies, one puzzle)
  *
- * Five is where the corpus stops paying. Three was never chosen — it was M3's
- * probe constant and nothing ever revisited it, which is how `ohoTK` (a mate in
- * three, five plies) read as "not forced" through the whole of #34.
+ * Five covers 98.2% of every mate Lichess has. Seven would add 1.48% and costs
+ * about triple ON EVERY POSITION, including the 98.2% with nothing extra to find.
+ *
+ * Three was never chosen — it was M3's probe constant, copied into two defaults,
+ * which is how `ohoTK` (a mate in three) read as "not forced" through all of #34.
+ *
+ * A caution recorded where it will be read: `labPuzzles.json` contains ZERO
+ * mateIn4 and mateIn5, so no experiment on it can say anything about depths above
+ * 5. A corpus sweep did exactly that and reported "seven buys nothing" as a
+ * finding. See offbook/FINDING-THE-MATE-HORIZON.md.
  */
 const DEPTH = 5;
 

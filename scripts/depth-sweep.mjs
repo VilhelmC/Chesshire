@@ -1,4 +1,30 @@
-// WHAT DOES DEPTH BUY? — the question nobody asked before fixing it at 3.
+// WHAT DOES DEPTH BUY? — superseded by `mate-depth.sh`, and kept as a lesson.
+//
+// ---------------------------------------------------------------------------
+// READ THIS BEFORE TRUSTING ANY NUMBER THIS SCRIPT PRINTS.
+//
+// It runs the ladder at several depths over `labPuzzles.json` and reports what
+// changes. That is a reasonable thing to want and a bad way to get it, for two
+// reasons Will named:
+//
+//   "why not just look at the puzzle answers, see what length they are and
+//    whether they are classified as mate category instead of running whole
+//    suite? We have the whole lichess puzzle corpus and we can easily read out
+//    the maximum depth checkmate in it."
+//
+//   1. THE CORPUS ALREADY STATES THE ANSWER. A mate in K is 2K−1 plies from the
+//      position we are asked about, and every puzzle carries its label and its
+//      solution. Reading them takes forty seconds over six million puzzles;
+//      this script takes eleven minutes over a thousand.
+//   2. THIS SAMPLE CANNOT SEE PAST DEPTH 5. `labPuzzles.json` holds 87 mateIn1,
+//      154 mateIn2, 93 mateIn3 and ZERO mateIn4 or mateIn5. Its "5 → 7 buys
+//      nothing" was therefore guaranteed before the run started, and was
+//      reported as a finding. The true figure is 1.48% of all Lichess mates.
+//
+// What it is still good for: COST. `ms/ply` and `nodes` at each depth are real,
+// because cost does not depend on whether an answer is there to be found. Use it
+// for the price and `mate-depth.sh` for the coverage.
+// ---------------------------------------------------------------------------
 //
 // `depth` in `ladderReport` reaches exactly ONE thing: the king rung's `solve`.
 // The material rungs are `guaranteeWithHeld`, a one-ply minimum over the
