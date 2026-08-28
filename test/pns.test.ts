@@ -128,6 +128,47 @@ describe('the proof engine', () => {
 		expect(r.refuted).toBe(false);
 	});
 
+	it('names WITNESSES in `via` — sound, and not promised to be complete', () => {
+		// THE CONTRACT, AND THE BUG IT IS HERE TO STOP.
+		//
+		// `via` was documented as "every child through which the mover achieves
+		// their goal", and a caller counted it. The engine is depth-first: it stops
+		// as soon as `phi(root)` crosses its threshold, which takes ONE child. Every
+		// other child keeps its `init` numbers and is indistinguishable from a child
+		// that loses. In `ladder.ts` the count read 1 where the truth was 29.
+		//
+		// So what may be relied on is SOUNDNESS — everything named really does
+		// achieve — and not completeness. Both halves are asserted, because a later
+		// engine that returns all of them must not fail this test either.
+		const tree: Record<string, string[]> = { root: [] };
+		for (const c of ['a', 'b', 'c', 'd', 'e']) {
+			tree.root.push(c);
+			// Each child needs EXPANDING before it resolves: a losing grandchild is
+			// what makes the child a win for the root's mover, and only the child the
+			// search actually walks gets a table entry.
+			tree[c] = [`${c}1`];
+		}
+		// At a grandchild the ROOT'S MOVER is on turn again, so 'moverWins' there is
+		// what makes the child in between a loss for the opponent — the verdicts are
+		// mover-relative and flip with ply parity, which is what made three of this
+		// file's earlier tests wrong.
+		const ends: Record<string, Verdict> = {
+			a1: 'moverWins',
+			b1: 'moverWins',
+			c1: 'moverWins',
+			d1: 'moverWins',
+			e1: 'moverWins',
+		};
+		const p = game(tree, ends, 4);
+		const r = solve(p, 'root', 4);
+		expect(r.proved).toBe(true);
+		expect(r.via.length).toBeGreaterThan(0);
+		// Sound: each named child is one the root's mover really wins through.
+		for (const c of r.via) expect(solve(p, c, 3).refuted).toBe(true);
+		// And a lower bound: five children qualify, and the search need not say so.
+		expect(r.via.length).toBeLessThanOrEqual(5);
+	});
+
 	it('keeps INF finite enough to sum without overflowing', () => {
 		// delta is a SUM over children. With INF at Number.MAX_SAFE_INTEGER, a node
 		// with two refuted children would overflow into nonsense.

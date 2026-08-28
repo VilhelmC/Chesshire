@@ -107,19 +107,24 @@ export type Result<S> = {
 	/** The principal variation, root first, as far as the proof determines it. */
 	line: S[];
 	/**
-	 * The children through which the ROOT'S MOVER achieves their goal.
+	 * WITNESSES: children through which the root's mover was SHOWN to achieve
+	 * their goal. **Not the complete set, and the difference matters.**
 	 *
-	 * A REFUTATION IS NOT A SHRUG — it is the enumeration of the other side's
-	 * saving resources, and the rung below reads their price. Asked of a defender
-	 * node, this is every reply that survives; if all of them give up a man worth
-	 * V, then V is won, which is Hall's condition with the survivors supplied by
-	 * the search rather than guessed at.
+	 * The first version of this comment claimed it was "every reply that
+	 * survives", and a panel built on that claim printed "1 reply survives" for a
+	 * position with twenty-nine. The reason is the search's whole design: df-pn
+	 * stops the moment `phi(root)` crosses its threshold, which takes ONE child
+	 * with `delta = 0`. Every other child keeps its `init` numbers, so it is
+	 * indistinguishable here from a child that loses. Measured on `ohoTK` after
+	 * ♕f5–b1: `via` = 1, the truth = 29.
 	 *
-	 * Will: "the scenario requires a close mate that can be discharged only by
-	 * sacrificing the queen." The mate is refuted and the queen is the price of
-	 * refuting it — so the two rungs compose, and this is the object they compose
-	 * through. Throwing it away, as the first version did, is what made the
-	 * material rungs re-search from scratch.
+	 * So this is a LOWER BOUND on the saving resources — enough to say "they have
+	 * an answer, and here is one", never enough to say "they have exactly n". A
+	 * caller that needs the enumeration — Hall's condition needs it, since "every
+	 * survivor gives up a man worth V" quantifies over all of them — must solve
+	 * each child separately and pay for it. `ladder.ts`'s `survivingReplies` is
+	 * that, and it is deliberately on-demand rather than folded in here, because
+	 * an enumeration nobody asked for costs a solve per legal move.
 	 *
 	 * Empty when the mover does not achieve their goal.
 	 */

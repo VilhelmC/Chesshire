@@ -12,6 +12,21 @@ import 'chessground/assets/chessground.base.css';
 import 'chessground/assets/chessground.brown.css';
 import 'chessground/assets/chessground.cburnett.css';
 
+/**
+ * One thing drawn on the board.
+ *
+ * `dest` omitted is a CIRCLE on `orig` rather than an arrow — a fact about a
+ * square has no direction, and inventing one is a lie about the data. `label` is
+ * drawn at the arrow head, so a weight and the move it belongs to are read in one
+ * place.
+ *
+ * Declared here, with the board, rather than in whichever panel needed it first.
+ * It lived in `ComplexPanel` and every later panel imported it from there, which
+ * made a display type that has nothing to do with the deficiency formalism into a
+ * dependency on a module scheduled for the attic.
+ */
+export type Shape = { orig: string; dest?: string; brush: string; label?: string };
+
 export type BoardProps = {
 	fen: string;
 	orientation?: 'white' | 'black';
@@ -24,13 +39,14 @@ export type BoardProps = {
 	 *   analysis, where restricting to the side to move just looks broken.
 	 */
 	movableColor?: 'auto' | 'both';
+	// (see `Shape`, exported above, for the arrow vocabulary)
 	lastMove?: [string, string];
 	/**
 	 * Arrows. Alongside chessground's stock brushes, `q0`–`q4` are registered
 	 * below as a quality ramp: one hue, strong-to-faint, thick-to-thin, so move
 	 * quality is carried by two channels rather than colour alone.
 	 */
-	arrows?: { orig: string; dest?: string; brush: string; label?: string }[];
+	arrows?: Shape[];
 	onMove?: (uci: string) => void;
 	/**
 	 * A square was clicked. Used by the Lab to choose what to inspect; ordinary

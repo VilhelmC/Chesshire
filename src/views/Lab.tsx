@@ -45,7 +45,9 @@ import PUZZLES from '../data/labPuzzles.json';
 import LEDGER from '../data/ledgerBuckets.json';
 import { recall, remember } from '../data/viewState';
 import { LedgerPanel } from '../components/LedgerPanel';
-import { ComplexPanel, type Shape as ComplexShape } from '../components/ComplexPanel';
+import { ComplexPanel } from '../components/ComplexPanel';
+import { LadderPanel } from '../components/LadderPanel';
+import type { Shape as ComplexShape } from '../components/Board';
 import { build as buildGraph } from '../domain/graph';
 import { shapesFor, describe as readGraph, explainCover, explainCouplings, LAYERS, type Layer } from '../domain/graphShapes';
 import { gamma, concede, classify2 } from '../domain/cover2';
@@ -1322,7 +1324,17 @@ export function Lab() {
 								</table>
 								)}
 
-								{step && at > 0 && <ComplexPanel pos={step.pos} played={step.played} plyKey={key} onShapes={setComplexShapes} />}
+								{/*
+								  * THE LADDER IS THE PANEL NOW. `ComplexPanel` is Stack 3 and is on its
+								  * way to the attic (#35); it stays reachable behind the old-stack
+								  * checkbox until then, so a disagreement between the two can still be
+								  * read side by side rather than remembered.
+								  */}
+								{step && at > 0 && <LadderPanel pos={step.pos} played={step.played} plyKey={key} onShapes={setComplexShapes} />}
+
+								{step && at > 0 && showOld && (
+									<ComplexPanel pos={step.pos} played={step.played} plyKey={key} />
+								)}
 
 								{step && at > 0 && showOld && (
 									<LedgerPanel pos={step.pos} played={step.played} plyKey={key} engine={engineRows} />

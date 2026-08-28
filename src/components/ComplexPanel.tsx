@@ -58,6 +58,7 @@ import { stateOf } from '../domain/state';
 import { V } from '../domain/exchange';
 import { MATE, MATE_STEP } from '../domain/complex';
 import { color, space, text, mono } from '../ui/theme';
+import type { Shape } from './Board';
 import { Section } from '../ui/primitives';
 
 /** The arrival horizon the gate runs at. Changing it changes every number here. */
@@ -207,7 +208,9 @@ function read(pos: Chess, played: string, key: string): Reading {
 	};
 }
 
-export type Shape = { orig: string; dest?: string; brush: string; label?: string };
+// Declared with the board now — see `Board.tsx`. Re-exported here only so the
+// Lab's existing import keeps working while this panel is on its way out.
+export type { Shape };
 
 /**
  * One row, drawn.

@@ -482,3 +482,273 @@ export function materialChoose(pos: Chess): { value: number; moves: NormalMove[]
 	}
 	return { value: best - base, moves };
 }
+
+// ---------------------------------------------------------------------------
+// THE REPORT — the rungs with their reasons, which is the product.
+//
+// `ladderChoose` answers "what is the best move". An engine does that. What no
+// engine prints, and what this exists for, is the other half: WHY NOT MORE.
+// Every rung above the answer was REFUTED, and a refutation has structure — the
+// closest attempt, and the reply that held it down.
+// ---------------------------------------------------------------------------
+
+/**
+ * One of our moves, and what the defender did about it.
+ *
+ * `witness` and `survivors` are NOT the same claim and must never be printed as
+ * if they were. A witness is one reply the search exhibited — free, and a lower
+ * bound. `survivors` is the complete enumeration, which costs a solve per legal
+ * reply and is only ever filled in by `survivingReplies` when something actually
+ * asks. A panel that says "1 reply survives" on the strength of a witness is
+ * stating a falsehood; on `ohoTK` the witness count is 1 and the truth is 29.
+ */
+export type Attempt = {
+	move: NormalMove;
+	/** Mate rung: ONE reply the search showed survives. Absent when this move mates. */
+	witness?: NormalMove;
+	/** Mate rung: every surviving reply, when someone paid for the enumeration. */
+	survivors?: NormalMove[];
+	/** Material rungs: the swing this move GUARANTEES, against `base`. */
+	value?: number;
+	/** Material rungs: the reply that enforces it. */
+	held?: NormalMove | null;
+	/** True when the move was proved — the defender has nothing. */
+	proved?: boolean;
+};
+
+/**
+ * EVERY reply that survives our move, by solving each one.
+ *
+ * The honest form of the question the ladder's mate rung asks, and the expensive
+ * one: a solve per legal reply rather than one solve that stops at the first
+ * answer. It is not called during `ladderReport` — thirty moves times thirty
+ * replies is a thousand searches for a table nobody has opened yet — and is
+ * instead what the proof view calls for the one move a reader points at.
+ *
+ * This is also what Hall's condition needs. "Every escape costs them a man worth
+ * V" is a statement about ALL survivors, and a witness cannot support it.
+ */
+export function survivingReplies(pos: Chess, move: NormalMove, attacker: Color, depth: number): NormalMove[] {
+	const child = after(pos, move);
+	const goal = mateGoal(attacker, { narrow: true, seed: true });
+	const out: NormalMove[] = [];
+	for (const reply of allMoves(child)) {
+		// At the grandchild WE move, so our goal being PROVED there is the defender
+		// having failed. Anything else — proved false, or unresolved — leaves them
+		// alive as far as this depth can tell, and is reported as surviving.
+		if (!solve(goal, after(child, reply), depth - 2).proved) out.push(reply);
+	}
+	return out;
+}
+
+export type RungReport = {
+	/** What was asked: mate, or a material swing in centipawns. */
+	rung: 'mate' | number;
+	proved: boolean;
+	/** The answer set when proved. Several members is a genuine dual. */
+	moves: NormalMove[];
+	/**
+	 * When refuted: the nearest miss, and what answered it.
+	 *
+	 * `move` is our best attempt at this rung, `held` is the defender's reply that
+	 * kept it below the bar, and `value` is what it was held to. That sentence —
+	 * "you cannot win the rook, because after ♗c5+ they play ♚a2" — is the thing
+	 * a trainer needs and a centipawn score cannot say.
+	 */
+	miss?: { move: NormalMove; held: NormalMove | null; value: number };
+	/**
+	 * Every move tried at this rung, nearest first.
+	 *
+	 * The `miss` above is `attempts[0]` said as a sentence. The array is here
+	 * because a panel that shows only the nearest miss is asking the reader to
+	 * trust that the other thirty were checked, and this whole stack exists so that
+	 * nothing has to be trusted.
+	 */
+	attempts: Attempt[];
+	nodes: number;
+};
+
+export type LadderReport = {
+	rungs: RungReport[];
+	value: number | 'mate' | null;
+	moves: NormalMove[];
+	forced: boolean;
+	nodes: number;
+	/** Material as it stands, attacker's side. Every rung's swing is against this. */
+	base: number;
+};
+
+/** `guarantees`, but reporting WHICH reply held the move down. */
+function guaranteeWithHeld(
+	pos: Chess,
+	move: NormalMove,
+	attacker: Color,
+): { value: number; held: NormalMove | null } {
+	const child = after(pos, move);
+	const replies = allMoves(child);
+	if (!replies.length)
+		return { value: child.isCheckmate() ? Infinity : settled(child.board, child.turn, attacker), held: null };
+	let worst = Infinity;
+	let held: NormalMove | null = null;
+	for (const r of replies) {
+		const next = after(child, r);
+		const v = next.isCheckmate() ? Infinity : settled(next.board, next.turn, attacker);
+		if (v < worst) {
+			worst = v;
+			held = r;
+		}
+	}
+	return { value: worst, held };
+}
+
+/**
+ * Name every legal move of `pos` by the position it produces.
+ *
+ * `pns` speaks in STATES because it knows no chess — `via` and `line` are
+ * positions, and a position is not something a reader can be shown. One pass over
+ * the legal moves turns them back into moves, which is cheaper than threading a
+ * move through the engine and keeps the engine domain-free.
+ */
+function byResult(pos: Chess): Map<string, NormalMove> {
+	const m = new Map<string, NormalMove>();
+	for (const move of allMoves(pos)) m.set(positionKey(after(pos, move)), move);
+	return m;
+}
+
+/** A move, and what the defender may answer with. */
+export type ProofNode = { move: NormalMove; mate: boolean; kids: ProofNode[] };
+
+/**
+ * The mate, drawn out: our move, every reply, our answer to each.
+ *
+ * THIS IS THE CERTIFICATE, not an illustration of it. A principal variation shows
+ * one line and asks the reader to assume the rest; a mate is only proved if EVERY
+ * reply is answered, so every reply is here. The recursion stops when the position
+ * is mate — never on a depth guess — and `depth` is only the bound the proof was
+ * found under.
+ *
+ * Built after the fact rather than during the search because `solve` reports the
+ * line only for the side that PROVES its goal, and a proved mate is a REFUTED
+ * defence: the defender's node has no line to give.
+ */
+export function mateTree(pos: Chess, move: NormalMove, attacker: Color, depth: number): ProofNode {
+	const child = after(pos, move);
+	if (child.isCheckmate()) return { move, mate: true, kids: [] };
+	if (depth <= 1) return { move, mate: false, kids: [] };
+	const goal = mateGoal(attacker, { narrow: true, seed: true });
+	const kids: ProofNode[] = [];
+	for (const reply of allMoves(child)) {
+		const next = after(child, reply);
+		// Our answer to this reply: the first of our moves after which they are
+		// again lost. There may be several; the tree shows one, and the rung's
+		// answer set above it is where duals are counted.
+		let answer: ProofNode | null = null;
+		for (const m2 of relevantMoves(next, other(attacker))) {
+			// Mate on the board first: it is one call, and at the depth boundary it is
+			// the only test that can still answer — `solve` with nothing left to spend
+			// reports the defender surviving, which is true of the search and false of
+			// the position.
+			if (after(next, m2).isCheckmate()) {
+				answer = { move: m2, mate: true, kids: [] };
+				break;
+			}
+			if (depth >= 4 && solve(goal, after(next, m2), depth - 3).refuted) {
+				answer = mateTree(next, m2, attacker, depth - 2);
+				break;
+			}
+		}
+		kids.push({ move: reply, mate: false, kids: answer ? [answer] : [] });
+	}
+	return { move, mate: false, kids };
+}
+
+/**
+ * The ladder, with its working shown.
+ *
+ * Rungs descend by bound and stop at the first that answers — and each one that
+ * did NOT answer carries its nearest miss AND the full attempt list, so the
+ * exclusion is legible rather than merely asserted.
+ */
+export function ladderReport(pos: Chess, depth = 3): LadderReport {
+	const attacker = pos.turn;
+	const base = materialFor(pos.board, attacker);
+	const rungReports: RungReport[] = [];
+	let nodes = 0;
+
+	// Rung 1 — the king.
+	const mateMoves: NormalMove[] = [];
+	const mateTries: Attempt[] = [];
+	const goal = mateGoal(attacker, { narrow: true, seed: true });
+	for (const m of allMoves(pos)) {
+		const child = after(pos, m);
+		const r = solve(goal, child, depth - 1);
+		nodes += r.nodes;
+		if (r.refuted) {
+			mateMoves.push(m);
+			mateTries.push({ move: m, proved: true });
+			continue;
+		}
+		// ONE WITNESS, AND IT IS LABELLED AS ONE.
+		//
+		// `via` is whatever df-pn resolved before it stopped, which is one child —
+		// the search's whole point is to stop there. An earlier version of this code
+		// called the list `survivors` and the panel printed its LENGTH as "n replies
+		// survive", a number that was 1 everywhere because the search stops at 1,
+		// against a true count of 29 on `ohoTK` after ♕f5–b1. The complete
+		// enumeration exists, costs a solve per reply, lives in `survivingReplies`,
+		// and nothing calls it until a reader asks for that one move.
+		const names = r.via.length ? byResult(child) : null;
+		const witness = r.via.length ? names!.get(positionKey(r.via[0])) : undefined;
+		mateTries.push({ move: m, witness });
+	}
+	// Proved first, then the moves with a witness, then the ones the search never
+	// resolved. NOT sorted by nearness — there is no cheap measure of it, and the
+	// version that sorted on witness count was sorting on a constant.
+	const rank = (t: Attempt) => (t.proved ? 0 : t.witness ? 1 : 2);
+	mateTries.sort((a, b) => rank(a) - rank(b));
+	const nearMate = mateTries.find((t) => t.witness);
+	rungReports.push({
+		rung: 'mate',
+		proved: mateMoves.length > 0,
+		moves: mateMoves,
+		miss: nearMate ? { move: nearMate.move, held: nearMate.witness ?? null, value: 0 } : undefined,
+		attempts: mateTries,
+		nodes,
+	});
+	if (mateMoves.length) return { rungs: rungReports, value: 'mate', moves: mateMoves, forced: true, nodes, base };
+
+	// The material rungs, in one pass. Every move's guaranteed swing, and what
+	// held it — then the rungs are read off that by threshold.
+	const scored = allMoves(pos).map((m) => ({ m, ...guaranteeWithHeld(pos, m, attacker) }));
+	let best = -Infinity;
+	for (const s of scored) if (s.value > best) best = s.value;
+	const swing = best - base;
+	// One attempt list, shared by every material rung: the pass is the same
+	// computation for all of them, and the rungs differ only in where the bar sits.
+	const tries: Attempt[] = [...scored]
+		.sort((a, b) => b.value - a.value)
+		.map((s) => ({ move: s.m, value: s.value - base, held: s.held }));
+
+	for (const want of rungs(pos, attacker)) {
+		const got = scored.filter((s) => s.value - base >= want - 0.5);
+		if (got.length) {
+			rungReports.push({ rung: want, proved: true, moves: got.map((s) => s.m), attempts: tries, nodes: 0 });
+			return { rungs: rungReports, value: want, moves: got.map((s) => s.m), forced: true, nodes, base };
+		}
+		// Refuted. The nearest miss is the move that came closest, and the reply
+		// that held it.
+		const near = tries[0];
+		rungReports.push({
+			rung: want,
+			proved: false,
+			moves: [],
+			miss: near ? { move: near.move, held: near.held ?? null, value: near.value! } : undefined,
+			attempts: tries,
+			nodes: 0,
+		});
+	}
+
+	// The bottom rung: best exchange, an opinion rather than a proof.
+	const bottom = scored.filter((s) => s.value > best - 0.5).map((s) => s.m);
+	return { rungs: rungReports, value: swing, moves: bottom, forced: false, nodes, base };
+}
