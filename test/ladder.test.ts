@@ -17,6 +17,9 @@ import {
 	ladderReport,
 	mateTree,
 	survivingReplies,
+	quiesce,
+	settled,
+	materialFor,
 } from '../src/domain/ladder';
 
 // UCI SPELLS A KNIGHT 'n'. Taking the first letter of the role name spells it
@@ -246,6 +249,106 @@ describe('the ladder report', () => {
 				expect(reply.kids).toHaveLength(1);
 				expect(reply.kids[0].mate).toBe(true);
 			}
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// THE LEAF, AND THE SIGN.
+//
+// Two defects found on the same afternoon, both by a REFEREE rather than by a
+// test — `scripts/guarantee-depth.mjs` had to reproduce `guarantees` exactly at
+// depth 2 before it could be trusted to judge depth 4, and the pairs where it
+// refused were the bug. Neither would have been caught by asking the corpus
+// whether the answer was right: the first makes a losing move look like the best
+// on the board, and the corpus has no opinion about moves it does not list.
+//
+// Every position below was CHECKED before it was written down. Two earlier
+// batches of hand-typed FENs in this file were illegal or did not contain the
+// thing they claimed to, which is its own small lesson.
+// ---------------------------------------------------------------------------
+describe('what a guarantee is worth', () => {
+	// White ♖a1 ♔g1 + f2 g2 h2; Black ♜d8 ♚g8 + f7 g7 h7. Material level, and the
+	// rook on a1 is the only thing covering the back rank.
+	const BACK_RANK = '3r2k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1';
+
+	it('scores walking into mate as the WORST outcome, not the best', () => {
+		// THE SIGN BUG. `guarantees` reads a checkmate at two different plies:
+		// after OUR move, where it means we delivered it, and after THEIR reply,
+		// where it means we walked into it. Both branches read `Infinity`, one ply
+		// apart, opposite meaning, same spelling.
+		//
+		// ♖a1–a4 steps off the back rank and allows ♜d1#. It scored +∞ — better
+		// than every other move, and `Infinity >= want` clears every material rung,
+		// so it was reported as a FORCED win of the largest piece on the board.
+		const pos = positionFromFen(BACK_RANK);
+		const a4 = allMoves(pos).find((m) => name(m) === 'a1a4')!;
+		expect(a4).toBeDefined();
+		expect(guarantees(pos, a4, 'white')).toBe(-Infinity);
+		// And so the rungs do not choose it. Every move they DO choose survives —
+		// asserted over the whole set rather than by naming one, because the point
+		// is that nothing scoring −∞ can win a maximum.
+		const chosen = materialChoose(pos).moves;
+		expect(chosen.map(name)).not.toContain('a1a4');
+		for (const m of chosen) expect(guarantees(pos, m, 'white')).toBeGreaterThan(-Infinity);
+	});
+
+	it('still scores mate we DELIVER as the best outcome', () => {
+		// The other side of the same coin, so the fix cannot be "flip the sign".
+		// Same position without the black rook: ♖a1–a8 is mate.
+		const pos = positionFromFen('6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1');
+		const a8 = allMoves(pos).find((m) => name(m) === 'a1a8')!;
+		expect(guarantees(pos, a8, 'white')).toBe(Infinity);
+		expect(materialChoose(pos).moves.map(name)).toEqual(['a1a8']);
+	});
+});
+
+describe('quiescence at the leaf', () => {
+	// TWO HANGING MEN, ONLY ONE OF WHICH CAN BE SAVED — `settled`'s own comment
+	// naming its own limit. Black ♜b8 ♝a7 ♚e8; White ♖a1 ♘b5 ♔e1. Black is +10.
+	// ♜xb5 wins the knight; ♖xa7 wins the bishop straight back.
+	const TWO_HANGING = '1r2k3/b7/8/1N6/8/8/8/R3K3 b - - 0 1';
+
+	it('does not report a position as settled mid-exchange', () => {
+		const pos = positionFromFen(TWO_HANGING);
+		const material = materialFor(pos.board, 'black');
+		// The one-exchange leaf credits Black with the whole knight and never sees
+		// the bishop go. That gap is the horizon effect, and over the corpus it was
+		// 15.8% of every claim the ladder called forced.
+		expect(settled(pos.board, 'black', 'black')).toBe(material + 320);
+		// Quiescence plays both captures out and lands back where it started.
+		expect(quiesce(pos, 'black')).toBe(material);
+	});
+
+	it('lets a side DECLINE a capture — stand-pat is what makes it sound', () => {
+		// Black ♛a4 can take the pawn on d4, which is defended by e3, and lose the
+		// queen for it. Without stand-pat a quiescence forces that capture and
+		// invents a loss no player would accept. Declining is not an approximation;
+		// it is the rule of chess.
+		const pos = positionFromFen('4k3/8/8/8/q2P4/4P3/8/4K3 b - - 0 1');
+		expect(quiesce(pos, 'black')).toBe(materialFor(pos.board, 'black'));
+	});
+
+	it('is bounded by the material on the board, so it needs no depth limit', () => {
+		// Every move it considers removes a man or promotes a pawn, so the
+		// recursion terminates on its own. A cap here would be a guess, and this
+		// project has spent three corrections on guesses that looked like limits.
+		const pos = positionFromFen('r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 4 4');
+		expect(Number.isFinite(quiesce(pos, 'white'))).toBe(true);
+	});
+
+	it('orders captures without changing the answer', () => {
+		// Most-valuable-victim ordering cut this from 1.7ms mean and 52ms worst to
+		// 0.4ms and 4ms. It decides which capture is tried FIRST and nothing else:
+		// asserted against a full window, which cannot cut at all, so if the
+		// ordering were filtering these would differ.
+		for (const fen of [
+			'r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 4 4',
+			TWO_HANGING,
+			'6k1/5ppp/8/q7/8/8/3R4/3R3K w - - 0 1',
+		]) {
+			const pos = positionFromFen(fen);
+			expect(quiesce(pos, pos.turn, -Infinity, Infinity)).toBe(quiesce(pos, pos.turn));
 		}
 	});
 });

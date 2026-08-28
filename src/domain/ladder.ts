@@ -194,6 +194,99 @@ export function materialFor(board: Board, side: Color): number {
  * only one of which can be saved. That is a real limit of the horizon and it is
  * why the search has a depth rather than relying on this.
  */
+/**
+ * Every capture, until neither side wants another — the leaf evaluation that
+ * `settled` approximates with one exchange.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THE ONE-EXCHANGE VERSION IS NOT ENOUGH, MEASURED.
+ *
+ * `settled`'s own comment names the limit exactly: "what this does NOT capture is
+ * interaction BETWEEN squares — two hanging men, only one of which can be saved."
+ * It credits the side to move with their single best exchange and stops, so the
+ * opponent's answer to that exchange is over the horizon.
+ *
+ * `scripts/guarantee-depth.mjs` puts a number on it. Comparing the ladder's
+ * claim against the same question asked two plies deeper — same leaf evaluation,
+ * same parity, so the only variable is depth — 18.3% of forced material claims
+ * came in lower, median 100cp. One pawn, handed straight back. That is the
+ * horizon effect, and quiescence is its standard and non-negotiable answer: a
+ * search whose leaves are unstable measures the horizon rather than the position.
+ *
+ * ---------------------------------------------------------------------------
+ * STAND-PAT IS WHY THIS IS NOT A HEURISTIC.
+ *
+ * At every node the side to move may DECLINE to capture and take the position as
+ * it stands. That is not an approximation, it is the rule of chess — nobody is
+ * obliged to capture — so the value returned is a real lower bound for the
+ * maximiser and a real upper bound for the minimiser. Without stand-pat the
+ * search would force both sides into losing captures and invent losses that
+ * neither player would accept.
+ *
+ * Termination needs no cap and gets none: every move considered removes a man
+ * from the board or promotes a pawn, so the recursion is bounded by the material
+ * on it. A depth limit here would be a guess, and this project has spent three
+ * corrections on guesses that looked like limits.
+ * ---------------------------------------------------------------------------
+ */
+export function quiesce(pos: Chess, attacker: Color, alpha = -Infinity, beta = Infinity): number {
+	const maximising = pos.turn === attacker;
+	// The score if nothing further is taken. Also the bound that lets a side
+	// refuse a capture that loses material.
+	const stand = materialFor(pos.board, attacker);
+	if (maximising) {
+		if (stand >= beta) return stand;
+		if (stand > alpha) alpha = stand;
+	} else {
+		if (stand <= alpha) return stand;
+		if (stand < beta) beta = stand;
+	}
+
+	// ORDERED, WHICH CHANGES THE COST AND NOT THE ANSWER.
+	//
+	// Unordered this is 1.7ms on average and 52ms at the worst, which is unusable
+	// at every leaf of a search. The cutoffs were all there; they were being
+	// reached last instead of first.
+	//
+	// Most valuable victim, least valuable attacker. Taking the queen with a pawn
+	// is the move most likely to blow past `beta`, and a cutoff on the first child
+	// costs one node instead of thirty. This is alpha-beta move ordering: every
+	// capture is still searched when the bounds do not cut, so the value returned
+	// is identical. It is emphatically NOT a filter — the distinction between
+	// reordering work and skipping it is the one this project has had to restate
+	// three times.
+	const takers: { move: NormalMove; score: number }[] = [];
+	for (const move of allMoves(pos)) {
+		// Captures and promotions only: the moves that CHANGE MATERIAL, which is
+		// the only quantity this evaluation reports. A quiet move cannot alter the
+		// number, so searching it would only cost time.
+		//
+		// En passant takes a man while landing on an EMPTY square, so occupancy
+		// alone misses it. Rare, and worth a line: a quiescence that overlooks a
+		// capture reports a position as quiet when it is not, which is the exact
+		// failure this function exists to remove.
+		const victim = pos.board.get(move.to);
+		const takes = !!victim || (move.to === pos.epSquare && pos.board.get(move.from)?.role === 'pawn');
+		if (!takes && !move.promotion) continue;
+		const gain = victim ? V[victim.role] : takes ? V.pawn : 0;
+		const cost = V[pos.board.get(move.from)?.role ?? 'pawn'];
+		takers.push({ move, score: gain * 16 - cost + (move.promotion ? V[move.promotion] : 0) });
+	}
+	takers.sort((a, b) => b.score - a.score);
+
+	for (const { move } of takers) {
+		const v = quiesce(after(pos, move), attacker, alpha, beta);
+		if (maximising) {
+			if (v >= beta) return v;
+			if (v > alpha) alpha = v;
+		} else {
+			if (v <= alpha) return v;
+			if (v < beta) beta = v;
+		}
+	}
+	return maximising ? alpha : beta;
+}
+
 export function settled(board: Board, mover: Color, attacker: Color): number {
 	// SEE ONLY WHAT IS ACTUALLY ATTACKED, and this is not a micro-optimisation.
 	//
@@ -392,7 +485,7 @@ export function ladderChoose(pos: Chess, depth = 5, solveFn = solve): Verdict {
 	let bestMoves: NormalMove[] = [];
 	for (const m of moves) {
 		const child = after(pos, m);
-		const v = settled(child.board, child.turn, attacker);
+		const v = quiesce(child, attacker);
 		if (v > best + 0.5) {
 			best = v;
 			bestMoves = [m];
@@ -439,11 +532,26 @@ export function guarantees(pos: Chess, move: NormalMove, attacker: Color, floor 
 	const child = after(pos, move);
 	const replies = allMoves(child);
 	// No reply at all: mate settles it, stalemate banks whatever is on the board.
-	if (!replies.length) return child.isCheckmate() ? Infinity : settled(child.board, child.turn, attacker);
+	if (!replies.length) return child.isCheckmate() ? Infinity : quiesce(child, attacker);
 	let worst = Infinity;
 	for (const r of replies) {
 		const next = after(child, r);
-		const v = next.isCheckmate() ? Infinity : settled(next.board, next.turn, attacker);
+		// MINUS INFINITY. `next` is the position after THEIR reply, so it is OUR
+		// turn — and checkmate there means WE are mated, which is the worst
+		// outcome available, not the best.
+		//
+		// It read `Infinity`, and the two branches look identical at a glance: the
+		// one above is `child`, after OUR move, where mate means we delivered it.
+		// One ply apart, opposite sign, same spelling. So a move that walked into
+		// mate in one scored `+Infinity`, beat every other move, cleared every
+		// material rung — `Infinity >= want` for all want — and was reported as a
+		// FORCED win of the largest piece on the board.
+		//
+		// Found by a control, not by a test: the referee in
+		// `scripts/guarantee-depth.mjs` had to reproduce `guarantees` exactly at
+		// depth 2 before it could be trusted to judge depth 4, and the 33 pairs
+		// where it refused were all this.
+		const v = next.isCheckmate() ? -Infinity : quiesce(next, attacker);
 		if (v < worst) worst = v;
 		if (worst <= floor) return worst; // cannot beat what we already have
 	}
@@ -587,12 +695,27 @@ function guaranteeWithHeld(
 	const child = after(pos, move);
 	const replies = allMoves(child);
 	if (!replies.length)
-		return { value: child.isCheckmate() ? Infinity : settled(child.board, child.turn, attacker), held: null };
+		return { value: child.isCheckmate() ? Infinity : quiesce(child, attacker), held: null };
 	let worst = Infinity;
 	let held: NormalMove | null = null;
 	for (const r of replies) {
 		const next = after(child, r);
-		const v = next.isCheckmate() ? Infinity : settled(next.board, next.turn, attacker);
+		// MINUS INFINITY. `next` is the position after THEIR reply, so it is OUR
+		// turn — and checkmate there means WE are mated, which is the worst
+		// outcome available, not the best.
+		//
+		// It read `Infinity`, and the two branches look identical at a glance: the
+		// one above is `child`, after OUR move, where mate means we delivered it.
+		// One ply apart, opposite sign, same spelling. So a move that walked into
+		// mate in one scored `+Infinity`, beat every other move, cleared every
+		// material rung — `Infinity >= want` for all want — and was reported as a
+		// FORCED win of the largest piece on the board.
+		//
+		// Found by a control, not by a test: the referee in
+		// `scripts/guarantee-depth.mjs` had to reproduce `guarantees` exactly at
+		// depth 2 before it could be trusted to judge depth 4, and the 33 pairs
+		// where it refused were all this.
+		const v = next.isCheckmate() ? -Infinity : quiesce(next, attacker);
 		if (v < worst) {
 			worst = v;
 			held = r;
