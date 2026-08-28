@@ -371,13 +371,10 @@ export function ladderChoose(pos: Chess, depth = 3, solveFn = solve): Verdict {
 	const mate = answersFor(mateGoal(attacker, { narrow: true, seed: true }));
 	if (mate.length) return { value: 'mate', moves: mate, nodes, forced: true };
 
-	// Then material, descending by bound. The full generator: the zone filter is
-	// unsound here and there is no target-narrowed version to reach for.
-	const base = settled(pos.board, pos.turn, attacker);
-	for (const want of rungs(pos, attacker)) {
-		const got = answersFor(materialGoal(attacker, want, base, { seed: true }));
-		if (got.length) return { value: want, moves: got, nodes, forced: true };
-	}
+	// Then material. One pass rather than a search per rung — see `materialChoose`.
+	const base = materialFor(pos.board, attacker);
+	const mat = materialChoose(pos);
+	if (mat.value > 0.5 && mat.moves.length) return { value: mat.value, moves: mat.moves, nodes, forced: true };
 
 	// THE BOTTOM RUNG: the best immediate exchange, and it is not a proof.
 	//
@@ -402,4 +399,86 @@ export function ladderChoose(pos: Chess, depth = 3, solveFn = solve): Verdict {
 		} else if (v > best - 0.5) bestMoves.push(m);
 	}
 	return { value: best - base, moves: bestMoves, nodes, forced: false };
+}
+
+// ---------------------------------------------------------------------------
+// THE MATERIAL RUNGS, WITHOUT A SEARCH
+//
+// Will: "a piece is only capturable (with positive delta) in two possible
+// scenarios: i) it can be attacked by a lower value piece (if defended) and has
+// no escape options ii) escape options are strictly worse … It's not a full
+// search on all trades."
+//
+// Measured over the whole corpus (offbook/FINDING-MATERIAL-IS-NOT-A-SEARCH.md),
+// every forced material win is one of three things:
+//
+//   BLUNDER  27.9%  already there by SEE — the opponent erred
+//   TRAPPED  36.8%  attackable at a profit with nowhere safe to go
+//   COERCED  35.2%  the cheap branch of a forced choice
+//
+// All three are the same sentence read once: **the defender chooses, and every
+// choice costs them.** So what a move guarantees is the MINIMUM over the
+// defender's replies of what the position is then worth — one ply of their
+// choice, with SEE settling the exchange at the leaf.
+//
+// That is not an approximation of a search, it is the trichotomy stated
+// directly. A blunder shows up because no reply repairs it; a trapped man
+// because no reply saves it; a coercion because every reply that saves the
+// bigger thing gives up the smaller. One expression, three mechanisms, no tree.
+// ---------------------------------------------------------------------------
+
+/**
+ * The worst the defender can hold this move to, in material.
+ *
+ * `floor` is an alpha cut and it is EXACT rather than a heuristic: we are taking
+ * a minimum, so once a reply drags the value to or below the best move found so
+ * far, this move cannot win the comparison and the remaining replies cannot
+ * change that. Nothing is discarded that could have been the answer.
+ */
+export function guarantees(pos: Chess, move: NormalMove, attacker: Color, floor = -Infinity): number {
+	const child = after(pos, move);
+	const replies = allMoves(child);
+	// No reply at all: mate settles it, stalemate banks whatever is on the board.
+	if (!replies.length) return child.isCheckmate() ? Infinity : settled(child.board, child.turn, attacker);
+	let worst = Infinity;
+	for (const r of replies) {
+		const next = after(child, r);
+		const v = next.isCheckmate() ? Infinity : settled(next.board, next.turn, attacker);
+		if (v < worst) worst = v;
+		if (worst <= floor) return worst; // cannot beat what we already have
+	}
+	return worst;
+}
+
+/**
+ * The material rungs, run together.
+ *
+ * The rungs are ordered by value and the ladder stops at the first that answers
+ * — but a maximum over moves IS that ladder, evaluated in one pass: the best
+ * guaranteed swing is the highest rung with a non-empty answer set, and the
+ * moves achieving it are that set. Written as a scan rather than as a loop over
+ * thresholds because the two are the same computation and one of them costs a
+ * pass per rung.
+ */
+export function materialChoose(pos: Chess): { value: number; moves: NormalMove[] } {
+	const attacker = pos.turn;
+	// THE BASELINE IS WHAT WE HAVE, NOT WHAT WE COULD GET.
+	//
+	// `settled()` credits the mover with their best available exchange, which is
+	// right at a LEAF and wrong as a baseline: it prices the hanging queen into
+	// the starting position, so taking her reads as a swing of zero. The move is
+	// still chosen — it still guarantees more than any other — but it is reported
+	// as unforced, which is exactly backwards for the most forced thing on the
+	// board. A blunder is invisible to a baseline that has already spent it.
+	const base = materialFor(pos.board, attacker);
+	let best = -Infinity;
+	let moves: NormalMove[] = [];
+	for (const m of allMoves(pos)) {
+		const v = guarantees(pos, m, attacker, best - 0.5);
+		if (v > best + 0.5) {
+			best = v;
+			moves = [m];
+		} else if (v > best - 0.5) moves.push(m);
+	}
+	return { value: best - base, moves };
 }

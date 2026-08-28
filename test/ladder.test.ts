@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { makeSquare, parseSquare } from 'chessops/util';
 import { positionFromFen } from '../src/domain/chess';
-import { allMoves, relevantMoves, zoneOf, bearsOnZone, mateGoal } from '../src/domain/ladder';
+import { allMoves, relevantMoves, zoneOf, bearsOnZone, mateGoal, materialChoose, guarantees } from '../src/domain/ladder';
 
 // UCI SPELLS A KNIGHT 'n'. Taking the first letter of the role name spells it
 // 'k', which is the letter for a king — a promotion that does not exist, so it
@@ -79,5 +79,55 @@ describe('the ladder generator', () => {
 		const goal = mateGoal('white');
 		expect(goal.terminal(w, 0)).toBe('moverLoses');
 		expect(goal.terminal(b, 0)).toBe('moverWins');
+	});
+});
+
+describe('the material rungs', () => {
+	it('wins a hanging piece', () => {
+		// Black queen on d4 attacked by nothing but hanging to Nxd4? — a plain
+		// undefended man in reach. The rung must find the swing without a search.
+		const pos = positionFromFen('4k3/8/8/8/3q4/8/4N3/4K3 w - - 0 1');
+		const r = materialChoose(pos);
+		expect(r.value).toBeGreaterThan(0);
+		expect(r.moves.map(name)).toContain('e2d4');
+	});
+
+	it('claims nothing in a quiet position', () => {
+		// Nothing is hanging and nothing is trapped, so no move GUARANTEES a swing.
+		// A rung that reports a win here is reading an attack rather than a choice.
+		//
+		// Two earlier versions of this test were themselves the bug. The first used
+		// a queen attacked by a rook with the ATTACKER to move — not a piece that
+		// runs away, a piece that gets taken; it reported 900, correctly. The second
+		// used the Italian with Qf3, which is Scholar's mate; it reported Infinity,
+		// also correctly. The starting position is quiet by construction.
+		const pos = positionFromFen('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+		expect(materialChoose(pos).value).toBeLessThanOrEqual(0);
+	});
+
+	it('the alpha cut is exact — pruning changes no answer', () => {
+		// `guarantees` takes a MINIMUM, so a reply at or below the best-so-far ends
+		// the scan. That is sound only if it cannot change the maximum. Asserted
+		// against the unpruned computation rather than argued.
+		const fens = [
+			'r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 4 4',
+			'4k3/8/8/8/3q4/8/4N3/4K3 w - - 0 1',
+			'8/6P1/3k4/8/8/8/8/7K w - - 0 1',
+			'6k1/5ppp/8/q7/8/8/3R4/3R3K w - - 0 1',
+		];
+		for (const fen of fens) {
+			const pos = positionFromFen(fen);
+			const pruned = materialChoose(pos);
+			let best = -Infinity;
+			let moves: ReturnType<typeof allMoves> = [];
+			for (const m of allMoves(pos)) {
+				const v = guarantees(pos, m, pos.turn); // no floor
+				if (v > best + 0.5) {
+					best = v;
+					moves = [m];
+				} else if (v > best - 0.5) moves.push(m);
+			}
+			expect(pruned.moves.map(name).sort()).toEqual(moves.map(name).sort());
+		}
 	});
 });
