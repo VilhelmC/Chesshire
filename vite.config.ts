@@ -4,6 +4,10 @@
 // reference node types — borrowing a dependency's internals to compile our own
 // file. Declared here so it is ours.
 /// <reference types="node" />
+// Vitest reads THIS file rather than a vitest.config.ts of its own, so the test
+// run keeps the react plugin and everything else configured here. A separate
+// config would silently drop them.
+/// <reference types="vitest" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -54,5 +58,21 @@ export default defineConfig({
 	},
 	worker: {
 		format: 'es',
+	},
+	test: {
+		// ATTIC IS NOT PART OF THE BUILD OR THE SUITE.
+		//
+		// Retired code moves to `attic/` rather than being deleted — see
+		// offbook/AMEND-ARCHIVE-NOT-DELETE.md. `tsconfig.json` already excludes it
+		// by including only ["src", "test", "vite.config.ts"], so archived modules
+		// are not typechecked and their imports may dangle. Vitest has no such
+		// luck: its default include is `**/*.{test,spec}.*` from the project root,
+		// which would pick up archived tests and run them against code that is no
+		// longer wired to anything.
+		//
+		// Listing the defaults explicitly rather than spreading `configDefaults`
+		// from 'vitest/config', so this file keeps importing from 'vite' alone and
+		// the production build does not depend on vitest being installed.
+		exclude: ['**/node_modules/**', '**/dist/**', 'attic/**'],
 	},
 });
