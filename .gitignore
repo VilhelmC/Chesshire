@@ -10,3 +10,13 @@ public/engine/
 data/lichess_db_puzzle.csv.zst
 data/*.csv
 !data/puzzle_sample.csv
+
+# Scratch from the remote-session file bridge.
+#
+# `device_bash` cannot unlink, so git lock files and transfer tarballs get MOVED
+# to _to_delete/ instead of removed, and `.probe-*.ts` are esbuild entry points
+# a probe writes beside the source and deletes on the way out. All of it is
+# machine-local rubbish; 09ff653 swept about 1.7MB of it into the branch.
+_to_delete/
+.probe-*.ts
+.*-entry.ts
