@@ -19,7 +19,7 @@ import type { Chess } from 'chessops/chess';
 // naming that in the type means `move.from` is not a runtime hope.
 import type { Color, NormalMove, Role, Square } from 'chessops/types';
 import { SquareSet } from 'chessops/squareSet';
-import type { Problem } from './pns';
+import { solve, type Problem } from './pns';
 
 const PROMOTIONS: Role[] = ['queen', 'rook', 'bishop', 'knight'];
 
@@ -290,4 +290,116 @@ export function materialGoal(attacker: Color, want: number, base: number, opts: 
 				}
 			: undefined,
 	};
+}
+
+// ---------------------------------------------------------------------------
+// THE LADDER ITSELF
+//
+// Rungs in descending order of what they could win, each asked as a proof, and
+// the first one that answers YES is the position's value. A rung that answers NO
+// has been REFUTED — the enumeration under it is exhausted — which is what makes
+// the sequence a proof by exclusion rather than a search that stopped.
+// ---------------------------------------------------------------------------
+
+/**
+ * What each enemy man is worth to take, at most.
+ *
+ * `V(T)`, plus the promotion allowance when the target stands on our last rank
+ * and a pawn of ours could be the one to capture there. The opt-out SEE bound
+ * makes that TIGHT rather than conservative — the gain at a square never exceeds
+ * the man standing there, except by promotion, verified over 29,516 exchanges
+ * (offbook/AMEND-RUNG-ORDER.md). A tight bound is what lets the ladder stop at
+ * the first yes instead of continuing to check that nothing below is worth more.
+ */
+export function rungs(pos: Chess, attacker: Color): number[] {
+	const last = attacker === 'white' ? 7 : 0;
+	const hasPawn = [...pos.board[attacker]].some((s) => pos.board.get(s)?.role === 'pawn');
+	const values = new Set<number>();
+	for (const square of pos.board[other(attacker)]) {
+		const piece = pos.board.get(square);
+		if (!piece || piece.role === 'king') continue;
+		values.add(V[piece.role] + (hasPawn && square >> 3 === last ? V.queen - V.pawn : 0));
+	}
+	return [...values].sort((a, b) => b - a);
+}
+
+export type Verdict = {
+	/** 'mate', or the material swing proved. Null when nothing is forced. */
+	value: number | 'mate' | null;
+	/** Every move that achieves it. One means found; several is a genuine tie. */
+	moves: NormalMove[];
+	nodes: number;
+	/**
+	 * Was this PROVED, or is it the bottom rung's static pick?
+	 *
+	 * The distinction is the product. A forced answer comes with a certificate —
+	 * "these are all the ways, and here is why the rest fail". The bottom rung
+	 * comes with an opinion. Reporting them as the same number is what an engine
+	 * does and what this is meant not to do.
+	 */
+	forced?: boolean;
+};
+
+/**
+ * The ladder, run on one position.
+ *
+ * For each rung, the answer set is every root move after which the defender
+ * cannot prevent the goal — read off `refuted` at the child, where the defender
+ * is the one to move. The first non-empty set is the answer.
+ *
+ * A SET, not a best move. One move means the position has a single answer;
+ * several means it genuinely has several, which is what a dual is and what it
+ * should look like. That distinction is the corpus's `found` against `tied`, and
+ * collapsing it would be inventing a preference the position does not have.
+ */
+export function ladderChoose(pos: Chess, depth = 3, solveFn = solve): Verdict {
+	const attacker = pos.turn;
+	const moves = allMoves(pos);
+	let nodes = 0;
+
+	const answersFor = (goal: Problem<Chess>): NormalMove[] => {
+		const out: NormalMove[] = [];
+		for (const m of moves) {
+			const r = solveFn(goal, after(pos, m), depth - 1);
+			nodes += r.nodes;
+			if (r.refuted) out.push(m);
+		}
+		return out;
+	};
+
+	// Rung 1: the king. Nothing below matters if this answers.
+	const mate = answersFor(mateGoal(attacker, { narrow: true, seed: true }));
+	if (mate.length) return { value: 'mate', moves: mate, nodes, forced: true };
+
+	// Then material, descending by bound. The full generator: the zone filter is
+	// unsound here and there is no target-narrowed version to reach for.
+	const base = settled(pos.board, pos.turn, attacker);
+	for (const want of rungs(pos, attacker)) {
+		const got = answersFor(materialGoal(attacker, want, base, { seed: true }));
+		if (got.length) return { value: want, moves: got, nodes, forced: true };
+	}
+
+	// THE BOTTOM RUNG: the best immediate exchange, and it is not a proof.
+	//
+	// Will's array ends "[…] Pawn, highest value exchange". Every rung above this
+	// asks whether something can be FORCED and answers with a certificate. This
+	// one asks what is simply best on the board right now, which is SEE, and it is
+	// the base case the ladder falls through to.
+	//
+	// Without it the ladder is silent in a quiet position — measured at 38% of
+	// solver plies at depth 3, and still 28% at depth 5, which is not a depth
+	// problem but the honest answer "nothing is forced here". That is a true
+	// statement and a useless move recommendation, and the difference between the
+	// two is exactly what this rung is for.
+	let best = -Infinity;
+	let bestMoves: NormalMove[] = [];
+	for (const m of moves) {
+		const child = after(pos, m);
+		const v = settled(child.board, child.turn, attacker);
+		if (v > best + 0.5) {
+			best = v;
+			bestMoves = [m];
+		} else if (v > best - 0.5) bestMoves.push(m);
+	}
+	return { value: best - base, moves: bestMoves, nodes, forced: false };
 }
