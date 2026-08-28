@@ -55,8 +55,22 @@ import { color, space, text, mono } from '../ui/theme';
 import { Section } from '../ui/primitives';
 import type { Shape } from './Board';
 
-/** The ply budget the rungs run at. Every YES and every NO below is under it. */
-const DEPTH = 3;
+/**
+ * The ply budget the KING RUNG runs at. Every mate YES and NO is under it.
+ *
+ * It reaches nothing else: the material rungs are a one-ply minimum over the
+ * defender's replies with SEE at the leaf, and take no depth at all. So this is a
+ * mate horizon, not a search depth, and it was measured rather than picked
+ * (`offbook/FINDING-THE-MATE-HORIZON.md`, 2,656 solver plies):
+ *
+ *   3 → 5   found +89, wrong −51 (10.8% → 8.9%), mates +114 all correct, ×1.9
+ *   5 → 7   nothing at all, ×3.2
+ *
+ * Five is where the corpus stops paying. Three was never chosen — it was M3's
+ * probe constant and nothing ever revisited it, which is how `ohoTK` (a mate in
+ * three, five plies) read as "not forced" through the whole of #34.
+ */
+const DEPTH = 5;
 
 const MAN: Record<Role, string> = { pawn: '♟', knight: '♞', bishop: '♝', rook: '♜', queen: '♛', king: '♚' };
 

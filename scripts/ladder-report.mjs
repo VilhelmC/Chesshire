@@ -54,6 +54,9 @@ const rungName = (r) => {
 	return String(r);
 };
 
+// The panel's own horizon. Measured, not picked — see scripts/depth-sweep.mjs.
+const DEPTH = Number(process.env.LADDER_DEPTH ?? 5);
+
 const WANT = process.argv.slice(2).length
 	? process.argv.slice(2)
 	: ['1lR5W', 'ohoTK', 'K0qzR', 'ydGWl', 'yMTAV', 'TVU0i', 'SPBfy', 'WiH2C', 'vJZmr'];
@@ -75,7 +78,7 @@ for (const id of WANT) {
 	pos = play(pos, mk(p.moves[0]));
 	const want = p.moves[1];
 	const t0 = Date.now();
-	const r = M.ladderReport(pos, 3);
+	const r = M.ladderReport(pos, DEPTH);
 	const ms = Date.now() - t0;
 	const hit = r.moves.some((m) => nm(m).slice(0, 4) === want.slice(0, 4));
 
@@ -114,7 +117,7 @@ for (const id of WANT) {
 	const shown = r.rungs.find((x) => x.proved) ?? r.rungs[0];
 	console.log(`  ── the PROOF tab, rung ${asked(shown.rung)} ${'─'.repeat(45)}`);
 	if (shown.proved && shown.rung === 'mate') {
-		const tree = M.mateTree(pos, shown.moves[0], pos.turn, 3);
+		const tree = M.mateTree(pos, shown.moves[0], pos.turn, DEPTH);
 		const walk = (n, d) => {
 			console.log(`     ${'  '.repeat(d)}${nm(n.move)}${n.mate ? '#' : ''}${!n.mate && !n.kids.length && d % 2 === 1 ? '   ⚠ no answer within depth' : ''}`);
 			for (const k of n.kids) walk(k, d + 1);
@@ -133,7 +136,7 @@ for (const id of WANT) {
 				if (a.proved) right = 'MATES';
 				else if (!a.witness) right = '?  unresolved at this depth';
 				else {
-					const all = M.survivingReplies(pos, a.move, pos.turn, 3);
+					const all = M.survivingReplies(pos, a.move, pos.turn, DEPTH);
 					right = `${String(all.length).padStart(2)} ways out: ${all.slice(0, 8).map(nm).join(' ')}${all.length > 8 ? ` +${all.length - 8}` : ''}`;
 				}
 			} else

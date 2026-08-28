@@ -352,7 +352,7 @@ export type Verdict = {
  * should look like. That distinction is the corpus's `found` against `tied`, and
  * collapsing it would be inventing a preference the position does not have.
  */
-export function ladderChoose(pos: Chess, depth = 3, solveFn = solve): Verdict {
+export function ladderChoose(pos: Chess, depth = 5, solveFn = solve): Verdict {
 	const attacker = pos.turn;
 	const moves = allMoves(pos);
 	let nodes = 0;
@@ -669,7 +669,7 @@ export function mateTree(pos: Chess, move: NormalMove, attacker: Color, depth: n
  * did NOT answer carries its nearest miss AND the full attempt list, so the
  * exclusion is legible rather than merely asserted.
  */
-export function ladderReport(pos: Chess, depth = 3): LadderReport {
+export function ladderReport(pos: Chess, depth = 5): LadderReport {
 	const attacker = pos.turn;
 	const base = materialFor(pos.board, attacker);
 	const rungReports: RungReport[] = [];
