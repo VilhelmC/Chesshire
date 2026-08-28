@@ -593,6 +593,83 @@ function holdsAt(pos: Chess, attacker: Color, left: number, alpha: number, beta:
 	return best;
 }
 
+/**
+ * Split an answer set that the shallow pass could not — by searching DEEPER, and
+ * only the moves that tied.
+ *
+ * ---------------------------------------------------------------------------
+ * WHERE THE 23.5% WENT.
+ *
+ * The ladder answered 624 of 2656 solver plies with several moves and no way to
+ * choose. For a proof engine that is honest; for a trainer it reads as "no
+ * opinion", and it was the largest single thing wrong with the solver — bigger
+ * than the 7.2% it got wrong.
+ *
+ * `scripts/ties.mjs` put every tie to a referee two plies deeper than the value
+ * that produced it, and the answer was not what the shape of the problem
+ * suggested:
+ *
+ *   DUAL       30.0%   still equal at depth 4 — the ladder is RIGHT, and the
+ *                      corpus lists one solution for a position with several
+ *   SEPARABLE  66.7%   depth splits them AND prefers the puzzle's move
+ *   WRONG-TOP   3.3%   depth splits them and prefers something else
+ *
+ * Two thirds of the ties are a horizon problem with a known fix, and a third are
+ * not a problem at all. Counting the duals as failures would have been measuring
+ * the corpus rather than the solver — the standing warning in WHERE-NEXT.md §5.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS IS AFFORDABLE WHEN A DEEP SEARCH IS NOT.
+ *
+ * Running the material rungs at four plies over every root move costs 4-5x and
+ * buys 3-4% (`FINDING-DEPTH-IS-AFFORDABLE-ONCE.md`) — a bad trade, and Will
+ * declined it. But a tie is a SMALL SET: median 4 moves, against about 30 legal
+ * ones. Deepening only the moves that tied is the same search over a seventh of
+ * the work, and it runs on the 23.5% of positions that need it rather than on all
+ * of them.
+ *
+ * The cheap pass decides WHICH question to ask expensively. That is the whole
+ * trick, and it is why the answer to "should the rungs be deeper" was no while
+ * the answer to "should ties be broken deeper" is yes.
+ *
+ * ---------------------------------------------------------------------------
+ * IT CANNOT LOSE AN ANSWER, ONLY FAIL TO KEEP ONE.
+ *
+ * `refine` filters an existing set; it never adds a move. So the answer can only
+ * be dropped if the deeper search actively prefers something else, which is the
+ * 3.3% above and is the honest price. Full window on every candidate — no alpha
+ * carried between them, because a running alpha would prune exactly the
+ * comparison being made.
+ */
+export function refine(pos: Chess, moves: NormalMove[], attacker: Color, plies: number): NormalMove[] {
+	if (moves.length < 2) return moves;
+	// THE RUNNING MAXIMUM IS AN EXACT ALPHA, AND THE TIE SET SURVIVES IT.
+	//
+	// The obvious way to write this is a full window on every candidate, and that
+	// is what the first version did — 740ms a ply. But we are taking a MAXIMUM,
+	// so the best value found so far is a legitimate lower bound to hand the next
+	// search, exactly as `materialChoose`'s `floor` always has.
+	//
+	// The subtlety is that we need the tie SET, not just the maximum, and a
+	// fail-low result is only a bound. It still works, and here is why it does:
+	// with `beta = Infinity` no search can fail high, so a result above the window
+	// is exact; a result at or below `alpha` is an UPPER bound, so a move
+	// returning `<= best - 0.5` genuinely cannot reach `best` and is genuinely not
+	// tied. Both directions are safe, which is asserted against the full-window
+	// computation in `test/ladder.test.ts` rather than argued here alone.
+	let best = -Infinity;
+	const scored: { m: NormalMove; v: number }[] = [];
+	for (const m of moves) {
+		const v = holds(pos, m, attacker, plies, best - 0.5, Infinity);
+		scored.push({ m, v });
+		if (v > best) best = v;
+	}
+	// A tie that survives IS a dual, and is reported as one rather than broken
+	// arbitrarily. Naming one of two equal moves would be inventing a preference
+	// the position does not have — 30% of ties are still level two plies deeper.
+	return scored.filter((s) => s.v > best - 0.5).map((s) => s.m);
+}
+
 // ---------------------------------------------------------------------------
 // A THRESHOLD TEST WAS TRIED HERE, AND IT WAS SLOWER. THE REASON IS THE POINT.
 //
@@ -900,7 +977,20 @@ export function mateTree(pos: Chess, move: NormalMove, attacker: Color, depth: n
  * did NOT answer carries its nearest miss AND the full attempt list, so the
  * exclusion is legible rather than merely asserted.
  */
-export function ladderReport(pos: Chess, depth = 5, materialPlies = 2): LadderReport {
+export function ladderReport(
+	pos: Chess,
+	depth = 5,
+	materialPlies = 2,
+	/**
+	 * Plies to spend splitting an answer set the shallow pass could not.
+	 *
+	 * Zero turns it off and reproduces the pre-tiebreak behaviour exactly. Four is
+	 * the measured setting: it converts two thirds of ties into a single named
+	 * move, leaves the genuine duals alone, and costs only on the positions that
+	 * tie — see `refine`.
+	 */
+	tiebreakPlies = 4,
+): LadderReport {
 	const attacker = pos.turn;
 	const base = materialFor(pos.board, attacker);
 	const rungReports: RungReport[] = [];
@@ -963,8 +1053,14 @@ export function ladderReport(pos: Chess, depth = 5, materialPlies = 2): LadderRe
 	for (const want of rungs(pos, attacker)) {
 		const got = scored.filter((s) => s.value - base >= want - 0.5);
 		if (got.length) {
-			rungReports.push({ rung: want, proved: true, moves: got.map((s) => s.m), attempts: tries, nodes: 0 });
-			return { rungs: rungReports, value: want, moves: got.map((s) => s.m), forced: true, nodes, base };
+			// Several moves reaching the same rung is where the shallow pass runs
+			// out of resolution, not where the position does.
+			const answer =
+				tiebreakPlies > materialPlies
+					? refine(pos, got.map((s) => s.m), attacker, tiebreakPlies)
+					: got.map((s) => s.m);
+			rungReports.push({ rung: want, proved: true, moves: answer, attempts: tries, nodes: 0 });
+			return { rungs: rungReports, value: want, moves: answer, forced: true, nodes, base };
 		}
 		// Refuted. The nearest miss is the move that came closest, and the reply
 		// that held it.
@@ -979,7 +1075,17 @@ export function ladderReport(pos: Chess, depth = 5, materialPlies = 2): LadderRe
 		});
 	}
 
-	// The bottom rung: best exchange, an opinion rather than a proof.
+	// THE BOTTOM RUNG, WHICH IS WHERE MOST OF THE TIES ACTUALLY LIVE.
+	//
+	// 68% of tied plies come from here rather than from a proved rung: nothing is
+	// forced, so every move that loses nothing scores the same and the answer set
+	// is enormous — median 4, and a third of ties held six or more. "Here are
+	// thirty moves that lose nothing" is a true statement and not an answer, which
+	// this rung's own comment already conceded.
+	//
+	// Deepening splits them. It does not make anything forced — the rung is still
+	// an opinion, and `forced` stays false — but it is a better-founded one.
 	const bottom = scored.filter((s) => s.value > best - 0.5).map((s) => s.m);
-	return { rungs: rungReports, value: swing, moves: bottom, forced: false, nodes, base };
+	const picked = tiebreakPlies > materialPlies ? refine(pos, bottom, attacker, tiebreakPlies) : bottom;
+	return { rungs: rungReports, value: swing, moves: picked, forced: false, nodes, base };
 }

@@ -21,6 +21,7 @@ import {
 	settled,
 	materialFor,
 	holds,
+	refine,
 } from '../src/domain/ladder';
 
 // UCI SPELLS A KNIGHT 'n'. Taking the first letter of the role name spells it
@@ -392,5 +393,78 @@ describe('depth in the material rungs', () => {
 		const pos = positionFromFen('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
 		for (const m of allMoves(pos).slice(0, 6))
 			expect(holds(pos, m, 'white', 4)).toBe(holds(pos, m, 'white', 2));
+	});
+});
+
+// ---------------------------------------------------------------------------
+// TIES — the largest single thing that was wrong with the solver.
+//
+// 23.5% of solver plies came back with several moves and no way to choose. For a
+// proof engine that is honest; for a trainer it reads as "no opinion". Refereed
+// two plies deeper (`scripts/ties.mjs`), the split was 30% genuine duals, 66.7%
+// separable with the answer on top, 3.3% separable the other way.
+// ---------------------------------------------------------------------------
+describe('breaking a tie', () => {
+	it('never invents a move that was not in the set', () => {
+		// `refine` FILTERS. That is what makes it safe to run at all: the answer can
+		// only be dropped if the deeper search actively prefers something else, and
+		// it can never be replaced by something the rungs never named.
+		const pos = positionFromFen('r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 4 4');
+		const some = allMoves(pos).slice(0, 8);
+		const kept = refine(pos, some, 'white', 4);
+		const names = new Set(some.map(name));
+		expect(kept.length).toBeGreaterThan(0);
+		for (const m of kept) expect(names.has(name(m))).toBe(true);
+	});
+
+	it('leaves a single move alone without searching', () => {
+		const pos = positionFromFen('4k3/8/8/8/3q4/8/4N3/4K3 w - - 0 1');
+		const one = [allMoves(pos)[0]];
+		expect(refine(pos, one, 'white', 4)).toBe(one);
+	});
+
+	it('KEEPS a genuine dual rather than picking one arbitrarily', () => {
+		// 30% of ties are still level two plies deeper, and naming one of two equal
+		// moves would be inventing a preference the position does not have. Two
+		// symmetric rook moves along an empty rank cannot be told apart by material
+		// at any depth, and must both survive.
+		const pos = positionFromFen('4k3/8/8/8/8/8/8/R3K3 w - - 0 1');
+		const flat = allMoves(pos).filter((m) => ['a1b1', 'a1c1', 'a1d1'].includes(name(m)));
+		expect(flat).toHaveLength(3);
+		expect(refine(pos, flat, 'white', 4).map(name).sort()).toEqual(flat.map(name).sort());
+	});
+
+	it('the running alpha keeps the same set as a full window', () => {
+		// `refine` hands each search the best value found so far, which is exact for
+		// a MAXIMUM but has to be argued for a tie SET: with `beta = Infinity`
+		// nothing can fail high, so a result above the window is exact and a result
+		// at or below alpha is an upper bound — so a move that looks untied really
+		// is. Asserted rather than argued, on real positions.
+		//
+		// `scripts/ties.mjs`'s control runs the same comparison over 40 live tie
+		// sets from the corpus; this is the version that runs in CI.
+		const fens = [
+			'r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 4 4',
+			'1r2k3/b7/8/1N6/8/8/8/R3K3 b - - 0 1',
+			'3r2k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1',
+		];
+		for (const fen of fens) {
+			const pos = positionFromFen(fen);
+			const set = allMoves(pos).slice(0, 10);
+			const fast = refine(pos, set, pos.turn, 4).map(name).sort();
+			const vals = set.map((m) => ({ m, v: holds(pos, m, pos.turn, 4, -Infinity, Infinity) }));
+			const best = Math.max(...vals.map((s) => s.v));
+			const slow = vals.filter((s) => s.v > best - 0.5).map((s) => name(s.m)).sort();
+			expect(fast).toEqual(slow);
+		}
+	});
+
+	it('is off when tiebreakPlies does not exceed materialPlies', () => {
+		// The escape hatch the corpus baseline is measured against: 0 reproduces the
+		// pre-tiebreak behaviour exactly, so before/after is one argument apart.
+		const pos = positionFromFen('4k3/8/8/8/8/8/8/R3K3 w - - 0 1');
+		const off = ladderReport(pos, 5, 2, 0);
+		const on = ladderReport(pos, 5, 2, 4);
+		expect(off.moves.length).toBeGreaterThanOrEqual(on.moves.length);
 	});
 });
