@@ -521,6 +521,109 @@ export function ladderChoose(pos: Chess, depth = 5, solveFn = solve): Verdict {
 // ---------------------------------------------------------------------------
 
 /**
+ * The same question, asked further out: what does this move hold at `plies`?
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THE TRICHOTOMY NEEDED A HORIZON AFTER ALL.
+ *
+ * The comment above is still right about the MECHANISMS — every forced material
+ * win is a blunder, a trapped man or a coercion, and all three are "the defender
+ * chooses and every choice costs them". What it got wrong is that one ply of
+ * their choice is enough to see it.
+ *
+ * `scripts/ladder-misses.mjs` over the whole corpus: 98 wrong answers where a
+ * rung was proved and the puzzle's move was not in its set, and the sample is
+ * almost entirely moves whose immediate swing is ZERO. `sacrifice` 15% missed,
+ * `clearance` 13%, `attraction` 13% — every one of them "give something up now,
+ * collect later". A two-ply search cannot see later. Quiescence fixed the leaf;
+ * this is the same horizon one level above it.
+ *
+ * So the trichotomy keeps its shape and gains a depth. `plies = 2` is exactly the
+ * old expression — min over their replies, quiesce at the leaf — which is why it
+ * is the default and why every existing caller is unaffected.
+ *
+ * ---------------------------------------------------------------------------
+ * ALPHA-BETA, AND WHY IT IS NOT A CUT IN THE FORBIDDEN SENSE.
+ *
+ * The window prunes only branches that PROVABLY cannot change the value at the
+ * root: a maximiser abandons a line once the minimiser above it already has a
+ * cheaper option. Nothing is discarded that could have been the answer, which is
+ * the same argument the one-ply `floor` always made, generalised. That is a
+ * different act from narrowing the move list, which is what this project has
+ * (correctly) refused three times.
+ * ---------------------------------------------------------------------------
+ */
+export function holds(
+	pos: Chess,
+	move: NormalMove,
+	attacker: Color,
+	plies = 2,
+	alpha = -Infinity,
+	beta = Infinity,
+): number {
+	return holdsAt(after(pos, move), attacker, plies - 1, alpha, beta);
+}
+
+function holdsAt(pos: Chess, attacker: Color, left: number, alpha: number, beta: number): number {
+	// Mate is decisive and mover-relative: whoever is to move and cannot move is
+	// the one who is lost. Read at every node, not only at the leaf — a line that
+	// wins a rook and gets mated on the way is not a line that wins a rook.
+	if (pos.isCheckmate()) return pos.turn === attacker ? -Infinity : Infinity;
+	const moves = allMoves(pos);
+	if (!moves.length) return quiesce(pos, attacker); // stalemate: bank the board
+	if (left <= 0) return quiesce(pos, attacker);
+
+	if (pos.turn === attacker) {
+		let best = -Infinity;
+		for (const m of moves) {
+			const v = holdsAt(after(pos, m), attacker, left - 1, alpha, beta);
+			if (v > best) best = v;
+			if (best > alpha) alpha = best;
+			if (alpha >= beta) break;
+		}
+		return best;
+	}
+	let best = Infinity;
+	for (const m of moves) {
+		const v = holdsAt(after(pos, m), attacker, left - 1, alpha, beta);
+		if (v < best) best = v;
+		if (best < beta) beta = best;
+		if (alpha >= beta) break;
+	}
+	return best;
+}
+
+// ---------------------------------------------------------------------------
+// A THRESHOLD TEST WAS TRIED HERE, AND IT WAS SLOWER. THE REASON IS THE POINT.
+//
+// `holds` computes a value — the exact best swing over every move. The ladder
+// never asks for a value; it asks a descending sequence of THRESHOLDS and stops
+// at the first yes. So a `canForce(want)` built on a null window looked obviously
+// right: a yes/no question needs only a bound, and a one-step window gives every
+// node an immediate cutoff.
+//
+// Measured at depth 4 over 40 positions, agreeing with the maximum on 40/40:
+//
+//     exact maximum over all moves   792ms a position
+//     descending threshold tests    1713ms a position     2.2x WORSE
+//
+// Because the rungs SHARE THEIR WORK and a sequence of separate tests throws that
+// away. Positions carry 3.7 rungs on average, so the threshold form makes 3.7
+// passes over the root moves, each starting from a fresh window, and every rung
+// above the answer is a pass that fails. The single maximum makes one pass whose
+// alpha TIGHTENS as it goes, and answers every rung at once — the best swing is
+// compared against each bound for free.
+//
+// Which is what `materialChoose` already said, in a comment written before any of
+// this: "a maximum over moves IS that ladder, evaluated in one pass". The ladder's
+// descending-threshold framing is the right THEORY — it is what makes the
+// exclusion legible, and it is what the panel prints — and one maximum is the
+// right IMPLEMENTATION of it. Those are allowed to differ.
+//
+// Rule 9: measured worse, so deleted, reasoning kept.
+// ---------------------------------------------------------------------------
+
+/**
  * The worst the defender can hold this move to, in material.
  *
  * `floor` is an alpha cut and it is EXACT rather than a heuristic: we are taking
@@ -691,6 +794,7 @@ function guaranteeWithHeld(
 	pos: Chess,
 	move: NormalMove,
 	attacker: Color,
+	plies = 2,
 ): { value: number; held: NormalMove | null } {
 	const child = after(pos, move);
 	const replies = allMoves(child);
@@ -715,7 +819,11 @@ function guaranteeWithHeld(
 		// `scripts/guarantee-depth.mjs` had to reproduce `guarantees` exactly at
 		// depth 2 before it could be trusted to judge depth 4, and the 33 pairs
 		// where it refused were all this.
-		const v = next.isCheckmate() ? -Infinity : quiesce(next, attacker);
+		// `holdsAt(..., 0)` IS `quiesce`, so `plies = 2` is exactly the expression
+		// this function has always been. Depth is available and costs nothing until
+		// it is asked for — see the note above `holds` for what it buys and what it
+		// costs, both measured.
+		const v = next.isCheckmate() ? -Infinity : holdsAt(next, attacker, plies - 2, -Infinity, Infinity);
 		if (v < worst) {
 			worst = v;
 			held = r;
@@ -792,7 +900,7 @@ export function mateTree(pos: Chess, move: NormalMove, attacker: Color, depth: n
  * did NOT answer carries its nearest miss AND the full attempt list, so the
  * exclusion is legible rather than merely asserted.
  */
-export function ladderReport(pos: Chess, depth = 5): LadderReport {
+export function ladderReport(pos: Chess, depth = 5, materialPlies = 2): LadderReport {
 	const attacker = pos.turn;
 	const base = materialFor(pos.board, attacker);
 	const rungReports: RungReport[] = [];
@@ -842,7 +950,7 @@ export function ladderReport(pos: Chess, depth = 5): LadderReport {
 
 	// The material rungs, in one pass. Every move's guaranteed swing, and what
 	// held it — then the rungs are read off that by threshold.
-	const scored = allMoves(pos).map((m) => ({ m, ...guaranteeWithHeld(pos, m, attacker) }));
+	const scored = allMoves(pos).map((m) => ({ m, ...guaranteeWithHeld(pos, m, attacker, materialPlies) }));
 	let best = -Infinity;
 	for (const s of scored) if (s.value > best) best = s.value;
 	const swing = best - base;

@@ -20,6 +20,7 @@ import {
 	quiesce,
 	settled,
 	materialFor,
+	holds,
 } from '../src/domain/ladder';
 
 // UCI SPELLS A KNIGHT 'n'. Taking the first letter of the role name spells it
@@ -350,5 +351,46 @@ describe('quiescence at the leaf', () => {
 			const pos = positionFromFen(fen);
 			expect(quiesce(pos, pos.turn, -Infinity, Infinity)).toBe(quiesce(pos, pos.turn));
 		}
+	});
+});
+
+describe('depth in the material rungs', () => {
+	it('holds(2) IS guarantees — the generalisation changes nothing at the default', () => {
+		// The control that licenses `holds` being called a deeper `guarantees`
+		// rather than a different function. `scripts/rung-depth.mjs` runs it over
+		// 630 (position, move) pairs; this pins the property where it can be read.
+		//
+		// It matters because `ladderReport`'s `materialPlies` defaults to 2, so the
+		// whole corpus baseline rests on these two being the same expression.
+		const fens = [
+			'r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 4 4',
+			'1r2k3/b7/8/1N6/8/8/8/R3K3 b - - 0 1',
+			'3r2k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1',
+			'8/6P1/3k4/8/8/8/8/7K w - - 0 1',
+		];
+		for (const fen of fens) {
+			const pos = positionFromFen(fen);
+			for (const m of allMoves(pos)) expect(holds(pos, m, pos.turn, 2)).toBe(guarantees(pos, m, pos.turn));
+		}
+	});
+
+	it('reads mate at every ply, not only at the leaf', () => {
+		// A line that wins a rook and gets mated on the way is not a line that wins
+		// a rook. ♖a1–a4 steps off the back rank; at two plies that is already −∞,
+		// and it must stay −∞ however much deeper the search goes.
+		const pos = positionFromFen('3r2k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1');
+		const a4 = allMoves(pos).find((m) => name(m) === 'a1a4')!;
+		expect(holds(pos, a4, 'white', 2)).toBe(-Infinity);
+		expect(holds(pos, a4, 'white', 4)).toBe(-Infinity);
+	});
+
+	it('deepening never lowers a value that was already exact', () => {
+		// Not a general property of search — it is a property of THIS position
+		// class, and it is the one the referee measures over the corpus. Asserted
+		// here on a quiet position where two plies already see everything, so a
+		// deeper search must agree rather than discover a refutation.
+		const pos = positionFromFen('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+		for (const m of allMoves(pos).slice(0, 6))
+			expect(holds(pos, m, 'white', 4)).toBe(holds(pos, m, 'white', 2));
 	});
 });
