@@ -8,6 +8,7 @@
 import { load } from './_ladder-lib.mjs';
 
 const M = await load(`export { forks, mates, moves, hangs, costs, safeMoves, unsafe } from './src/domain/primitives';
+export { pins, pinsOn, pinsCreated, pinsAgainstMover, pinsHeld, pinMark } from './src/domain/primitives/pin';
 export { positionFromFen, fenOf } from './src/domain/chess';
 export { makeSquare } from 'chessops/util';`);
 
@@ -16,13 +17,11 @@ const nm = (m) => M.makeSquare(m.from) + M.makeSquare(m.to) + (m.promotion ? UCI
 
 const CASES = [
 	['knight forks king and rook', '2r3k1/5ppp/8/3N4/8/8/5PPP/6K1 w - - 0 1'],
-	['the forking man can simply be taken', '2rb2k1/5ppp/8/3N4/8/8/5PPP/6K1 w - - 0 1'],
-	['a fork of two pawns is not a fork', '7k/2p3p1/8/8/5N2/8/5PPP/6K1 w - - 0 1'],
-	['mate in one, back rank', '6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1'],
-	['no mate — the king has luft', '6k1/5pp1/7p/8/8/8/5PPP/R5K1 w - - 0 1'],
-	['promotion square held by a rook', '1r6/p5P1/P7/3k1PK1/2p5/1p6/4R3/8 b - - 0 56'],
-	['a hanging queen', '6k1/5ppp/8/3q4/3R4/8/5PPP/6K1 b - - 0 1'],
-	['a pawn on the seventh', '6k1/4P3/8/8/8/8/5PPP/6K1 w - - 0 1'],
+	['a pin: the knight cannot leave the d-file', '3k4/8/8/3n4/8/8/8/3RK3 b - - 0 1'],
+	['NOT a pin: two men on the ray', '3k4/8/3p4/3n4/8/8/8/3RK3 b - - 0 1'],
+	['NOT a pin: the KING is in front (that is check)', '3n4/8/8/3k4/8/8/8/3RK3 b - - 0 1'],
+	['a would-be RELATIVE pin, which no longer ships', '3qk3/8/8/3n4/8/8/8/3RK3 b - - 0 1'],
+	['a move that CREATES the pin', '3k4/8/8/3n4/8/8/8/K6R w - - 0 1'],
 ];
 
 for (const [name, fen] of CASES) {
@@ -49,7 +48,12 @@ for (const [name, fen] of CASES) {
 		.filter(([, c]) => c > 0)
 		.sort((a, b) => b[1] - a[1]);
 	console.log(
-		`  drops:  ${drops.slice(0, 6).map(([u, c, un]) => `${u} −${c}${un.square === null ? ' (unringed)' : `@${M.makeSquare(un.square)}`}`).join('  ') || '(none)'}`,
+		`  drops:  ${drops.slice(0, 4).map(([u, c, un]) => `${u} -${c}${un.square === null ? ' (unringed)' : `@${M.makeSquare(un.square)}`}`).join('  ') || '(none)'}`,
 	);
+	const ps = M.pins(pos);
+	console.log(`  pins:   ${ps.map((x) => `${M.makeSquare(x.shield)}<-${M.makeSquare(x.pinner)} (${x.colour}'s, king ${M.makeSquare(x.king)})`).join('   ') || '(none)'}`);
+	if (ps.length) console.log(`  mark:   "${M.pinMark(ps[0]).note}"`);
+	const makers = all.filter((m) => M.pinsCreated(pos, m).length);
+	console.log(`  pinning moves: ${makers.map(nm).join(' ') || '(none)'}`);
 }
 process.exit(0);
