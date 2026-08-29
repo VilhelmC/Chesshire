@@ -53,6 +53,8 @@ import type { Shape as ComplexShape } from '../components/Board';
 import { build as buildGraph } from '../domain/graph';
 import { shapesFor, describe as readGraph, explainCover, explainCouplings, LAYERS, type Layer } from '../domain/graphShapes';
 import { gamma, concede, classify2 } from '../domain/cover2';
+import { TrainingWheels } from '../components/TrainingWheels';
+import { wheelShapes, wheelNotes, type Wheel } from '../domain/wheels';
 
 /** Per-ply result, precomputed: hit, ties at the top, legal moves, is-solver. */
 export type PlyFlags = {
@@ -446,6 +448,13 @@ export function Lab() {
 	/** Clicking a square focuses the overlay on that piece; a full board is a hairball. */
 	const [focus, setFocus] = useState<number | null>(null);
 	/**
+	 * The training-wheels menu (PLAN-EXPLAINER §5). Independent of whether an
+	 * explanation is open, which is the point of it being a separate control: a
+	 * reader looking at a position wants to name what is on the board without
+	 * first asking a question about a move.
+	 */
+	const [wheels, setWheels] = useState<ReadonlySet<Wheel>>(() => new Set<Wheel>());
+	/**
 	 * Train's "show options": every engine move drawn on the board, weighted.
 	 *
 	 * The toolbar's options button used to toggle the Stockfish COLUMN, which is a
@@ -616,6 +625,15 @@ export function Lab() {
 		const owed = coverSide === 'toMove' ? step.pos.turn : step.pos.turn === 'white' ? 'black' : 'white';
 		return gamma(step.pos, { owed });
 	}, [step, graphLayer, coverSide]);
+
+	// Every wheel is a pure board computation — the most expensive is a few
+	// milliseconds — so this memoises on the position and the focused man and
+	// needs no engine, no cache and no loading state.
+	const wheelDraw = useMemo(
+		() => (step && wheels.size ? wheelShapes(step.pos, wheels, focus) : []),
+		[step, wheels, focus],
+	);
+	const wheelSays = useMemo(() => (step && wheels.size ? wheelNotes(step.pos, wheels) : []), [step, wheels]);
 
 	const graphShapes = useMemo(
 		() => (graph && step ? shapesFor(graph, graphLayer, focus, step.pos.board, gam ?? undefined) : []),
@@ -982,6 +1000,11 @@ export function Lab() {
 							arrows={
 								borrowed
 									? borrowed.arrows
+									: // The wheels are a deliberate choice the reader has just made, so
+									  // they outrank the automatic overlays — but not a borrowed board,
+									  // which is showing a different position entirely.
+									  wheelDraw.length
+									? wheelDraw
 									: complexShapes.length
 									? complexShapes
 									: graphLayer !== 'off'
@@ -1376,6 +1399,15 @@ export function Lab() {
 											</Button>
 										)}
 									</div>
+								)}
+
+								{step && (
+									<TrainingWheels
+										on={wheels}
+										onChange={setWheels}
+										notes={wheelSays}
+										hasFocus={focus !== null}
+									/>
 								)}
 
 								{step && at > 0 && <LadderPanel pos={step.pos} played={step.played} plyKey={key} onShapes={setComplexShapes} />}

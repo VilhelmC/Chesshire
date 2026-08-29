@@ -23,6 +23,8 @@ import {
 } from '../domain/mistakes';
 import { applyUci, sameMove, replayLine } from '../domain/chess';
 import { Empty, Button, Panel } from '../ui/primitives';
+import { ExplainPanel, type Ask } from '../components/ExplainPanel';
+import type { BoardOverride } from '../components/LinePlayer';
 import { MoveList } from '../components/MoveList';
 import { Move } from '../components/Move';
 import { withGlyph } from '../domain/notation';
@@ -205,6 +207,14 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 
 	/** Which position is on the board. `null` means the card itself. */
 	const [previewPly, setPreviewPly] = useState<number | null>(null);
+	/**
+	 * PLAN-EXPLAINER §5's third host. A mistake is the position where "why was
+	 * that wrong" is the whole question, so this is the doorway that most needed
+	 * to exist — and it is the same `explain(fen, move, alternatives)` the Lab and
+	 * Train ask, not a third implementation of the same idea.
+	 */
+	const [asking, setAsking] = useState<Ask | null>(null);
+	const [borrowed, setBorrowed] = useState<BoardOverride>(null);
 	const atCard = previewPly === null || previewPly >= lastPly;
 	const boardFen = atCard ? current?.fen : line[previewPly as number]?.fen;
 
@@ -215,6 +225,10 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	 * thing you need to see in order to know what you are being asked.
 	 */
 	const lastMove = ((): [string, string] | undefined => {
+		// While the panel is walking a line it owns the board, so the highlight has
+		// to follow it. Leaving the card's own last move lit would put a marker on
+		// a position that is no longer on screen.
+		if (borrowed) return borrowed.lastMove;
 		const uci = line[atCard ? lastPly : (previewPly as number)]?.uci;
 		return uci ? [uci.slice(0, 2), uci.slice(2, 4)] : undefined;
 	})();
@@ -386,7 +400,7 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 			>
 				{current ? (
 					<BoardPanel
-						fen={boardFen ?? current.fen}
+						fen={borrowed?.fen ?? boardFen ?? current.fen}
 						ourColour={current.ourColour}
 						evalCp={evalCp}
 						lastMove={lastMove}
@@ -403,7 +417,10 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 						// being replaced by them. This used to be an either/or, which is
 						// the same conflation as the button being greyed out: asking for
 						// options meant you could not also be shown the move.
-						arrows={[
+						arrows={
+							borrowed
+								? borrowed.arrows
+								: [
 							...(candidates ?? []).map((c) => ({
 								orig: c.uci.slice(0, 2),
 								dest: c.uci.slice(2, 4),
@@ -419,7 +436,8 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 										},
 									]
 								: []),
-						]}
+								  ]
+						}
 					>
 						<div style={{ marginTop: 10, minHeight: 96 }}>
 							{brokenReason(current) ? (
@@ -479,6 +497,17 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 								</div>
 							)}
 
+							{asking && (
+								<ExplainPanel
+									{...asking}
+									onBoard={setBorrowed}
+									onClose={() => {
+										setAsking(null);
+										setBorrowed(null);
+									}}
+								/>
+							)}
+
 							{candidates && (
 								<ol
 									style={{
@@ -491,11 +520,22 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 									{candidates.map((c) => (
 										<li
 											key={c.uci}
+											// §1's doorway: any move on the list can be asked
+											// about, against the others as its comparison set.
+											onClick={() =>
+												setAsking({
+													fen: current.fen,
+													uci: c.uci,
+													alternatives: candidates.map((o) => o.uci),
+												})
+											}
+											title={`Why ${c.san}?`}
 											style={{
 												display: 'flex',
 												alignItems: 'center',
 												gap: 8,
 												padding: '3px 0',
+												cursor: 'pointer',
 											}}
 										>
 											{/* Same swatch and ramp as the board draws. */}

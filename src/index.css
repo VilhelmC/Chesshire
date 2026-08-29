@@ -168,3 +168,66 @@ body {
 .cg-shapes line[marker-end="url(#arrowhead-gBlackX)"] {
 	stroke-dasharray: 0.1 0.09;
 }
+
+/* ---------------------------------------------------------------------------
+   TRAINING WHEELS — PLAN-EXPLAINER §5's overlay menu.
+
+   Five checkboxes and, under them, the fixed sentences of whatever is currently
+   firing. The notes are the load-bearing part: a ring the reader cannot name has
+   taught them a shape rather than an idea, so the words are styled to be read
+   rather than tucked away as a legend.
+   --------------------------------------------------------------------------- */
+.wheels {
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	padding: 0.6rem 0.75rem;
+	margin: 0.75rem 0;
+	background: var(--surface);
+}
+.wheels-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	margin-bottom: 0.4rem;
+	font-size: 0.85rem;
+	color: var(--ink2);
+}
+.wheels-head .link {
+	border: 0;
+	background: none;
+	padding: 0;
+	font: inherit;
+	color: var(--accent);
+	cursor: pointer;
+}
+.wheel {
+	display: grid;
+	grid-template-columns: auto auto 1fr;
+	align-items: baseline;
+	gap: 0.45rem;
+	padding: 0.15rem 0;
+	cursor: pointer;
+	font-size: 0.9rem;
+}
+.wheel-label {
+	color: var(--ink);
+}
+.wheel-note {
+	color: var(--ink3);
+	font-size: 0.8rem;
+}
+/* The safe-move row is the one that needs a man selected. Saying so on the row
+   beats drawing nothing and letting the reader conclude the overlay is broken. */
+.wheel.waiting .wheel-note {
+	color: var(--warn);
+}
+.wheel-says {
+	margin: 0.5rem 0 0;
+	padding: 0.45rem 0 0 1.1rem;
+	border-top: 1px solid var(--line);
+	font-size: 0.85rem;
+	color: var(--ink2);
+}
+.wheel-says li {
+	margin: 0.1rem 0;
+}

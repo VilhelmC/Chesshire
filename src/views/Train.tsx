@@ -35,6 +35,7 @@ import { distributionOf, type Distribution } from '../domain/distribution';
 import { DistributionList } from '../components/Distribution';
 import { ShareMenu, canShareNatively } from '../components/ShareMenu';
 import { LinePlayer, type BoardOverride } from '../components/LinePlayer';
+import { ExplainPanel, type Ask } from '../components/ExplainPanel';
 import { lineFromUci, type Line } from '../domain/line';
 import { color } from '../ui/theme';
 import { markTraining } from '../data/autoImport';
@@ -523,6 +524,13 @@ export function Train({
 	/** A claim being demonstrated on the board rather than described in prose. */
 	const [explain, setExplain] = useState<{ line: Line; label: string } | null>(null);
 	const [explaining, setExplaining] = useState<BoardOverride>(null);
+	/**
+	 * PLAN-EXPLAINER §5: one panel, three hosts. Train is the second — the same
+	 * `explain(fen, move, alternatives)` the Lab asks, reached through a different
+	 * door. The board needs no changes at all: `ExplainPanel` publishes through
+	 * `BoardOverride`, which `explaining` already honours for `LinePlayer`.
+	 */
+	const [asking, setAsking] = useState<Ask | null>(null);
 	async function showDistribution() {
 		if (!state) return;
 		if (distribution) return setDistribution(null);
@@ -1328,6 +1336,17 @@ export function Train({
 						/>
 					)}
 
+					{asking && (
+						<ExplainPanel
+							{...asking}
+							onBoard={setExplaining}
+							onClose={() => {
+								setAsking(null);
+								setExplaining(null);
+							}}
+						/>
+					)}
+
 					{sharing && state && (
 						<ShareMenu
 							items={[
@@ -1415,12 +1434,27 @@ export function Train({
 							{candidates.map((c) => (
 								<li
 									key={c.uci}
+									// PLAN-EXPLAINER §1: "clicks an engine move → that one, the
+									// other engine moves". The comparison set is the list the
+									// reader is looking at, which is the honest one — asking about
+									// a move against a different set of alternatives would give a
+									// different verdict for reasons invisible on screen.
+									onClick={() =>
+										state?.fen &&
+										setAsking({
+											fen: state.fen,
+											uci: c.uci,
+											alternatives: candidates.map((o) => o.uci),
+										})
+									}
+									title={`Why ${c.san}?`}
 									style={{
 										display: 'flex',
 										alignItems: 'center',
 										gap: 8,
 										padding: '3px 0',
 										fontSize: 14,
+										cursor: state?.fen ? 'pointer' : 'default',
 									}}
 								>
 									{/* Swatch uses the board's own ramp, so the two are read together. */}
