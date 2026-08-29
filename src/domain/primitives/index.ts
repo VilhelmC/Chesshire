@@ -27,6 +27,7 @@ import { after, moves, type Mark } from './core';
 export type { Mark } from './core';
 export { moves } from './core';
 export * from './pin';
+export * from './muster';
 
 // ---------------------------------------------------------------------------
 // SAFE
