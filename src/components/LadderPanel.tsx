@@ -45,11 +45,15 @@ import { makeSquare } from 'chessops/util';
 import {
 	ladderReport,
 	mateTree,
+	principalLine,
 	survivingReplies,
 	type Attempt,
 	type LadderReport,
 	type ProofNode,
 } from '../domain/ladder';
+import { lineFromUci } from '../domain/line';
+import { fenOf } from '../domain/chess';
+import { LinePlayer, type BoardOverride } from './LinePlayer';
 import { V } from '../domain/exchange';
 import { color, space, text, mono } from '../ui/theme';
 import { Section } from '../ui/primitives';
@@ -185,12 +189,22 @@ export function LadderPanel({
 	played,
 	plyKey,
 	onShapes,
+	onBoard,
 }: {
 	pos: Chess;
 	played: string;
 	plyKey: string;
 	/** Published to the Lab, which owns the board. Empty clears the overlay. */
 	onShapes?: (s: Shape[]) => void;
+	/**
+	 * Hand the board a position to show, or null to give it back.
+	 *
+	 * The proof tab LISTED the mate and did not show it. A certificate the reader
+	 * has to replay in their head is one they will not check, which defeats the
+	 * point of printing it — so the mate's main line is walkable here with the
+	 * same stepper `LinePlayer` gives every other line in the app.
+	 */
+	onBoard?: (o: BoardOverride) => void;
 }) {
 	const [report, setReport] = useState<{ key: string; r: LadderReport } | null>(null);
 	const [tab, setTab] = useState<'ladder' | 'proof' | 'moves'>('ladder');
@@ -289,7 +303,9 @@ export function LadderPanel({
 					}}
 				/>
 			)}
-			{tab === 'proof' && <Proof r={r} pos={pos} rung={rung} setRung={setRung} onHover={setHover} />}
+			{tab === 'proof' && (
+				<Proof r={r} pos={pos} rung={rung} setRung={setRung} onHover={setHover} onBoard={onBoard} />
+			)}
 			{tab === 'moves' && <Moves r={r} pos={pos} played={played} onHover={setHover} />}
 		</Section>
 	);
@@ -529,12 +545,14 @@ function Proof({
 	rung,
 	setRung,
 	onHover,
+	onBoard,
 }: {
 	r: LadderReport;
 	pos: Chess;
 	rung: number;
 	setRung: (i: number) => void;
 	onHover: (s: Shape[] | null) => void;
+	onBoard?: (o: BoardOverride) => void;
 }) {
 	const x = r.rungs[Math.min(rung, r.rungs.length - 1)];
 	const attacker = pos.turn;
@@ -547,6 +565,27 @@ function Proof({
 		() => (x && x.rung === 'mate' && x.proved && x.moves[0] ? mateTree(pos, x.moves[0], attacker, DEPTH) : null),
 		[x, pos, attacker],
 	);
+	/**
+	 * The main line of the certificate, as a walkable `Line`.
+	 *
+	 * ONE LINE OUT OF A TREE, and the caption below says so. `mateTree`'s comment
+	 * is right that a principal variation is not a proof — every reply has to be
+	 * answered and every reply is in the tree underneath. But a certificate the
+	 * reader cannot play through is a certificate they will not check, and reading
+	 * eight plies of indented UCI is not checking. So both are here: the line to
+	 * walk, and the tree that proves it.
+	 */
+	const walk = useMemo(() => {
+		if (!tree) return null;
+		try {
+			return lineFromUci(fenOf(pos), principalLine(tree).map(uci));
+		} catch {
+			return null;
+		}
+	}, [tree, pos]);
+	// Give the board back when the tab, the rung or the ply changes underneath.
+	useEffect(() => () => onBoard?.(null), [onBoard]);
+
 	if (!x) return null;
 	return (
 		<div style={{ overflowX: 'auto' }}>
@@ -573,8 +612,17 @@ function Proof({
 
 			{x.proved && x.rung === 'mate' && tree && (
 				<>
+					{walk && onBoard && (
+						<LinePlayer
+							line={walk}
+							label="the main line — their most stubborn defence at every turn"
+							onBoard={onBoard}
+							onClose={() => onBoard(null)}
+						/>
+					)}
 					<div style={{ fontSize: text.note, color: color.ink2, marginBottom: space.tight, fontFamily: mono }}>
-						every reply is listed, because a mate that answers only the reply we expected is not a mate.
+						every reply is listed, because a mate that answers only the reply we expected is not a mate. The
+						stepper above walks <strong>one</strong> of them; the tree below is the proof.
 					</div>
 					<Tree node={tree} pos={pos} depth={0} onHover={onHover} />
 				</>

@@ -6,8 +6,8 @@
 // ungated feature gets in, because a checkbox looks like it costs nothing.
 import { describe, it, expect } from 'vitest';
 import { positionFromFen } from '../src/domain/chess';
-import { parseSquare } from 'chessops/util';
-import { WHEELS, wheelShapes, wheelNotes, type Wheel } from '../src/domain/wheels';
+import { makeSquare, parseSquare } from 'chessops/util';
+import { WHEELS, wheelShapes, wheelNotes, mateLine, mateArrows, mateNote, type Wheel } from '../src/domain/wheels';
 
 const at = (fen: string) => positionFromFen(fen);
 const on = (...k: Wheel[]) => new Set<Wheel>(k);
@@ -18,6 +18,10 @@ const FORK = '2r3k1/5ppp/8/3N4/8/8/5PPP/6K1 w - - 0 1';
 const PIN = '3k4/8/8/3n4/8/8/8/3RK3 b - - 0 1';
 /** Back-rank mate with Ra8. */
 const MATE = '6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1';
+/** Two rooks against a bare king, with Rb8# on the board — mate in ONE. */
+const LADDER = '7k/R7/1R6/8/8/8/8/6K1 w - - 0 1';
+/** The same two rooks a rank lower: no mate in one, so the ladder has to walk. */
+const WALK = '7k/8/8/8/8/8/1R6/R5K1 w - - 0 1';
 
 describe('the menu', () => {
 	it('offers exactly the five overlays that passed their gates', () => {
@@ -43,9 +47,16 @@ describe('the menu', () => {
 });
 
 describe('what each wheel draws', () => {
-	it('mate: an arrow to the mating square', () => {
-		expect(wheelShapes(at(MATE), on('mate'))).toEqual([{ orig: 'a1', dest: 'a8', brush: 'blue' }]);
-		expect(wheelNotes(at(MATE), on('mate'))).toEqual(['a8 is mate']);
+	it('mate draws NOTHING on the synchronous path', () => {
+		// The wheel used to be "mate in one" — an isCheckmate() test per move, and as
+		// instant as the rest of the menu. It now draws the whole forced SEQUENCE,
+		// which is a df-pn search: mean 80ms and up to 987ms (mate-line-cost.mjs).
+		// So it is deliberately absent here, and the host runs it off the render
+		// path. A test, because "the sync path stayed sync" is the property that
+		// stops a slow search creeping back into a memo.
+		expect(wheelShapes(at(MATE), on('mate'))).toEqual([]);
+		expect(wheelNotes(at(MATE), on('mate'))).toEqual([]);
+		expect(WHEELS.find((w) => w.key === 'mate')!.slow).toBe(true);
 	});
 
 	it('forks: the move, plus a ring on each man that is hit', () => {
@@ -107,7 +118,56 @@ describe('several at once', () => {
 	it('composes without either overlay losing anything', () => {
 		const both = wheelShapes(at(FORK), on('forks', 'mate'));
 		const forksOnly = wheelShapes(at(FORK), on('forks'));
-		expect(both).toEqual(forksOnly); // no mate in this position
-		expect(wheelShapes(at(MATE), on('forks', 'mate'))).toHaveLength(1);
+		expect(both).toEqual(forksOnly);
+	});
+});
+
+describe('the mate line', () => {
+	it('finds the mate in one and labels it as one move', () => {
+		const line = mateLine(at(MATE));
+		expect(line).not.toBeNull();
+		expect(line!.map((m) => makeSquare(m.from) + makeSquare(m.to))).toEqual(['a1a8']);
+		expect(mateNote(line!)).toContain('mate in 1');
+	});
+
+	it('returns THE shortest mate, not the first one move ordering happens to find', () => {
+		// The bug this pins. Searching straight to depth 5 and taking the first move
+		// that proves a mate gave "Kf1 Kg8 Rf6 Kh8 Rf8#" here — a real forced mate,
+		// five plies long, offered while Rb8# sits on the board. Every claim in it
+		// was true and the overlay was still lying, because "the forced mate" and
+		// "a forced mate" are different sentences.
+		//
+		// Which one came back depended on MOVE ORDERING, which must never be
+		// load-bearing. Iterative deepening makes shortness a property of the
+		// question instead.
+		const line = mateLine(at(LADDER));
+		expect(line!.map((m) => makeSquare(m.from) + makeSquare(m.to))).toEqual(['b6b8']);
+	});
+
+	it('walks a longer mate move by move when that is the shortest there is', () => {
+		// The two rooks a rank apart: no mate in one, and the ladder walks the king
+		// up the board — Ra7 Kg8 Rb8#. Verified before it was written down.
+		const line = mateLine(at(WALK));
+		expect(line).not.toBeNull();
+		expect(line!.length).toBeGreaterThan(1);
+		// Ours, theirs, ours … and it ends with our move.
+		expect(line!.length % 2).toBe(1);
+		expect(mateNote(line!)).toContain('one line of it');
+	});
+
+	it('numbers the arrows and alternates the brush', () => {
+		// Eight unlabelled arrows are a tangle the reader has to re-derive the order
+		// of, and "whose move is this" is the first question asked of any arrow.
+		const line = mateLine(at(WALK))!;
+		const arrows = mateArrows(line);
+		expect(arrows.map((a) => a.label)).toEqual(line.map((_, i) => String(i + 1)));
+		expect(arrows[0].brush).toBe('blue');
+		if (arrows.length > 1) expect(arrows[1].brush).toBe('red');
+	});
+
+	it('returns null when there is no forced mate', () => {
+		// A forced mate exists on 24.4% of plies in a corpus selected FOR tactics, so
+		// null is the ordinary answer and must not be an error.
+		expect(mateLine(at('6k1/5pp1/7p/8/8/8/5PPP/R5K1 w - - 0 1'))).toBeNull();
 	});
 });

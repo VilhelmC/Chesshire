@@ -939,6 +939,59 @@ export type ProofNode = { move: NormalMove; mate: boolean; kids: ProofNode[] };
  * line only for the side that PROVES its goal, and a proved mate is a REFUTED
  * defence: the defender's node has no line to give.
  */
+/**
+ * How many plies the proof runs below a node — the longest resistance in it.
+ *
+ * The defender's own measure of how well a reply does. It is the number that
+ * picks the main line: a defence that holds out four plies is more instructive
+ * than one that walks into mate immediately, and both are in the certificate.
+ */
+function height(n: ProofNode): number {
+	let deepest = 0;
+	for (const k of n.kids) {
+		const h = height(k);
+		if (h > deepest) deepest = h;
+	}
+	return 1 + deepest;
+}
+
+/**
+ * ONE line through the certificate: ours, their most stubborn reply, ours, ...
+ *
+ * ---------------------------------------------------------------------------
+ * `mateTree`'s own comment is emphatic that the tree is the proof and a
+ * principal variation is not: "a principal variation shows one line and asks the
+ * reader to assume the rest; a mate is only proved if EVERY reply is answered."
+ * That is still true and this does not weaken it.
+ *
+ * What this is for is DRAWING. Eight arrows on a board is a picture; a whole
+ * proof tree on a board is a scribble, and the overlay that tried would teach
+ * nothing. So the division is: the board shows one line and the proof tab shows
+ * the tree, and neither pretends to be the other. The caller is responsible for
+ * saying which it is showing — `wheels.ts` labels it "one line of the mate".
+ *
+ * The defender's reply is chosen by `height`, the longest resistance, because
+ * that is the line a reader learns most from and the one they would have played.
+ * ---------------------------------------------------------------------------
+ */
+export function principalLine(node: ProofNode): NormalMove[] {
+	const out: NormalMove[] = [node.move];
+	let n = node;
+	while (n.kids.length) {
+		// Their turn: the reply that holds out longest.
+		let best = n.kids[0];
+		for (const k of n.kids) if (height(k) > height(best)) best = k;
+		out.push(best.move);
+		if (!best.kids.length) break;
+		// Ours: a proved mate has exactly one answer worth showing per reply, and
+		// the tree already contains only answers that work.
+		n = best.kids[0];
+		out.push(n.move);
+		if (n.mate) break;
+	}
+	return out;
+}
+
 export function mateTree(pos: Chess, move: NormalMove, attacker: Color, depth: number): ProofNode {
 	const child = after(pos, move);
 	if (child.isCheckmate()) return { move, mate: true, kids: [] };

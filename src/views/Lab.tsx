@@ -54,7 +54,7 @@ import { build as buildGraph } from '../domain/graph';
 import { shapesFor, describe as readGraph, explainCover, explainCouplings, LAYERS, type Layer } from '../domain/graphShapes';
 import { gamma, concede, classify2 } from '../domain/cover2';
 import { TrainingWheels } from '../components/TrainingWheels';
-import { wheelShapes, wheelNotes, type Wheel } from '../domain/wheels';
+import { wheelShapes, wheelNotes, mateLine, mateArrows, mateNote, type Wheel } from '../domain/wheels';
 
 /** Per-ply result, precomputed: hit, ties at the top, legal moves, is-solver. */
 export type PlyFlags = {
@@ -626,14 +626,56 @@ export function Lab() {
 		return gamma(step.pos, { owed });
 	}, [step, graphLayer, coverSide]);
 
-	// Every wheel is a pure board computation — the most expensive is a few
-	// milliseconds — so this memoises on the position and the focused man and
+	// Four of the five wheels are pure board computations — the most expensive is a
+	// few milliseconds — so this memoises on the position and the focused man and
 	// needs no engine, no cache and no loading state.
 	const wheelDraw = useMemo(
 		() => (step && wheels.size ? wheelShapes(step.pos, wheels, focus) : []),
 		[step, wheels, focus],
 	);
 	const wheelSays = useMemo(() => (step && wheels.size ? wheelNotes(step.pos, wheels) : []), [step, wheels]);
+
+	/**
+	 * MATE IS THE EXCEPTION and gets its own effect.
+	 *
+	 * It is a df-pn search — `scripts/mate-line-cost.mjs` measured mean 80ms and a
+	 * worst case of 987ms — so running it inside the memo above would freeze the
+	 * board for up to a second every time the ply changed. `working` exists so the
+	 * checkbox says what it is doing rather than appearing to have done nothing.
+	 *
+	 * `cancelled` guards the position changing while a solve is in flight: without
+	 * it a slow search resolves after the reader has stepped on and draws a mate
+	 * from the previous position onto this one.
+	 */
+	const [mate, setMate] = useState<{ arrows: ComplexShape[]; note: string } | null>(null);
+	const [mateWorking, setMateWorking] = useState(false);
+	useEffect(() => {
+		if (!step || !wheels.has('mate')) {
+			setMate(null);
+			setMateWorking(false);
+			return;
+		}
+		let cancelled = false;
+		setMateWorking(true);
+		// A macrotask, so the checkbox and the working state paint before the search
+		// blocks the thread. This is not concurrency — it is the minimum needed for
+		// the UI to be honest about what it is doing.
+		const id = setTimeout(() => {
+			let found: ReturnType<typeof mateLine> = null;
+			try {
+				found = mateLine(step.pos);
+			} catch {
+				found = null;
+			}
+			if (cancelled) return;
+			setMate(found ? { arrows: mateArrows(found), note: mateNote(found) } : null);
+			setMateWorking(false);
+		}, 0);
+		return () => {
+			cancelled = true;
+			clearTimeout(id);
+		};
+	}, [step, wheels]);
 
 	const graphShapes = useMemo(
 		() => (graph && step ? shapesFor(graph, graphLayer, focus, step.pos.board, gam ?? undefined) : []),
@@ -1003,8 +1045,8 @@ export function Lab() {
 									: // The wheels are a deliberate choice the reader has just made, so
 									  // they outrank the automatic overlays — but not a borrowed board,
 									  // which is showing a different position entirely.
-									  wheelDraw.length
-									? wheelDraw
+									  wheelDraw.length || (mate?.arrows.length ?? 0)
+									? [...wheelDraw, ...(mate?.arrows ?? [])]
 									: complexShapes.length
 									? complexShapes
 									: graphLayer !== 'off'
@@ -1405,12 +1447,13 @@ export function Lab() {
 									<TrainingWheels
 										on={wheels}
 										onChange={setWheels}
-										notes={wheelSays}
+										notes={mate ? [...wheelSays, mate.note] : wheelSays}
 										hasFocus={focus !== null}
+										working={mateWorking ? 'mate' : null}
 									/>
 								)}
 
-								{step && at > 0 && <LadderPanel pos={step.pos} played={step.played} plyKey={key} onShapes={setComplexShapes} />}
+								{step && at > 0 && <LadderPanel pos={step.pos} played={step.played} plyKey={key} onShapes={setComplexShapes} onBoard={setBorrowed} />}
 
 								{step && at > 0 && showOld && (
 									<ComplexPanel pos={step.pos} played={step.played} plyKey={key} />
