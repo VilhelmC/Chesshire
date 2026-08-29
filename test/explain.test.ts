@@ -5,7 +5,8 @@
 // scored options supplied directly: which verdict, which reason, and the two
 // cases the gate caught on its first run.
 import { describe, it, expect } from 'vitest';
-import { explain, shortlist, EQUAL_CP } from '../src/domain/explain';
+import { explain, shortlist, DEFAULT_SEVERITY, type Severity } from '../src/domain/explain';
+
 import type { Scored } from '../src/engine/compare';
 
 /** White to move; ♖d1 and ♜d8 face each other, Black king has luft on h6. */
@@ -39,7 +40,7 @@ describe('the verdict', () => {
 	});
 
 	it('calls a near-equal move equal rather than a mistake', () => {
-		const options = ranked(opt('d1d8', 'Rxd8+', 500, ['d1d8', 'g8h7']), opt('g1h1', 'Kh1', 500 - EQUAL_CP, ['g1h1']));
+		const options = ranked(opt('d1d8', 'Rxd8+', 500, ['d1d8', 'g8h7']), opt('g1h1', 'Kh1', 500 - DEFAULT_SEVERITY.equal, ['g1h1']));
 		expect(explain(FEN, 'g1h1', options).verdict.kind).toBe('equal');
 	});
 
@@ -81,6 +82,38 @@ describe('why a move is worse', () => {
 			opt('g1h1', 'Kh1', -9980, ['g1h1', 'd8d1'], -2),
 		);
 		expect(explain(FEN, 'g1h1', options).verdict.because).toEqual({ kind: 'mateAgainst', in: 2 });
+	});
+
+	it('does NOT claim the alternative is the only mate when ours mates too', () => {
+		// Will: "if a mate in 1 marks a mate in 3 as error, the `because` can't say
+		// 'Nh6+ mates in 2, this does not' — that makes it seem like the alternative
+		// doesn't also mate."
+		//
+		// The first version had no case for two mates and fell through to the
+		// material branch, which described a WON position as though a piece had gone
+		// missing. A slower mate is still a mate.
+		const options = ranked(
+			opt('d1d8', 'Rxd8+', 9980, ['d1d8', 'g8h7'], 2),
+			opt('g1h1', 'Kh1', 9960, ['g1h1'], 4),
+		);
+		const v = explain(FEN, 'g1h1', options).verdict;
+		expect(v.because).toEqual({ kind: 'slowerMate', ours: 4, best: 2 });
+		// And it is not a blunder. The game is won either way — calling it one
+		// would be the severity ladder applied where it does not belong.
+		expect(v.kind).toBe('inaccuracy');
+	});
+
+	it('admits when the position was lost whatever we played', () => {
+		// "You walk into mate in 1" without saying the best move is mated in 3 is a
+		// claim about the player's agency the position does not support.
+		const options = ranked(
+			opt('d1d8', 'Rxd8+', -9970, ['d1d8', 'g8h7'], -3),
+			opt('g1h1', 'Kh1', -9990, ['g1h1'], -1),
+		);
+		const v = explain(FEN, 'g1h1', options).verdict;
+		expect(v.because).toEqual({ kind: 'mateAgainst', in: 1, bestAlso: 3 });
+		// A mistake rather than a blunder: it shortens a lost game.
+		expect(v.kind).toBe('mistake');
 	});
 
 	it('says a better move mates when this one merely does not', () => {
@@ -144,6 +177,33 @@ describe('the line', () => {
 	it('falls back to the move alone when there is no line', () => {
 		const options = ranked(opt('d1d8', 'Rxd8+', 500, []));
 		expect(explain(FEN, 'd1d8', options).line.steps.map((s) => s.san)).toEqual(['Rxd8+']);
+	});
+});
+
+describe('the severity ladder', () => {
+	it('is configurable, because it is a learning signal rather than an opinion', () => {
+		// Will: "I don't care about 'harshness' — I care about a consistent learning
+		// signal, but this could easily just be configurable. Later we may want to
+		// make it relative to user rating."
+		const options = ranked(opt('d1d8', 'Rxd8+', 500, ['d1d8', 'g8h7']), opt('g1h1', 'Kh1', 400, ['g1h1']));
+		const strict: Severity = { equal: 10, inaccuracy: 40, mistake: 80 };
+		const loose: Severity = { equal: 200, inaccuracy: 400, mistake: 800 };
+		expect(explain(FEN, 'g1h1', options, strict).verdict.kind).toBe('blunder');
+		expect(explain(FEN, 'g1h1', options, loose).verdict.kind).toBe('equal');
+		// The default sits between them: the same 100cp gap is past its
+		// `inaccuracy: 90` and so reads as a mistake.
+		expect(explain(FEN, 'g1h1', options).verdict.kind).toBe('mistake');
+	});
+
+	it('does not apply to mate at all', () => {
+		// Mate has its own taxonomy: no ladder can make a mate in three a blunder
+		// because a mate in two existed.
+		const options = ranked(
+			opt('d1d8', 'Rxd8+', 9980, ['d1d8', 'g8h7'], 2),
+			opt('g1h1', 'Kh1', 9960, ['g1h1'], 4),
+		);
+		const strict: Severity = { equal: 1, inaccuracy: 2, mistake: 3 };
+		expect(explain(FEN, 'g1h1', options, strict).verdict.kind).toBe('inaccuracy');
 	});
 });
 

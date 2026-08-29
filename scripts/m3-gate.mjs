@@ -81,9 +81,15 @@ function sentence(x) {
 	if (!b) return lead;
 	switch (b.kind) {
 		case 'mateAgainst':
-			return `${lead}: it walks into mate in ${b.in}`;
+			return (
+				`${lead}: it walks into mate in ${b.in}` +
+				(b.bestAlso ? ` — though ${x.best?.san} is mated in ${b.bestAlso} too, the position is lost` : '')
+			);
 		case 'missedMate':
-			return `${lead}: ${x.best?.san} mates in ${b.in}, this does not`;
+			return `${lead}: ${x.best?.san} mates in ${b.in}, this does not mate at all`;
+		case 'slowerMate':
+			// Never "this does not mate" when it does. A slower mate is still a mate.
+			return `${lead}: this mates in ${b.ours}, ${x.best?.san} mates in ${b.best}`;
 		case 'material':
 			return (
 				`${lead}: in this line ` +
@@ -163,6 +169,10 @@ for (const p of puzzles(200)) {
 		if (v.because?.kind === 'mateAgainst' && !x.trace.steps.some((s) => s.mate) && x.line.complete)
 			suspicious.push(`${p.id} ${x.san}: claims mate against, no mate in the line`);
 		if (v.kind === 'best' && v.because) suspicious.push(`${p.id} ${x.san}: best move with a story attached`);
+		if (v.because?.kind === 'missedMate' && x.self?.mate > 0)
+			suspicious.push(`${p.id} ${x.san}: says "does not mate" but it mates in ${x.self.mate}`);
+		if (v.because?.kind === 'slowerMate' && v.kind === 'blunder')
+			suspicious.push(`${p.id} ${x.san}: a slower mate called a blunder`);
 		if (v.because?.kind === 'positional' && Object.keys(v.because).length > 1)
 			suspicious.push(`${p.id} ${x.san}: positional verdict carries a number`);
 		if (!v.comparable && v.kind !== 'best' && !v.because)

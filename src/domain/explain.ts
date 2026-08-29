@@ -30,24 +30,35 @@ import { lineFromUci, type Line } from './line';
 import { trace, type Trace } from './trace';
 
 /**
- * The severity ladder.
+ * The severity ladder — a CONFIGURABLE learning signal, not a fixed opinion.
  *
- * The app already carries two of these for two purposes — `session.ts` and
- * `drill.ts` use 60/120 to police a repertoire, `analyseGame.ts` uses 150/800 to
- * review a real game — and they disagree because a drill should be stricter than
- * a post-mortem. An explainer is asked about arbitrary moves in either context,
- * so it takes the wider, review-shaped reading: calling a 70cp inaccuracy a
- * "mistake" to a person who just played it is a harsher word than the position
- * deserves.
+ * Will: "I don't care about 'harshness' — I care about a consistent learning
+ * signal, but this could easily just be configurable. Later we may want to make
+ * it relative to user rating."
  *
- * EQUAL is deliberately generous. Scores here come from fixed-depth single-move
- * searches and carry no engine noise at all, so this is not a tolerance for
- * measurement error — it is the claim that two moves within a third of a pawn are
- * not meaningfully different to the person being taught.
+ * So it is a parameter with a default rather than three constants. The app
+ * already carries two such scales for two purposes — `session.ts` and `drill.ts`
+ * use 60/120 to police a repertoire, `analyseGame.ts` uses 150/800 to review a
+ * real game — and the point of taking one here would only ever have been to add
+ * a third. `explain` takes whichever the caller is teaching against.
+ *
+ * A rating-relative ladder drops straight in: the same shape, with the numbers
+ * widening as a player's own accuracy widens, so the signal stays consistent
+ * against what they can actually perceive rather than against a fixed bar.
+ *
+ * `equal` is not a noise tolerance. Scores come from fixed-depth single-move
+ * searches and carry no engine noise at all, so it is the substantive claim that
+ * two moves this close are not different lessons.
  */
-export const EQUAL_CP = 30;
-export const INACCURACY_CP = 90;
-export const MISTAKE_CP = 200;
+export type Severity = {
+	/** At or under this, the move is as good as the best. */
+	equal: number;
+	/** Up to here it is an inaccuracy; past `mistake` it is a blunder. */
+	inaccuracy: number;
+	mistake: number;
+};
+
+export const DEFAULT_SEVERITY: Severity = { equal: 30, inaccuracy: 90, mistake: 200 };
 
 /** At least this much material must move before the trace is allowed to explain. */
 const MATERIAL_CP = 100;
@@ -59,10 +70,29 @@ const MATERIAL_CP = 100;
  * `{ kind: 'positional', amount: n }`, and there must never be one.
  */
 export type Because =
-	/** The engine's line after this move ends in mate against the mover. */
-	| { kind: 'mateAgainst'; in: number }
-	/** A better move mates and this one does not. */
+	/**
+	 * The engine's line after this move ends in mate against the mover.
+	 *
+	 * `bestAlso` is set when the best move is ALSO mated, in however many moves —
+	 * the position is lost either way, and saying "you walk into mate in 1" without
+	 * that is a claim about the player's agency that the position does not support.
+	 */
+	| { kind: 'mateAgainst'; in: number; bestAlso?: number }
+	/** A better move mates and this one does not mate at all. */
 	| { kind: 'missedMate'; in: number }
+	/**
+	 * BOTH mate — this one just takes longer.
+	 *
+	 * Will: "if a mate in 1 marks a mate in 3 as error, the `because` can't say
+	 * 'Nh6+ mates in 2, this does not' — that makes it seem like the alternative
+	 * doesn't also mate."
+	 *
+	 * Quite. The first version had no case for it and fell through to the material
+	 * or positional branch, which then described a won position as though a piece
+	 * had gone missing. A slower mate is still a mate and the sentence has to say
+	 * so.
+	 */
+	| { kind: 'slowerMate'; ours: number; best: number }
 	/**
 	 * In the engine's line, material goes the wrong way.
 	 *
@@ -142,7 +172,12 @@ export type Explanation = {
  * `options` must come from one `scoreMoves` call, so every score is on one scale
  * — see `engine/compare.ts` for why that is not automatic.
  */
-export function explain(fen: string, uci: string, options: Scored[]): Explanation {
+export function explain(
+	fen: string,
+	uci: string,
+	options: Scored[],
+	severity: Severity = DEFAULT_SEVERITY,
+): Explanation {
 	const self = options.find((o) => o.uci === uci);
 	const best = options[0];
 
@@ -162,11 +197,16 @@ export function explain(fen: string, uci: string, options: Scored[]): Explanatio
 		best,
 		line,
 		trace: tr,
-		verdict: verdictOf(self, best, tr),
+		verdict: verdictOf(self, best, tr, severity),
 	};
 }
 
-function verdictOf(self: Scored | undefined, best: Scored | undefined, tr: Trace): Verdict {
+function verdictOf(
+	self: Scored | undefined,
+	best: Scored | undefined,
+	tr: Trace,
+	severity: Severity,
+): Verdict {
 	// No score means no verdict. An explainer that guesses when the engine
 	// declined is exactly the failure mode this module is shaped against.
 	if (!self || !best) return { kind: 'equal', loss: 0, comparable: false };
@@ -178,26 +218,65 @@ function verdictOf(self: Scored | undefined, best: Scored | undefined, tr: Trace
 	const comparable = self.mate === null && best.mate === null;
 
 	if (self.uci === best.uci) return { kind: 'best', loss, comparable };
-	if (comparable && behind <= EQUAL_CP) return { kind: 'equal', loss, comparable };
 
-	const kind = !comparable
-		? 'blunder'
-		: behind <= INACCURACY_CP
-			? 'inaccuracy'
-			: behind <= MISTAKE_CP
-				? 'mistake'
-				: 'blunder';
-	return { kind, loss, comparable, because: becauseOf(self, best, tr) };
+	// ------------------------------------------------------------------
+	// MATE IS ITS OWN TAXONOMY, and the severity ladder does not apply to it.
+	//
+	// Falling through to `!comparable -> blunder` called a mate in three a blunder
+	// because a mate in two existed. The game is won either way; that is an
+	// inaccuracy at worst, and the sentence has to admit the move mates.
+	// ------------------------------------------------------------------
+	const ourMate = self.mate;
+	const theirBest = best.mate;
+
+	if (ourMate !== null && ourMate > 0) {
+		// We mate. The only way to be behind is to mate more slowly.
+		if (theirBest !== null && theirBest > 0 && ourMate > theirBest)
+			return {
+				kind: 'inaccuracy',
+				loss,
+				comparable,
+				because: { kind: 'slowerMate', ours: ourMate, best: theirBest },
+			};
+		return { kind: 'equal', loss, comparable };
+	}
+
+	if (ourMate !== null && ourMate < 0) {
+		// We get mated. Whether that is a blunder depends on whether it was
+		// avoidable: if the best move is mated too, the position is already lost
+		// and the move merely shortens it.
+		const lost = theirBest !== null && theirBest < 0;
+		return {
+			kind: lost ? 'mistake' : 'blunder',
+			loss,
+			comparable,
+			because: {
+				kind: 'mateAgainst',
+				in: Math.abs(ourMate),
+				...(lost ? { bestAlso: Math.abs(theirBest as number) } : {}),
+			},
+		};
+	}
+
+	if (theirBest !== null && theirBest > 0)
+		return { kind: 'blunder', loss, comparable, because: { kind: 'missedMate', in: theirBest } };
+
+	// ------------------------------------------------------------------
+	// Ordinary positions, where the ladder does apply.
+	// ------------------------------------------------------------------
+	if (behind <= severity.equal) return { kind: 'equal', loss, comparable };
+	const kind =
+		behind <= severity.inaccuracy ? 'inaccuracy' : behind <= severity.mistake ? 'mistake' : 'blunder';
+	return { kind, loss, comparable, because: becauseOf(tr) };
 }
 
-function becauseOf(self: Scored, best: Scored, tr: Trace): Because {
-	// Mate first, in both directions, because it outranks any material story: a
-	// line that ends in mate is not usefully described as losing a bishop.
-	if (self.mate !== null && self.mate < 0) return { kind: 'mateAgainst', in: Math.abs(self.mate) };
-	if (best.mate !== null && best.mate > 0 && (self.mate === null || self.mate <= 0))
-		return { kind: 'missedMate', in: best.mate };
-
-	// Then material, and only when it actually moved. `tr.net` is the mover's own
+/**
+ * Why an ordinary move is worse. Mate never reaches here — `verdictOf` handles it
+ * first, because a line that ends in mate is not usefully described as losing a
+ * bishop.
+ */
+function becauseOf(tr: Trace): Because {
+	// Material, and only when it actually moved. `tr.net` is the mover's own
 	// side, so negative is material lost.
 	if (tr.net <= -MATERIAL_CP) {
 		// The single worst moment, which is what a sentence wants — "the bishop goes
