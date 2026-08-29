@@ -25,9 +25,6 @@ import type { Color, Square } from 'chessops/types';
 import { V, other } from './exchange';
 import { on, sensitive, isLive, blockedBy, type Graph } from './graph';
 import { reach, critical } from './reach';
-import { isLive as owedNow, type Obligation } from './ledger2';
-import { cover as coverOf, concede as concedeOf, classify2, due, type Gamma } from './cover2';
-import { couplings, chains, weight as coupleWeight, say as sayCouple, type Coupling } from './couple';
 
 /** What the Board component draws. `dest` absent means a circle on `orig`. */
 export type Shape = { orig: string; dest?: string; brush: string; label?: string };
@@ -45,12 +42,6 @@ export type Layer =
 	| 'motifs'
 	/** How far the focused piece is from everywhere, and which squares gate it. */
 	| 'reach'
-	/** What each side owes — the ledger's rows, with their weight and deadline. */
-	| 'owed'
-	/** Γ: every obligation joined to the moves that discharge it. */
-	| 'cover'
-	/** Couplings — the pieces doing two jobs, and the chains that move together. */
-	| 'couplings'
 	/** All three at once. Busy, and occasionally the only way to see the shape. */
 	| 'all';
 
@@ -61,9 +52,6 @@ export const LAYERS: { key: Layer; label: string }[] = [
 	{ key: 'sensitive', label: 'sensitive squares' },
 	{ key: 'motifs', label: 'motifs — exchanges and pins' },
 	{ key: 'reach', label: 'reach — distance from the focused piece' },
-	{ key: 'owed', label: 'owed — obligations, weight and deadline' },
-	{ key: 'cover', label: 'Γ — obligations and what discharges them' },
-	{ key: 'couplings', label: 'couplings — what is doing two jobs' },
 	{ key: 'all', label: 'everything' },
 ];
 
@@ -168,33 +156,9 @@ export function motifsIn(g: Graph, board: Board): Motif[] {
 	return out;
 }
 
-/**
- * How an obligation reads on a square: pawns, and the deadline.
- *
- * Terse because it is drawn INSIDE a square next to a piece. `8/3` is a queen's
- * worth of promotion three tempi out. Check is `#` rather than a number, since
- * `V[king] = Infinity` has no reading in pawns and printing `Infinity` in a
- * 40-pixel box says only that something went wrong.
- */
-export const badge = (o: Obligation): string =>
-	Number.isFinite(o.weight) ? `${Math.round(o.weight / 100)}/${o.deadline}` : '#';
 
-/**
- * Brush per discharge type — AMEND-2-ARRIVES §1's table, as four hues.
- *
- * Hue says which KIND, per this file's existing argument, and the `X` variant
- * says the discharge needs more than one tempo. That is the same live/latent
- * convention the attack layers use, which matters: a cost-3 cover is exactly as
- * real and exactly as not-yet-acting as a blocked x-ray.
- */
-const COVER: Record<string, [string, string]> = {
-	evade: ['gCovEvade', 'gCovEvadeX'],
-	capture: ['gCovCapture', 'gCovCaptureX'],
-	block: ['gCovBlock', 'gCovBlockX'],
-	defend: ['gCovDefend', 'gCovDefendX'],
-};
 
-export function shapesFor(g: Graph, layer: Layer, focus?: number | null, board?: Board, gam?: Gamma): Shape[] {
+export function shapesFor(g: Graph, layer: Layer, focus?: number | null, board?: Board): Shape[] {
 	if (layer === 'off') return [];
 	const out: Shape[] = [];
 	const wanted = (e: { from: number }) => focus === undefined || focus === null || e.from === focus;
@@ -250,65 +214,6 @@ export function shapesFor(g: Graph, layer: Layer, focus?: number | null, board?:
 		}
 	}
 
-	// M3f. The ledger's rows, on the squares they are about. A latent row is drawn
-	// faintly rather than omitted: "a pawn that queens once the knight leaves" is
-	// a thing to watch, and hiding it is what made races invisible in the first
-	// place.
-	if ((layer === 'owed' || layer === 'cover') && board && gam) {
-		for (const o of gam.E) {
-			out.push({ orig: makeSquare(o.square), brush: owedNow(o, board) ? 'gOwed' : 'gOwedX', label: badge(o) });
-		}
-	}
-
-	// M4. Γ itself: every obligation joined to what discharges it.
-	//
-	// Drawn from the discharging piece TO the required square, which is the
-	// direction the move goes — not from the obligation outward. The picture is
-	// then the move you would play, and the pedagogy is the same object the
-	// algorithm reasons over rather than an illustration of it.
-	if (layer === 'cover' && board && gam) {
-		for (const e of gam.edges) {
-			const o = gam.E[e.obligation];
-			if (focus !== undefined && focus !== null && e.piece !== focus && o.square !== focus) continue;
-			const pair = COVER[e.kind];
-			if (!pair) continue;
-			out.push({ orig: makeSquare(e.piece), dest: makeSquare(e.to), brush: pair[e.cost === 1 ? 0 : 1] });
-		}
-		// A row with no discharge in time is the whole point of the layer, and an
-		// absence cannot be drawn as an arrow. Ringed instead.
-		gam.coverable.forEach((ok, i) => {
-			if (!ok) out.push({ orig: makeSquare(gam.E[i].square), brush: 'gUncovered' });
-		});
-	}
-
-	// M5. §6.6: a tree over couplings annotates and a tree over plies does not.
-	//
-	//   "Your knight cannot guard f7 and d6 at once. If it takes on f7 you lose
-	//    d6; if it holds, the exchange on f7 wins the rook."
-	//
-	// That is a sentence about a coupling, and the branch structure IS the
-	// explanation — so the picture is the branch structure, not an illustration
-	// of a line.
-	if (layer === 'couplings' && board) {
-		for (const c of couplings(board)) {
-			if (c.kind === 'commitment') {
-				// The piece that cannot be in two places, linked to both duties. Drawn
-				// FROM the overloaded piece so the fan-out is visible as a fan-out:
-				// one origin, several obligations, which is the shape of the problem.
-				if (focus !== undefined && focus !== null && c.piece !== focus && !c.holds.includes(c.piece)) continue;
-				out.push({ orig: makeSquare(c.piece), brush: 'gTwoJobs', label: String(Math.round(c.cost / 100)) });
-				for (const h of c.holds) out.push({ orig: makeSquare(c.piece), dest: makeSquare(h), brush: 'gTwoJobs' });
-			} else {
-				if (focus !== undefined && focus !== null && c.from !== focus && c.to !== focus) continue;
-				// Resolving one chain moves another. Direction is cause to effect.
-				out.push({ orig: makeSquare(c.from), dest: makeSquare(c.to), brush: c.becomes > c.was ? 'gOpens' : 'gCloses' });
-			}
-		}
-		// Every chain, faintly, so a coupling is visibly a relation BETWEEN two of
-		// them rather than a fact about two arbitrary squares.
-		for (const ch of chains(board)) out.push({ orig: makeSquare(ch.square), brush: 'gChain' });
-	}
-
 	if (layer === 'motifs' && board) {
 		for (const m of motifsIn(g, board)) {
 			if (m.kind === 'exchange') out.push({ orig: makeSquare(m.square), brush: 'gExchange' });
@@ -354,79 +259,3 @@ export function describe(g: Graph, focus: number | null, board: Board): string |
 }
 
 
-/**
- * What Γ says, in a sentence — DEFICIENCY.md §4's argmin and the `e` it leaves.
- *
- * *"This is your best move, and this is what it still costs you."* The pair is
- * the annotation, and it is available here because the computation held the
- * nouns rather than returning a number.
- */
-export function explainCover(
-	gam: Gamma,
-	mode: ReturnType<typeof classify2>,
-	best: ReturnType<typeof concedeOf>,
-	/**
-	 * How to write a move. Injected rather than imported.
-	 *
-	 * `DETECTOR.md` §6 says move rendering is figurine throughout, and it is —
-	 * but `figurine()` lives in the view and needs a `Chess`, so a domain module
-	 * reaching for it would have the dependency backwards. The caller supplies
-	 * the house style; the default is squares, which is what the tests read.
-	 */
-	say: (from: Square, to: Square) => string = (f, t) => `${makeSquare(f)}${makeSquare(t)}`,
-): string | null {
-	if (!gam.E.length) return 'nothing owed';
-	const now = due(gam).length;
-	const owedText = `${gam.E.length} obligation${gam.E.length === 1 ? '' : 's'}, ${now} due now`;
-
-	if (mode === 'covered') {
-		const m = coverOf(gam).move;
-		// A cover exists, or nothing is due and the deferred rows all have answers
-		// in time. Both are "covered"; only the first names a move.
-		return m ? `${owedText} — ${say(m.from, m.to)} answers everything due` : `${owedText} — all answerable in time`;
-	}
-
-	const cost = best.worst
-		? `${Number.isFinite(best.loss) ? best.loss : 'the king'} on ${makeSquare(best.worst.square)}`
-		: 'nothing nameable';
-
-	if (mode === 'cardinality') {
-		// The one mode a max over obligations cannot express, and the one the
-		// pedagogy is about: look hardest for the move that answers two.
-		const m = best.move;
-		return `${owedText} — no move answers all of them${m ? `; best is ${say(m.from, m.to)}` : ''}, still costs ${cost}`;
-	}
-	if (mode === 'latency') {
-		const late = gam.E.filter((_, i) => !gam.coverable[i]);
-		const which = late.map((o) => makeSquare(o.square)).join(', ');
-		return `${owedText} — the answer to ${which} exists but arrives late`;
-	}
-	const bare = gam.E.filter((_, i) => !gam.coverable[i]).map((o) => makeSquare(o.square)).join(', ');
-	return `${owedText} — nothing at all discharges ${bare}`;
-}
-
-
-/**
- * What the couplings say, in §6.6's terms.
- *
- * Ranked by what ignoring one costs, because that is the order a human should
- * read them in — and because a position with six couplings and one that matters
- * is the common case, not the exception.
- */
-export function explainCouplings(board: Board, limit = 2): string | null {
-	const cs = couplings(board).sort((a, b) => coupleWeight(b) - coupleWeight(a));
-	if (!cs.length) {
-		// Not "nothing is happening". The chains ADD — which is §6.1's claim and
-		// the reason there is no tree here, and saying so is more useful than
-		// silence.
-		const n = chains(board).length;
-		return n > 1 ? `${n} exchanges, none coupled — the values simply add` : null;
-	}
-	return cs.slice(0, limit).map((c) => sayCouple(c, board)).join('; ');
-}
-
-/** The couplings a square takes part in, for the panel beside the board. */
-export const couplingsAt = (board: Board, square: Square): Coupling[] =>
-	couplings(board).filter((c) =>
-		c.kind === 'commitment' ? c.piece === square || c.holds.includes(square) : c.from === square || c.to === square,
-	);

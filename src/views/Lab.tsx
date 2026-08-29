@@ -25,12 +25,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Board } from '../components/Board';
-import { scoreMoves, immediate, type Scored } from '../domain/resolve';
 import { positionFromFen, parseSquare, makeSquare, fenOf } from '../domain/chess';
 import { Toolbar } from '../components/Toolbar';
 import { candidateMoves, brushForGrade, type Candidate } from '../engine/candidates';
-import { explain, type Branch } from '../domain/chain';
-import { narrate } from '../domain/narrate';
 import { MoveList, type MoveChip } from '../components/MoveList';
 import { useBoardSize } from '../components/BoardPanel';
 import { loadNotes, saveNote, toMarkdown } from '../domain/labNotes';
@@ -44,15 +41,12 @@ import { Note, Section, Button } from '../ui/primitives';
 import PUZZLES from '../data/labPuzzles.json';
 import LEDGER from '../data/ledgerBuckets.json';
 import { recall, remember } from '../data/viewState';
-import { LedgerPanel } from '../components/LedgerPanel';
-import { ComplexPanel } from '../components/ComplexPanel';
 import { LadderPanel } from '../components/LadderPanel';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
 import type { BoardOverride } from '../components/LinePlayer';
 import type { Shape as ComplexShape } from '../components/Board';
 import { build as buildGraph } from '../domain/graph';
-import { shapesFor, describe as readGraph, explainCover, explainCouplings, LAYERS, type Layer } from '../domain/graphShapes';
-import { gamma, concede, classify2 } from '../domain/cover2';
+import { shapesFor, describe as readGraph, LAYERS, type Layer } from '../domain/graphShapes';
 import { TrainingWheels } from '../components/TrainingWheels';
 import { wheelShapes, wheelNotes, mateLine, mateArrows, mateNote, type Wheel } from '../domain/wheels';
 
@@ -102,18 +96,7 @@ export type Puzzle = {
 };
 
 const ALL = PUZZLES as Puzzle[];
-const DEPTH = 4;
 
-/**
- * Node ceiling for one ply's ranking.
- *
- * The default is 400k per root move, which is right for a harness and wrong for
- * a tab: a dense middlegame took eight seconds, during which the Lab is simply
- * frozen. The generator uses the same number, so the flags it ships and the
- * annotation computed here cannot drift apart — which is what `test/lab.test.ts`
- * checks.
- */
-const BUDGET = 100_000;
 
 const GLYPH: Record<Role, string> = {
 	pawn: '♙',
@@ -132,8 +115,6 @@ const DARK: Record<Role, string> = {
 	king: '♚',
 };
 
-const uci = (m: NormalMove) =>
-	`${makeSquare(m.from)}${makeSquare(m.to)}${m.promotion ? (m.promotion[0] === 'k' ? 'n' : m.promotion[0]) : ''}`;
 
 function toMove(u: string): NormalMove {
 	const from = parseSquare(u.slice(0, 2)) as number;
@@ -163,38 +144,9 @@ function figurine(pos: Chess, u: string): string {
 	return `${set[piece.role]}${makeSquare(m.from)}${takes ? '×' : '–'}${makeSquare(m.to)}${becomes}`;
 }
 
-/** Centipawns as something a person can picture. */
-function material(cp: number): string {
-	if (!Number.isFinite(cp)) return cp > 0 ? 'mate' : 'mated';
-	const n = Math.abs(cp);
-	if (n === 0) return 'nothing';
-	const name =
-		n >= 850 && n <= 950
-			? 'a queen'
-			: n >= 470 && n <= 530
-				? 'a rook'
-				: n >= 300 && n <= 350
-					? 'a piece'
-					: n >= 160 && n <= 200
-						? 'the exchange'
-						: n === 100
-							? 'a pawn'
-							: `${(n / 100).toFixed(1)} pawns`;
-	return cp < 0 ? `minus ${name}` : name;
-}
 
 const side = (c: Color) => (c === 'white' ? 'White' : 'Black');
 
-/**
- * What Stockfish makes of one move, or a word saying it did not look at it.
- *
- * A blank cell would read as "zero" or as "the engine agrees"; neither is true.
- * Outside the top dozen is itself a judgement, and is written as one.
- */
-function engineCp(rows: Candidate[], move: string): string {
-	const hit = rows.find((c) => c.uci === move);
-	return hit ? cp(hit.cp) : 'not in its top 12';
-}
 
 /** Engine centipawns, from the mover's point of view, signed. */
 const cp = (n: number) => (Math.abs(n) >= 9000 ? (n > 0 ? 'mate' : 'mated') : `${n > 0 ? '+' : ''}${(n / 100).toFixed(2)}`);
@@ -215,20 +167,6 @@ export type Step = {
 	detectorText: string | null;
 };
 
-/** The expensive half, computed only for the ply being looked at. */
-export type Detail = {
-	playedScore: number | null;
-	playedRank: number | null;
-	best: Scored[];
-	bestText: string;
-	rank: Scored[];
-	ties: number;
-	legal: number;
-	verdict: Verdict;
-	/** True when the search never scored the puzzle's move at all. */
-	unranked: boolean;
-	line: string[];
-};
 
 function verdictOf(f: PlyFlags | undefined): Verdict {
 	if (!f) return 'missed';
@@ -268,48 +206,6 @@ export function chainOf(p: Puzzle): Step[] {
 	return out;
 }
 
-/** Ask the detector about one position. This is the part that costs. */
-export function detailOf(step: Step): Detail {
-	const { scored } = scoreMoves(step.pos, DEPTH, BUDGET);
-	const top = scored.length ? scored[0].score : 0;
-	const played = scored.find((s) => uci(s.move) === step.played);
-	const bestSet = scored.filter((s) => s.score === top);
-	const hit = played !== undefined && played.score === top;
-	const at = scored.findIndex((s) => uci(s.move) === step.played);
-	// Show the head of the ranking — and, when the puzzle's move is nowhere near
-	// the top, show it anyway. A table that silently omits the answer is the one
-	// thing this screen must not do.
-	const head = scored.slice(0, 4);
-	return {
-		playedScore: played?.score ?? null,
-		playedRank: at >= 0 ? at + 1 : null,
-		best: bestSet,
-		bestText: bestSet
-			.slice(0, 3)
-			.map((s) => figurine(step.pos, uci(s.move)))
-			.join(' / '),
-		// The puzzle's move ALWAYS gets a row. If the search did not rank it at all
-		// — which happens when the move list it built does not contain it — the row
-		// says so, because a table that quietly drops the answer is the one thing
-		// this screen must not do.
-		rank: at >= 0 ? (at >= head.length ? [...head, scored[at]] : head) : head,
-		unranked: at < 0,
-		ties: bestSet.length,
-		legal: scored.length,
-		verdict: !hit
-			? 'missed'
-			: bestSet.length <= 2 || scored.length <= 1
-				? 'found'
-				: uci(scored[0].move) === step.played
-					? 'coerced'
-					: 'tied',
-		line: (bestSet[0]?.line ?? []).map((m, j, arr) => {
-			let q = step.pos;
-			for (let k = 0; k < j; k++) q = play(q, uci(arr[k]));
-			return figurine(q, uci(m));
-		}),
-	};
-}
 
 const THEMES = [...new Set(ALL.flatMap((p) => p.themes))].sort();
 
@@ -349,13 +245,6 @@ const KEEP: Record<Only, (p: Puzzle) => boolean> = {
 	mate: (p) => anyPly(p.id, 'mate'),
 };
 
-const VERDICT: Record<Verdict, string> = {
-	blunder: color.ink2,
-	found: color.good,
-	coerced: color.warn,
-	tied: color.warn,
-	missed: color.bad,
-};
 /** The verdict in a word, for the notes file. */
 const VERDICT_WORD: Record<Verdict, string> = {
 	blunder: 'the blunder',
@@ -390,7 +279,6 @@ export function Lab() {
 	 * paint, which is the worst kind of wrong on a screen whose whole purpose is
 	 * to be checked.
 	 */
-	const [detail, setDetail] = useState<{ key: string; value: Detail } | null>(null);
 	/**
 	 * Stockfish's opinion, off by default.
 	 *
@@ -407,15 +295,6 @@ export function Lab() {
 	const [showEngine, setShowEngine] = useState(true);
 	/** The old depth search's ranking, explanation and move-list colours. */
 	const [showOld, setShowOld] = useState(false);
-	/**
-	 * Whose obligations Γ is drawn for.
-	 *
-	 * Deficiency is a property of one side, so the layer has to be told which.
-	 * The side to move is the default because that is the question the position
-	 * asks — what must I answer — and the other reading, what my opponent owes,
-	 * is one click away rather than a second layer.
-	 */
-	const [coverSide, setCoverSide] = useState<'toMove' | 'other'>('toMove');
 
 	/** Which layer of the attack graph is drawn on the board (PLAN.md M1f). */
 	const [graphLayer, setGraphLayer] = useState<Layer>('off');
@@ -464,16 +343,6 @@ export function Lab() {
 	const [options, setOptions] = useState<{ key: string; value: Candidate[] } | null>(null);
 	/** Free play from the position on screen: moves are pushed onto a local line. */
 	const [freePlay, setFreePlay] = useState<{ key: string; moves: string[] } | null>(null);
-	/**
-	 * The argument for the puzzle's move, not just its score.
-	 *
-	 * Will: "the whole point of the detector is to be able to annotate mistakes and
-	 * puzzles to explain the black box Stockfish eval, which offers little direct
-	 * pedagogy." A number cannot be taught from. This is the structure underneath
-	 * it: what the move forces, what the opponent still has, and what each of
-	 * those comes to.
-	 */
-	const [why, setWhy] = useState<{ key: string; value: Branch | null } | null>(null);
 	/** Will's notes, one per puzzle and ply, kept in the browser and exportable. */
 	const [notes, setNotes] = useState<Map<string, LabNote>>(new Map());
 	const [draft, setDraft] = useState('');
@@ -576,21 +445,6 @@ export function Lab() {
 	// before the thread is taken away.
 	// ------------------------------------------------------------------
 	const key = `${puzzle?.id ?? ''}:${at}`;
-	useEffect(() => {
-		if (!step || at === 0) return;
-		let live = true;
-		const t = setTimeout(() => {
-			const value = detailOf(step);
-			if (live) setDetail({ key, value });
-		}, 16);
-		return () => {
-			live = false;
-			clearTimeout(t);
-		};
-	}, [step, at, key]);
-
-	// Anything computed for another ply is not shown at all.
-	const shown = detail && detail.key === key ? detail.value : null;
 
 	// The engine runs in its own worker, so this does not compete with the
 	// detector for the main thread — but it is still tagged with its ply, for the
@@ -617,14 +471,6 @@ export function Lab() {
 		() => (graphLayer === 'off' || !step ? null : buildGraph(step.pos.board)),
 		[graphLayer, step],
 	);
-	// Γ is built only for the layers that draw it. The ledger and the cover graph
-	// are cheap — 1ms/ply measured — but building them for the attack layer would
-	// tie two milestones' work together for no reason.
-	const gam = useMemo(() => {
-		if (!step || (graphLayer !== 'owed' && graphLayer !== 'cover')) return null;
-		const owed = coverSide === 'toMove' ? step.pos.turn : step.pos.turn === 'white' ? 'black' : 'white';
-		return gamma(step.pos, { owed });
-	}, [step, graphLayer, coverSide]);
 
 	// Four of the five wheels are pure board computations — the most expensive is a
 	// few milliseconds — so this memoises on the position and the focused man and
@@ -678,51 +524,17 @@ export function Lab() {
 	}, [step, wheels]);
 
 	const graphShapes = useMemo(
-		() => (graph && step ? shapesFor(graph, graphLayer, focus, step.pos.board, gam ?? undefined) : []),
-		[graph, graphLayer, focus, step, gam],
+		() => (graph && step ? shapesFor(graph, graphLayer, focus, step.pos.board) : []),
+		[graph, graphLayer, focus, step],
 	);
-	const graphNote =
-		gam && step
-			? explainCover(
-					gam,
-					classify2(gam, step.pos.board, coverSide === 'toMove' ? step.pos.turn : step.pos.turn === 'white' ? 'black' : 'white'),
-					concede(step.pos, gam, coverSide === 'toMove' ? step.pos.turn : step.pos.turn === 'white' ? 'black' : 'white'),
-					(f, t) => figurine(step.pos, makeSquare(f) + makeSquare(t)),
-				)
-			: graphLayer === 'couplings' && step
-				? explainCouplings(step.pos.board)
-				: graph && step
-					? readGraph(graph, focus, step.pos.board)
-					: null;
+	// The `owed`, `cover` and `couplings` layers went to the attic with the ledger2
+	// stack (M6), and their captions with them. What is left is the graph's own
+	// reading, which depends on nothing but `graph.ts` and `reach.ts`.
+	const graphNote = graph && step ? readGraph(graph, focus, step.pos.board) : null;
 
 	const engineRows = showEngine && engine && engine.key === key ? engine.value : null;
 	const optionArrows = options && options.key === key ? options.value : null;
-	/** What the detector would play here, from the precomputed chain. */
-	const detectorMove = at > 0 ? (puzzle?.plies?.[at - 1]?.b ?? null) : null;
-	/**
-	 * Which move the explanation is about.
-	 *
-	 * Will: "I also need to be able to see the written explanations for how the
-	 * other alternative moves are scored." So any row in the ranking can be
-	 * asked, and the detector's own move is what it opens on.
-	 */
-	const [asked, setAsked] = useState<string | null>(null);
-	const explained = asked ?? detectorMove ?? step?.played ?? null;
-	/**
-	 * The explanation is keyed by the MOVE as well as the position.
-	 *
-	 * It was keyed by position alone while the search filling it always argued
-	 * the puzzle's move, so asking about another row changed the heading and
-	 * nothing else. Caught by scripts/lab-check.mjs, which clicks the second row
-	 * and asserts the explanation changed.
-	 */
-	const argKey = `${key}:${explained ?? ''}`;
-	const argument = why && why.key === argKey ? why.value : null;
-
 	// The note belongs to the position, so changing ply changes the box.
-	useEffect(() => {
-		setAsked(null);
-	}, [key]);
 
 	const noteKey = puzzle ? `${puzzle.id}:${at}` : '';
 	useEffect(() => {
@@ -797,26 +609,6 @@ export function Lab() {
 		setLink(await writeLinked(document_(rows), true));
 	};
 
-	// Built AFTER the ranking is on screen, and cheaply.
-	//
-	// It is a second search, and running it in the same tick as the first put the
-	// hang straight back: the table could not paint until the explanation
-	// finished, which on one position was eight seconds. So it waits for `shown`
-	// — the ranking is rendered by then — and runs a quarter of a second later
-	// with a small budget. Two plies of explanation, not three: the third ply
-	// costs more than it says.
-	useEffect(() => {
-		if (!step || at === 0 || !shown || !explained) return;
-		let live = true;
-		const t = setTimeout(() => {
-			const value = explain(step.pos, toMove(explained), 2, 15_000);
-			if (live) setWhy({ key: argKey, value });
-		}, 250);
-		return () => {
-			live = false;
-			clearTimeout(t);
-		};
-	}, [step, at, argKey, explained, shown]);
 
 	// Free play replaces the board's position without disturbing the annotation,
 	// which stays attached to the puzzle ply it belongs to.
@@ -962,15 +754,6 @@ export function Lab() {
 							))}
 						</select>
 					</label>
-					{(graphLayer === 'owed' || graphLayer === 'cover') && (
-						<label style={{ fontSize: text.note, color: color.ink2, marginLeft: 12 }}>
-							owed by{' '}
-							<select value={coverSide} onChange={(e) => setCoverSide(e.target.value as 'toMove' | 'other')}>
-								<option value="toMove">the side to move</option>
-								<option value="other">the other side</option>
-							</select>
-						</label>
-					)}
 
 				<form
 					onSubmit={(e) => {
@@ -1060,7 +843,7 @@ export function Lab() {
 												brush: brushForGrade(c.grade),
 												label: `${c.cp > 0 ? '+' : ''}${(c.cp / 100).toFixed(1)}`,
 											}))
-										: arrowsFor(step, prev, shown)
+										: arrowsFor(step, prev)
 							}
 						/>
 						{graphLayer !== 'off' && (
@@ -1073,7 +856,7 @@ export function Lab() {
 								 * what made it visible.
 								 */}
 								{graphNote
-									? focus !== null && graphLayer !== 'owed' && graphLayer !== 'cover' && graphLayer !== 'couplings'
+									? focus !== null
 										? `${makeSquare(focus)}: ${graphNote}`
 										: graphNote
 									: 'click a piece to show only its edges'}
@@ -1188,16 +971,6 @@ export function Lab() {
 								<span>
 									<span style={{ borderBottom: `2px solid ${color.bad}` }}>the blunder</span>
 								</span>
-								{showOld && (
-								<span>
-									<span style={{ borderBottom: `2px solid ${color.warn}` }}>
-										the detector got this one wrong
-									</span>
-								</span>
-								)}
-								{showOld && steps.some((x) => x.detectorText) && (
-									<span>≠ marks where it would have played something else</span>
-								)}
 							</div>
 						</div>
 					</div>
@@ -1226,12 +999,22 @@ export function Lab() {
 								the board you are looking at; pick a move from the solution to see what the
 								detector makes of it.
 							</Section>
-						) : !shown ? (
-							<Section>
-								<Note>Working out this position…</Note>
-							</Section>
 						) : (
 							<Section>
+								{/*
+								  * WHAT THIS PLY IS, AND NOTHING INFERRED.
+								  *
+								  * This box used to be the old depth search narrating itself — "the
+								  * detector values it at …", "the detector would play … instead". That
+								  * stack is in `attic/depth-search` (M6) and its commentary went with
+								  * it, because a sentence about an evaluator nobody runs any more is
+								  * worse than no sentence.
+								  *
+								  * What is left is the fact: whose move, what was played, and whether
+								  * it counts. Every judgement on this screen is now something the
+								  * reader turned on — the ladder, the wheels, the explainer, or the
+								  * engine table below.
+								  */}
 								<div
 									style={{
 										padding: space.snug,
@@ -1241,180 +1024,43 @@ export function Lab() {
 										borderWidth: 1,
 										borderColor: color.line,
 										borderLeftWidth: 4,
-										borderLeftColor: step.solver ? VERDICT[shown.verdict] : color.line,
+										borderLeftColor: step.solver ? color.accent : color.line,
 										marginBottom: space.snug,
 									}}
 								>
-									<strong style={{ color: step.solver ? VERDICT[shown.verdict] : color.ink2 }}>
-										{!step.solver
-											? 'Not counted'
-											: shown.verdict === 'found'
-												? 'Found it'
-												: shown.verdict === 'coerced'
-													? 'No opinion — but the most coercive'
-													: shown.verdict === 'tied'
-														? 'No opinion'
-														: 'Missed it'}
-									</strong>{' '}
-									— the puzzle plays <strong>{step.playedText}</strong> for {side(step.mover)}
-									{shown.playedScore !== null && (
-										<>
-											, which the detector values at <strong>{material(shown.playedScore)}</strong>
-										</>
-									)}
-									.
+									The puzzle plays <strong>{step.playedText}</strong> for {side(step.mover)}.
 									{!step.solver && (
 										<>
 											{' '}
-											This is the <strong>opponent's</strong> reply. It is Stockfish's pick among
-											moves that may all lose, so a disagreement here is not a fault — the
-											detector only has to find {side(solver)}'s moves.
-										</>
-									)}
-									{step.solver && shown.verdict === 'missed' && (
-										<>
-											{' '}
-											The detector would play <strong>{shown.bestText}</strong> instead, valuing
-											it at <strong>{material(shown.best[0]?.score ?? 0)}</strong> — a gap of{' '}
-											{material((shown.best[0]?.score ?? 0) - (shown.playedScore ?? 0))}.
-										</>
-									)}
-									{step.solver && shown.verdict === 'coerced' && (
-										<>
-											{' '}
-											<strong>{shown.ties}</strong> of the {shown.legal} legal moves score exactly
-											the same on material, so the evaluation has no opinion here. This one
-											leaves the opponent the fewest replies that hold, which is a reason to{' '}
-											<em>look</em> at it first — not a reason to play it. Coercion orders the
-											search; material decides the answer.
-										</>
-									)}
-									{step.solver && shown.verdict === 'tied' && (
-										<>
-											{' '}
-											But <strong>{shown.ties}</strong> of the {shown.legal} legal moves score
-											exactly the same, so nothing here picked the answer out — this ply passes
-											the test without the detector having said anything.
+											This is the <strong>opponent's</strong> reply — shown, but not one of the
+											moves a solver has to find.
 										</>
 									)}
 								</div>
 
-								{showOld && (
-								<table
-									data-ply-detail={plyOf(at)}
-									style={{ borderCollapse: 'collapse', fontSize: text.body, width: '100%' }}
-								>
-									<caption
-										style={{
-											captionSide: 'top',
-											textAlign: 'left',
-											color: color.ink2,
-											fontSize: text.note,
-											paddingBottom: space.tight,
-										}}
-									>
-										The detector's own ranking of this position — its first row is the move it
-										would play.{' '}
-										{showEngine
-											? 'The last column is Stockfish, for comparison; the rest of the screen never consults it.'
-											: 'Stockfish is not consulted here — tick “Stockfish column” above to add its numbers beside these.'}
-									</caption>
-									<thead>
-										<tr style={{ color: color.ink2, fontSize: text.note, textAlign: 'left' }}>
-											<th style={th}>move</th>
-											<th style={th}>what the detector thinks it is worth</th>
-											<th style={th} title="Material this move takes on the spot">takes</th>
-											<th style={th} title="The rest: what the search and the static terms add on top of the capture">
-												from the line
-											</th>
-											{showEngine && <th style={th}>Stockfish</th>}
-										</tr>
-									</thead>
-									<tbody>
-										{shown.rank.map((s, i) => {
-											const isPlayed = uci(s.move) === step.played;
-											// Row 0 is the detector's own choice. Both rows are marked,
-											// because the interesting case is when they are different rows
-											// and a table that highlights only one of them makes the reader
-											// hunt for the other.
-											const isDetector = i === 0;
-											const isAsked = uci(s.move) === (explained ?? step.played);
-											return (
-												<tr
-													key={i}
-													onClick={() => setAsked(uci(s.move))}
-													title="Explain this move"
-													style={{
-														cursor: 'pointer',
-														outline: isAsked ? `1px solid ${color.accent}` : undefined,
-														background: isPlayed
-															? color.accentSoft
-															: isDetector
-																? color.badSoft
-																: undefined,
-													}}
-												>
-													<td style={td}>
-														{figurine(step.pos, uci(s.move))}
-														{!isPlayed && isDetector && (
-															<span style={{ color: color.ink2 }}> ← the detector’s move</span>
-														)}
-														{isPlayed && (
-															<span style={{ color: color.ink2 }}>
-																{' '}
-																← the puzzle's move
-																{/* Row 0 IS the detector's choice, so agreement is visible here. */}
-																{i === 0 ? ', and the detector\u2019s' : ''}
-																{shown.playedRank && shown.playedRank > 4
-																	? `, ranked ${shown.playedRank}`
-																	: ''}
-															</span>
-														)}
-													</td>
-													<td style={{ ...td, fontFamily: mono }}>{material(s.score)}</td>
-												{(() => {
-													const b = breakdown(step.pos, s);
-													return (
-														<>
-															<td style={{ ...td, fontFamily: mono, color: color.ink2 }}>
-																{b.takes ? material(b.takes) : '—'}
-															</td>
-															<td style={{ ...td, fontFamily: mono, color: color.ink2 }}>
-																{b.rest ? material(b.rest) : '—'}
-															</td>
-														</>
-													);
-												})()}
-													{showEngine && (
-														<td style={{ ...td, fontFamily: mono, color: color.ink2 }}>
-															{engineRows === null ? '…' : engineCp(engineRows, uci(s.move))}
-														</td>
-													)}
-												</tr>
-											);
-										})}
-										{shown.unranked && (
-											<tr style={{ background: color.badSoft }}>
-												<td style={td}>
-													{step.playedText}{' '}
-													<span style={{ color: color.ink2 }}>← the puzzle's move</span>
-												</td>
-												<td style={{ ...td, fontFamily: mono }}>never scored</td>
-												{showEngine && <td style={td} />}
-												<td style={td} />
-												<td style={td} />
-											</tr>
-										)}
-									</tbody>
-								</table>
-								)}
-
 								{/*
-								  * THE LADDER IS THE PANEL NOW. `ComplexPanel` is Stack 3 and is on its
-								  * way to the attic (#35); it stays reachable behind the old-stack
-								  * checkbox until then, so a disagreement between the two can still be
-								  * read side by side rather than remembered.
+								  * THE STOCKFISH COLUMN, WHICH IS NOW THE WHOLE TABLE.
+								  *
+								  * It used to be one column beside the old detector's ranking, and when
+								  * that table was archived the comparison would have gone with it. Will
+								  * asked for it to stay, and it is the right call: the engine is the
+								  * ORACLE (PLAN-EXPLAINER §0), so its ranking is the one thing on this
+								  * screen that is not an opinion this project is responsible for.
+								  *
+								  * Rows are clickable, and that is the same doorway Train and Mistakes
+								  * have: any move here can be asked about, against the others as its
+								  * comparison set.
 								  */}
+								{showEngine &&
+									(engineRows ? (
+										<EngineTable rows={engineRows} played={step.played} onAsk={(uci) =>
+											setAsking({ fen: fenOf(step.pos), uci, alternatives: engineRows.map((r) => r.uci) })
+										} />
+									) : (
+										<Note>Asking Stockfish…</Note>
+									))}
+
+								
 								{/*
 								  * THE EXPLAINER. Asks about the puzzle's own move, against the
 								  * engine's choice — which is the comparison a reader of this panel
@@ -1455,72 +1101,8 @@ export function Lab() {
 
 								{step && at > 0 && <LadderPanel pos={step.pos} played={step.played} plyKey={key} onShapes={setComplexShapes} onBoard={setBorrowed} />}
 
-								{step && at > 0 && showOld && (
-									<ComplexPanel pos={step.pos} played={step.played} plyKey={key} />
-								)}
 
-								{step && at > 0 && showOld && (
-									<LedgerPanel pos={step.pos} played={step.played} plyKey={key} engine={engineRows} />
-								)}
 
-								{showOld && argument && (
-								<Section>
-									<h4 style={{ margin: `0 0 ${space.tight}px` }}>Explanation</h4>
-									<div style={{ fontSize: text.note, color: color.ink2, marginBottom: space.snug }}>
-										How the detector arrived at its score for{' '}
-										<strong style={{ color: color.ink }}>
-											{figurine(step.pos, explained ?? step.played)}
-										</strong>
-										{explained === detectorMove && detectorMove !== step.played
-											? ' — the move it would play, not the puzzle\u2019s'
-											: explained === step.played
-												? ' — the puzzle\u2019s move'
-												: ''}
-										. Ask about any row in the ranking below.
-									</div>
-									{(() => {
-										const story = narrate(
-											step.pos,
-											argument,
-											shown.rank
-												.filter((r) => uci(r.move) !== (explained ?? step.played))
-												.map((r) => ({ move: r.move, score: r.score })),
-											{
-												name: (p, m) => figurine(p, uci(m)),
-												amount: material,
-												play: (p, m) => play(p, uci(m)),
-												takes: (p, m) => immediate(p, m),
-											},
-										);
-										return (
-											<div style={{ fontSize: text.body, lineHeight: 1.6 }}>
-												<p style={{ margin: 0 }}>{story.opening}</p>
-												{story.line.map((l, i) => (
-													<p key={i} style={{ margin: `${space.tight}px 0 0` }}>
-														{l}
-													</p>
-												))}
-												<p style={{ margin: `${space.tight}px 0 0` }}>{story.closing}</p>
-											</div>
-										);
-									})()}
-									<details style={{ marginTop: space.snug }}>
-										<summary style={{ fontSize: text.note, color: color.ink2, cursor: 'pointer' }}>
-											the branches behind that
-										</summary>
-										<div style={{ marginTop: space.tight }}>
-											<BranchTree pos={step.pos} node={argument} depth={0} />
-										</div>
-									</details>
-								</Section>
-							)}
-
-							{shown.line.length > 1 && (
-									<Note style={{ marginTop: space.snug }}>
-										<strong>What the detector expects to happen:</strong>{' '}
-										{shown.line.map((m, i) => `${i + 1}. ${m}`).join('  ')}
-									</Note>
-								)}
 							</Section>
 						)}
 
@@ -1608,44 +1190,6 @@ export function Lab() {
 	);
 }
 
-/**
- * The argument, as an indented list.
- *
- * Deliberately not a diagram: what is being shown is a claim of the form "these
- * are the replies they have, and each of them comes to this", and a list is what
- * that is. The indentation is the alternation of moves.
- */
-function BranchTree({ pos, node, depth }: { pos: Chess; node: Branch; depth: number }) {
-	let after: Chess;
-	try {
-		after = pos.clone();
-		after.play(node.move);
-	} catch {
-		return null;
-	}
-	const constrained =
-		node.forced
-			? 'the only legal move'
-			: node.options === 1
-				? 'the only reply that holds — everything else concedes'
-				: node.options > 1
-					? `${node.options} replies hold`
-					: null;
-	return (
-		<div style={{ marginLeft: depth * 14, fontSize: text.body, lineHeight: 1.6 }}>
-			<span style={{ fontFamily: mono, color: depth % 2 === 0 ? color.ink : color.ink2 }}>
-				{figurine(pos, uci(node.move))}
-			</span>{' '}
-			<span style={{ color: color.ink2 }}>
-				{material(node.value)}
-				{constrained ? ` · ${constrained}` : ''}
-			</span>
-			{node.replies.map((r, i) => (
-				<BranchTree key={i} pos={after} node={r} depth={depth + 1} />
-			))}
-		</div>
-	);
-}
 
 /** A move in algebraic notation, which is what a scoresheet wants. */
 function sanOf(pos: Chess, u: string): string {
@@ -1659,23 +1203,6 @@ function sanOf(pos: Chess, u: string): string {
 	}
 }
 
-/**
- * Where a move's score comes from.
- *
- * Will: "For debugging it would be good if the detector score is broken down
- * into the material diff it has calculated the score on because that would make
- * the reasoning more transparent."
- *
- * A single number cannot be argued with. These three can: what the move takes on
- * the spot, what the line it believes in comes to, and the difference — which is
- * everything the search decided that is not visible on the board. On rF0aS that
- * last column was +800 for a move that touched nothing, which is exactly the
- * shape of a term firing when it should not.
- */
-function breakdown(pos: Chess, s: Scored): { takes: number; line: number; rest: number } {
-	const takes = immediate(pos, s.move);
-	return { takes, line: s.score, rest: s.score - takes };
-}
 
 /** From-and-to of a move, for chessground's last-move highlight. */
 function squaresOf(u: string): [string, string] {
@@ -1687,7 +1214,20 @@ function squaresOf(u: string): [string, string] {
  * Three things at most: what was just played, what the answer plays next, and —
  * only when they differ — what the detector would have played instead.
  */
-function arrowsFor(step: Step, prev: Step | null, detail: Detail | null) {
+function arrowsFor(step: Step, prev: Step | null) {
+	// THE PLAYED MOVE, AND NOTHING ELSE INFERRED.
+	//
+	// This used to add a red arrow for the old depth search's own pick whenever it
+	// disagreed with the puzzle. Will, on whether the ladder should inherit that
+	// slot: "Why would we show the ladder's move when the ladder is wrong and
+	// superseded? Lab default should show only the played move."
+	//
+	// That is right, and it is the same mistake in a new coat. An arrow drawn
+	// without being asked for reads as the app's answer, and this project no
+	// longer has an analytical answer it stands behind — the engine is the oracle
+	// and everything else is a lens the reader chooses. So the default board is
+	// the position and what was played on it; the ladder, the wheels and the
+	// explainer all draw only when switched on.
 	const out: { orig: string; dest: string; brush: string; label?: string }[] = [];
 	if (prev) {
 		// Grey, off the quality ramp: this is context, not a judgement. The
@@ -1695,17 +1235,8 @@ function arrowsFor(step: Step, prev: Step | null, detail: Detail | null) {
 		const q = toMove(prev.played);
 		out.push({ orig: makeSquare(q.from), dest: makeSquare(q.to), brush: 'past' });
 	}
-	// The puzzle's move is the answer, so it is always the strongest arrow on the
-	// board. It used to fade to `q3` on a miss while the detector's mistaken
-	// choice got `q0` — the heaviest green on the ramp — which drew the wrong move
-	// louder than the right one and said "best" about it into the bargain.
 	const p = toMove(step.played);
 	out.push({ orig: makeSquare(p.from), dest: makeSquare(p.to), brush: 'q0' });
-	if (detail?.verdict === 'missed' && detail.best[0]) {
-		// Red, because it is wrong. Nothing on the green ramp can say that.
-		const b = detail.best[0].move;
-		out.push({ orig: makeSquare(b.from), dest: makeSquare(b.to), brush: 'red' });
-	}
 	return out;
 }
 
@@ -1720,6 +1251,74 @@ const buttonStyle: React.CSSProperties = {
 	color: color.ink,
 	cursor: 'pointer',
 };
+
+/**
+ * Stockfish's ranking for this position.
+ *
+ * The only table left in the Lab, and the only ranking on the screen that is not
+ * this project's opinion. `loss` is the gap to the engine's best, which is the
+ * number a reader actually wants; `cp` is kept beside it because a move can be
+ * near-best in a lost position and the two say different things.
+ *
+ * The puzzle's own move is marked and is always present even when it falls
+ * outside the engine's top twelve — a table that silently omits the answer is
+ * the one thing this screen must not do.
+ */
+function EngineTable({
+	rows,
+	played,
+	onAsk,
+}: {
+	rows: Candidate[];
+	played: string;
+	onAsk: (uci: string) => void;
+}) {
+	const has = rows.some((r) => r.uci === played);
+	return (
+		<div style={{ overflowX: 'auto' }}>
+			<table style={{ borderCollapse: 'collapse', fontSize: text.body, width: '100%' }}>
+				<caption style={{ captionSide: 'top', textAlign: 'left', fontSize: text.note, color: color.ink2, paddingBottom: space.tight }}>
+					Stockfish, ranked. ★ is the puzzle's move. <em>Click a row to ask why.</em>
+				</caption>
+				<thead>
+					<tr style={{ color: color.ink2 }}>
+						<th style={th}> </th>
+						<th style={th}>move</th>
+						<th style={{ ...th, textAlign: 'right' }}>eval</th>
+						<th style={{ ...th, textAlign: 'right' }}>loss</th>
+					</tr>
+				</thead>
+				<tbody>
+					{rows.map((r) => (
+						<tr
+							key={r.uci}
+							onClick={() => onAsk(r.uci)}
+							style={{ cursor: 'pointer', borderTop: `1px solid ${color.line}` }}
+						>
+							<td style={td}>{r.uci === played ? '★' : ''}</td>
+							<td style={{ ...td, fontWeight: r.uci === played ? 600 : 400 }}>{r.san}</td>
+							<td style={{ ...td, textAlign: 'right', fontFamily: mono }}>{cp(r.cp)}</td>
+							<td style={{ ...td, textAlign: 'right', fontFamily: mono, color: r.loss ? color.ink2 : color.good }}>
+								{r.loss ? `−${(r.loss / 100).toFixed(2)}` : '—'}
+							</td>
+						</tr>
+					))}
+					{!has && (
+						// Said, rather than left blank. A blank cell reads as "zero" or as
+						// "the engine agrees"; being outside the top twelve is neither, and
+						// is itself a judgement worth printing as one.
+						<tr style={{ borderTop: `1px solid ${color.line}` }}>
+							<td style={td}>★</td>
+							<td style={{ ...td, fontWeight: 600 }} colSpan={3}>
+								<span style={{ color: color.ink2 }}>the puzzle's move is not in its top twelve</span>
+							</td>
+						</tr>
+					)}
+				</tbody>
+			</table>
+		</div>
+	);
+}
 
 const th: React.CSSProperties = { fontWeight: 400, padding: '2px 12px 4px 0' };
 const td: React.CSSProperties = { padding: '3px 12px 3px 0' };
