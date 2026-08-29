@@ -40,13 +40,15 @@ import { makeSan } from 'chessops/san';
 import type { Chess } from 'chessops/chess';
 import type { NormalMove, Role, Color } from 'chessops/types';
 import { color, space, radius, text, mono } from '../ui/theme';
-import { Note, Section } from '../ui/primitives';
+import { Note, Section, Button } from '../ui/primitives';
 import PUZZLES from '../data/labPuzzles.json';
 import LEDGER from '../data/ledgerBuckets.json';
 import { recall, remember } from '../data/viewState';
 import { LedgerPanel } from '../components/LedgerPanel';
 import { ComplexPanel } from '../components/ComplexPanel';
 import { LadderPanel } from '../components/LadderPanel';
+import { ExplainPanel, type Ask } from '../components/ExplainPanel';
+import type { BoardOverride } from '../components/LinePlayer';
 import type { Shape as ComplexShape } from '../components/Board';
 import { build as buildGraph } from '../domain/graph';
 import { shapesFor, describe as readGraph, explainCover, explainCouplings, LAYERS, type Layer } from '../domain/graphShapes';
@@ -425,6 +427,22 @@ export function Lab() {
 	 * publishes its own rows and they take the board while that tab is open.
 	 */
 	const [complexShapes, setComplexShapes] = useState<ComplexShape[]>([]);
+	/**
+	 * The question the explainer is answering, or null.
+	 *
+	 * Held here rather than inside the panel because opening a new question from
+	 * elsewhere in the Lab has to REPLACE the conversation, not push onto it — the
+	 * panel owns the recursion, the Lab owns which conversation is happening.
+	 */
+	const [asking, setAsking] = useState<Ask | null>(null);
+	/**
+	 * The board, borrowed by the explainer while a line is being walked.
+	 *
+	 * It wins over everything else: it is the most recently asked-for thing on
+	 * screen, and mixing a hypothetical position with the real one's overlays would
+	 * be worse than either.
+	 */
+	const [borrowed, setBorrowed] = useState<BoardOverride>(null);
 	/** Clicking a square focuses the overlay on that piece; a full board is a hairball. */
 	const [focus, setFocus] = useState<number | null>(null);
 	/**
@@ -942,7 +960,7 @@ export function Lab() {
 						}}
 					>
 						<Board
-							fen={fenOf(shownPos ?? step.pos)}
+							fen={borrowed ? borrowed.fen : fenOf(shownPos ?? step.pos)}
 							size={boardSize}
 							orientation={solver}
 							interactive={!!playing}
@@ -962,7 +980,9 @@ export function Lab() {
 								})
 							}
 							arrows={
-								complexShapes.length
+								borrowed
+									? borrowed.arrows
+									: complexShapes.length
 									? complexShapes
 									: graphLayer !== 'off'
 									? graphShapes
@@ -1330,6 +1350,34 @@ export function Lab() {
 								  * checkbox until then, so a disagreement between the two can still be
 								  * read side by side rather than remembered.
 								  */}
+								{/*
+								  * THE EXPLAINER. Asks about the puzzle's own move, against the
+								  * engine's choice — which is the comparison a reader of this panel
+								  * wants first. Everything deeper is reached by the "?" inside it.
+								  */}
+								{step && at > 0 && (
+									<div style={{ marginBottom: space.snug }}>
+										{asking ? (
+											<ExplainPanel
+												{...asking}
+												onBoard={setBorrowed}
+												onClose={() => {
+													setAsking(null);
+													setBorrowed(null);
+												}}
+											/>
+										) : (
+											<Button
+												onClick={() =>
+													setAsking({ fen: fenOf(step.pos), uci: step.played })
+												}
+											>
+												Explain {step.playedText}
+											</Button>
+										)}
+									</div>
+								)}
+
 								{step && at > 0 && <LadderPanel pos={step.pos} played={step.played} plyKey={key} onShapes={setComplexShapes} />}
 
 								{step && at > 0 && showOld && (
