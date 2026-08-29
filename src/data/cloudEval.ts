@@ -103,10 +103,15 @@ export function analysePosition(
 	minDepth: number,
 	multiPv = 1,
 	movetimeMs?: number,
+	/** Restrict the search to these moves. Pass ONE — see `Engine.analyse`. */
+	searchMoves?: string[],
 ): Promise<Analysis> {
 	// movetime is part of the identity of a result, not an incidental detail:
-	// a 300ms search and a depth-24 search are different answers.
-	const key = `${CACHE_VERSION}|${fen}|${minDepth}|${multiPv}|${movetimeMs ?? 0}`;
+	// a 300ms search and a depth-24 search are different answers. So is the move
+	// list: `searchmoves e2e4` and an unrestricted search of the same position are
+	// different questions, and keying them the same would serve one as the other.
+	const restricted = searchMoves?.length ? searchMoves.join(',') : '';
+	const key = `${CACHE_VERSION}|${fen}|${minDepth}|${multiPv}|${movetimeMs ?? 0}|${restricted}`;
 
 	const existing = inflight.get(key);
 	if (existing) return existing;
@@ -125,7 +130,10 @@ export function analysePosition(
 		// principal variation for the overwhelming majority of positions, so a
 		// multi-PV request all but guarantees a rejected response followed by a
 		// local run — the round trip is pure added latency.
-		const canUseCloud = multiPv === 1 && !cloudDisabled;
+		// A restricted search is never in the cloud: Lichess stores the position's
+		// own evaluation, not "the score of this one move", so a cloud hit would
+		// answer a different question.
+		const canUseCloud = multiPv === 1 && !cloudDisabled && !searchMoves?.length;
 		const cloud = canUseCloud ? await tryCloud(fen, minDepth) : null;
 
 		if (canUseCloud) {
@@ -133,7 +141,7 @@ export function analysePosition(
 			else if (++consecutiveMisses >= MISS_LIMIT) cloudDisabled = true;
 		}
 
-		const result = cloud ?? (await runLocal(fen, minDepth, multiPv, movetimeMs));
+		const result = cloud ?? (await runLocal(fen, minDepth, multiPv, movetimeMs, searchMoves));
 		if (cloud) evalStats.cloudHits++;
 		else evalStats.localRuns++;
 		evalStats.msTotal += performance.now() - started;
@@ -189,8 +197,9 @@ async function runLocal(
 	depth: number,
 	multiPv: number,
 	movetimeMs?: number,
+	searchMoves?: string[],
 ): Promise<Analysis> {
-	const r = await engine.analyse(fen, depth, multiPv, movetimeMs);
+	const r = await engine.analyse(fen, depth, multiPv, movetimeMs, searchMoves);
 	const stm = sideToMove(fen);
 	// UCI is side-to-move relative — convert.
 	const pvs: Pv[] = r.lines.map((l) => ({ cpWhite: toWhitePov(l.cp, stm), pv: l.pv }));

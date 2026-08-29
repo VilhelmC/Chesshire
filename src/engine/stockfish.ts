@@ -105,7 +105,37 @@ export class Engine {
 	 * Analyse a position. Calls are serialised — a single engine instance can
 	 * only work on one position at a time.
 	 */
-	analyse(fen: string, depth: number, multiPv = 1, movetimeMs?: number): Promise<AnalysisResult> {
+	/**
+	 * @param searchMoves Restrict the search to these UCI moves and score each.
+	 *
+	 * MEASURED, AND THE MEASUREMENT DECIDES HOW IT MAY BE USED. `scripts/m0-gate.mjs`
+	 * and `m0-exactness.mjs`:
+	 *
+	 *   * the engine is deterministic at fixed depth — the same query twice is
+	 *     identical on 151/151 scores and 220/220 pairs, so anything below is
+	 *     caused by the restriction rather than by noise
+	 *   * restricting the root move list CHANGES the search: against MultiPV,
+	 *     mean 25.8cp, max 229cp, 4.55% of pairs flip by more than 50cp
+	 *   * and within ONE multi-move call the scores are not mutually consistent
+	 *     either — against a full-window search of each move alone, only 5.4%
+	 *     agree, and 4.41% of pairs flip by more than 50cp
+	 *
+	 * So passing several moves here gives numbers that cannot be compared to each
+	 * other: `g8h6 vs f8e8` read +160 together and −74 apart, which is the
+	 * explainer telling a user the opposite of the truth.
+	 *
+	 * **Pass ONE move.** A single root move gets a full window and an exact score,
+	 * and four single-move searches cost 171ms against 151ms for one four-move
+	 * search — 1.1x. Exactness is essentially free, and `engine/compare.ts` is
+	 * built on one call per move for that reason.
+	 */
+	analyse(
+		fen: string,
+		depth: number,
+		multiPv = 1,
+		movetimeMs?: number,
+		searchMoves?: string[],
+	): Promise<AnalysisResult> {
 		const run = async (): Promise<AnalysisResult> => {
 			await this.init();
 
@@ -116,13 +146,16 @@ export class Engine {
 			const timeoutMs = movetimeMs ? movetimeMs + 20_000 : 120_000;
 			const output = await this.expect('bestmove', () => {
 				this.send('ucinewgame');
-				this.send(`setoption name MultiPV value ${multiPv}`);
+				// MultiPV must cover the named moves or the engine reports only the
+				// best few and the rest come back missing rather than scored.
+				const pvCount = searchMoves?.length ? Math.max(multiPv, searchMoves.length) : multiPv;
+				this.send(`setoption name MultiPV value ${pvCount}`);
 				this.send(`position fen ${fen}`);
 				// `go depth` on the single-threaded WASM build has wildly variable
 				// cost per position — fine for a one-off check, ruinous when you are
 				// walking a tree. `go movetime` makes the total predictable:
 				// nodes x movetime, instead of nodes x "however long depth N takes".
-				this.send(movetimeMs ? `go movetime ${movetimeMs}` : `go depth ${depth}`);
+				this.send(goCommand(depth, movetimeMs, searchMoves));
 			}, timeoutMs);
 
 			for (const raw of output) {
@@ -151,6 +184,20 @@ export class Engine {
 		this.worker = null;
 		this.ready = null;
 	}
+}
+
+/**
+ * The `go` line, built where it can be tested without an engine.
+ *
+ * `searchmoves` MUST COME LAST. Stockfish's parser consumes every remaining token
+ * on the line into the move list — its own source carries the comment "needs to
+ * be the last command on the line" — so a `movetime` appended after it is
+ * silently swallowed as a move and the search runs unbounded. Nothing errors; the
+ * symptom is a search that never returns.
+ */
+export function goCommand(depth: number, movetimeMs?: number, searchMoves?: string[]): string {
+	const go = movetimeMs ? `go movetime ${movetimeMs}` : `go depth ${depth}`;
+	return searchMoves?.length ? `${go} searchmoves ${searchMoves.join(' ')}` : go;
 }
 
 /** Parse a UCI `info ...` line into a PvLine, or null if it isn't one. */
