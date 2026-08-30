@@ -121,6 +121,31 @@ export type LabNote = {
 	updatedAt: number;
 };
 
+/**
+ * The Wikibooks register: which positions have a page written about them.
+ *
+ * Stored as entries rather than as an object so the position keys stay keys —
+ * a FEN field contains slashes and spaces, which survive a Map and an array of
+ * pairs and are a nuisance in anything that treats them as property names.
+ */
+export type CommentaryRegisterRow = {
+	id: string;
+	builtAt: number;
+	/** [positionKey, page path under "Chess Opening Theory/"] */
+	entries: [string, string][];
+	/** How many pages the book had when this was built. */
+	pages: number;
+	/** Titles that would not replay, kept so a lost page can be looked at. */
+	unplayable: string[];
+};
+
+/** One page's prose. `extract: null` means "exists, but is a stub". */
+export type CommentaryPageRow = {
+	page: string;
+	fetchedAt: number;
+	extract: string | null;
+};
+
 /** A file the app keeps up to date on disk. See data/fileLink.ts. */
 export type LinkedHandle = {
 	id: string;
@@ -143,6 +168,8 @@ export class OffbookDb extends Dexie {
 	imported!: Table<ImportedGameRow, string>;
 	labNotes!: Table<LabNote, string>;
 	handles!: Table<LinkedHandle, string>;
+	commentaryRegister!: Table<CommentaryRegisterRow, string>;
+	commentaryPages!: Table<CommentaryPageRow, string>;
 
 	constructor() {
 		super('offbook');
@@ -182,6 +209,14 @@ export class OffbookDb extends Dexie {
 			// once-per-session one. localStorage cannot: it stringifies, and a
 			// handle stringifies to "[object Object]".
 			handles: 'id',
+		});
+		this.version(9).stores({
+			// Two tables and not one: the register is a single row rebuilt whole
+			// every ninety days, the pages are thousands of rows written once and
+			// kept. Putting them together would mean rewriting every page cached
+			// so far each time the register is refreshed.
+			commentaryRegister: 'id, builtAt',
+			commentaryPages: 'page, fetchedAt',
 		});
 		// AnswerRow gained `path` (the move sequence, replacing `lineIds`) without
 		// a version bump: it is not an index, and Dexie stores undeclared fields

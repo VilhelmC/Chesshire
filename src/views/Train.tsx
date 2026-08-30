@@ -40,6 +40,8 @@ import { ExplainPanel, type Ask } from '../components/ExplainPanel';
 import { TrainingWheels } from '../components/TrainingWheels';
 import { useTrainingWheels } from '../hooks/useTrainingWheels';
 import { useLineOverlay } from '../hooks/useLineOverlay';
+import { useCommentary } from '../hooks/useCommentary';
+import { Commentary } from '../components/CommentaryPanel';
 import { lineFromUci, type Line } from '../domain/line';
 import { color } from '../ui/theme';
 import { markTraining } from '../data/autoImport';
@@ -955,6 +957,11 @@ export function Train({
 	// explainer owns the arrows anyway, and recomputing the wheels for each ply of
 	// somebody else's line is work nobody asked for.
 	const wheels = useTrainingWheels(shown?.fen ?? preview?.fen ?? state?.fen ?? null, focus);
+	// COMMENTARY FOLLOWS THE BOARD, including into a borrowed line: the panel
+	// and the position under it must never be about different things. The move
+	// is passed too, because a page is written about the moves LEAVING a
+	// position, so that is the one its prose might name.
+	const commentary = useCommentary(shownFen || null, asking?.fen === shownFen ? asking.uci : null);
 
 	/**
 	 * Everything known about the moves here, merged.
@@ -1548,6 +1555,9 @@ export function Train({
 							working={wheels.working}
 						/>
 					)}
+
+					{/* Only appears when the register says there is a page. */}
+					<Commentary state={commentary} region="train-commentary" />
 
 					{asking && (
 						<ExplainPanel

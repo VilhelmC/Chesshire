@@ -34,6 +34,9 @@ const PASSED: Record<string, string> = {
 	'lab-line': 'src/views/Lab.tsx',
 	'quiz-move-list': 'src/views/Quiz.tsx',
 	'quiz-moves': 'src/views/Quiz.tsx',
+	'train-commentary': 'src/views/Train.tsx',
+	'quiz-commentary': 'src/views/Quiz.tsx',
+	'lab-commentary': 'src/views/Lab.tsx',
 	'lab-moves': 'src/views/Lab.tsx',
 	'train-moves-head': 'src/views/Train.tsx',
 	'train-moves': 'src/views/Train.tsx',
@@ -81,6 +84,7 @@ describe('the doc lists what the code emits', () => {
 			'src/components/LineStepper.tsx',
 			'src/components/MoveTable.tsx',
 			'src/components/MoveList.tsx',
+			'src/components/CommentaryPanel.tsx',
 			'src/hooks/useTrainingWheels.ts',
 		];
 		const found = new Set<string>();

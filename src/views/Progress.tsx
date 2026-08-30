@@ -23,6 +23,7 @@ import {
 	type PlayedGame,
 } from '../domain/transfer';
 import { SyncStatus } from '../components/SyncStatus';
+import { useMeasure } from '../components/useViewport';
 import {
 	performanceReport,
 	accuracyByBand,
@@ -518,7 +519,23 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
  * run-to-run swings as real movement.
  */
 function RatingChart({ series }: { series: RatingPoint[] }) {
-	const W = 520;
+	/*
+	 * THE WIDTH IS MEASURED, NOT ASSUMED.
+	 *
+	 * This was `const W = 520` written straight onto the SVG's `width` attribute
+	 * with no `viewBox`, so on any column narrower than 520px the chart simply
+	 * hung out of its card. The repo already had the answer twice over —
+	 * `BoardPanel` sizes the board from its container and `MoveList` picks its
+	 * column count the same way, both using `useMeasure` — and this was the one
+	 * drawing that never got it.
+	 *
+	 * Measured rather than scaled with a `viewBox`, which was the cheaper fix:
+	 * a viewBox shrinks the axis labels along with the plot, and a 10px label at
+	 * 60% is not a label any more.
+	 */
+	const [ref, available] = useMeasure<HTMLDivElement>();
+	// 520 while unmeasured, so the first paint is the old size rather than zero.
+	const W = Math.max(240, Math.min(available || 520, 520));
 	const H = 150;
 	const PAD_L = 40;
 	const PAD_B = 20;
@@ -537,8 +554,15 @@ function RatingChart({ series }: { series: RatingPoint[] }) {
 	const last = series[series.length - 1];
 
 	return (
-		<figure style={{ margin: '12px 0 0' }}>
-			<svg width={W} height={H} role="img" aria-label="Estimated rating over time">
+		<figure ref={ref} style={{ margin: '12px 0 0', minWidth: 0 }}>
+			<svg
+				width={W}
+				height={H}
+				viewBox={`0 0 ${W} ${H}`}
+				style={{ maxWidth: '100%', display: 'block' }}
+				role="img"
+				aria-label="Estimated rating over time"
+			>
 				{[lo, (lo + hi) / 2, hi].map((v) => (
 					<g key={v}>
 						<line x1={PAD_L} x2={W - 12} y1={y(v)} y2={y(v)} stroke={GRID} strokeWidth={1} />

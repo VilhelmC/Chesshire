@@ -53,6 +53,8 @@ import { TrainingWheels } from '../components/TrainingWheels';
 import { MoveTable } from '../components/MoveTable';
 import { mergeMoves, type MoveSource } from '../domain/moveTable';
 import { useTrainingWheels } from '../hooks/useTrainingWheels';
+import { useCommentary } from '../hooks/useCommentary';
+import { Commentary } from '../components/CommentaryPanel';
 
 /** Per-ply result, precomputed: hit, ties at the top, legal moves, is-solver. */
 export type PlyFlags = {
@@ -477,6 +479,9 @@ export function Lab() {
 	// place and it applies the same everywhere." The Lab was the only host for a
 	// while and all of this lived here inline.
 	const wheels = useTrainingWheels(step ? fenOf(step.pos) : null, focus);
+	// The puzzle's own position, so a puzzle that starts in a known opening
+	// says which one and why.
+	const commentary = useCommentary(step ? fenOf(step.pos) : null);
 
 	const graphShapes = useMemo(
 		() => (graph && step ? shapesFor(graph, graphLayer, focus, step.pos.board) : []),
@@ -1093,6 +1098,9 @@ export function Lab() {
 										working={wheels.working}
 									/>
 								)}
+
+								{/* Only appears when the register says there is a page. */}
+								<Commentary state={commentary} region="lab-commentary" />
 
 								{step && at > 0 && <MateProof pos={step.pos} plyKey={key} onBoard={setBorrowed} />}
 

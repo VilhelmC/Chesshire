@@ -68,6 +68,7 @@ The Lab, top to bottom:
 | `ply-statement` | whose move it is and what was played — no judgement |
 | `lab-moves` / `train-moves` / `train-moves-head` / `quiz-moves` | the shared move table — one row per move, filter chips for line / engine / played, a `?` per row |
 | `training-wheels` | the overlay checkboxes and what they found |
+| `train-commentary` / `quiz-commentary` / `lab-commentary` | what Wikibooks says about this position, when there is a page — `…-prose` is the text itself |
 | `mate-proof` | the ladder's surviving rung, computed on demand |
 | `mate-proof-line` / `mate-proof-tree` | the walkable line, and the certificate |
 | `explain-panel` | an open explanation |

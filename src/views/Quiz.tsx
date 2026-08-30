@@ -27,6 +27,8 @@ import { ExplainPanel, type Ask } from '../components/ExplainPanel';
 import { TrainingWheels } from '../components/TrainingWheels';
 import { useTrainingWheels } from '../hooks/useTrainingWheels';
 import { useLineOverlay } from '../hooks/useLineOverlay';
+import { useCommentary } from '../hooks/useCommentary';
+import { Commentary } from '../components/CommentaryPanel';
 import { MoveList, MoveListLegend } from '../components/MoveList';
 import { MoveTable } from '../components/MoveTable';
 import { mergeMoves, type MoveSource } from '../domain/moveTable';
@@ -293,6 +295,12 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	// was no longer on screen. The borrowed line is excluded on purpose — while it
 	// is up the explainer owns the arrows.
 	const wheels = useTrainingWheels(boardFen ?? current?.fen ?? null, focus);
+	// Follows the board, borrowed line included — see Train.
+	const commentaryFen = lineOverlay.board?.fen ?? boardFen ?? current?.fen ?? null;
+	const commentary = useCommentary(
+		commentaryFen,
+		asking?.fen === commentaryFen ? asking.uci : null,
+	);
 
 	/**
 	 * Everything known about the moves here, merged — the same table Train shows.
@@ -664,6 +672,11 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 								hasFocus={focus !== null}
 								working={wheels.working}
 							/>
+
+							{/* Only appears when the register says there is a page. Stepping
+								back through the run-up lands on the opening plies, which is
+								exactly where the book has something to say. */}
+							<Commentary state={commentary} region="quiz-commentary" />
 
 							{asking && (
 								<ExplainPanel
