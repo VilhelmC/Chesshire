@@ -10,6 +10,7 @@
 // than an idea — and because the sentence is the part that can be checked
 // against the board, which an arrow cannot.
 // ---------------------------------------------------------------------------
+import { useState } from 'react';
 import { WHEELS, type Wheel } from '../domain/wheels';
 
 export type TrainingWheelsProps = {
@@ -30,6 +31,18 @@ export type TrainingWheelsProps = {
 };
 
 export function TrainingWheels({ on, onChange, notes = [], hasFocus = false, working = null }: TrainingWheelsProps) {
+	/**
+	 * COLLAPSED BY DEFAULT ONCE NOTHING IS ON.
+	 *
+	 * Five checkboxes and their explanations is a tall block to keep on screen in
+	 * Train and Mistakes, where the board and the move list are what the reader is
+	 * actually looking at. Open it, use it, and it stays open while anything is
+	 * ticked — the summary line says what is on, so collapsing never hides the
+	 * fact that an overlay is drawing.
+	 */
+	const [open, setOpen] = useState(false);
+	const showing = open || on.size > 0;
+
 	const toggle = (key: Wheel) => {
 		const next = new Set(on);
 		if (next.has(key)) next.delete(key);
@@ -40,15 +53,31 @@ export function TrainingWheels({ on, onChange, notes = [], hasFocus = false, wor
 	return (
 		<div className="wheels" data-region="training-wheels">
 			<div className="wheels-head">
-				<strong>training wheels</strong>
-				{on.size > 0 && (
-					<button type="button" className="link" onClick={() => onChange(new Set())}>
-						clear
-					</button>
-				)}
+				<button
+					type="button"
+					className="wheels-toggle"
+					aria-expanded={showing}
+					onClick={() => {
+						// Closing it turns the overlays off. An overlay still drawing under
+						// a collapsed panel is a mark on the board with no way to find out
+						// what put it there.
+						if (showing) onChange(new Set());
+						setOpen(!showing);
+					}}
+				>
+					<span aria-hidden="true">{showing ? '▾' : '▸'}</span> <strong>training wheels</strong>
+					{!showing && <span className="wheel-note"> — overlays for what is on the board</span>}
+					{showing && on.size > 0 && (
+						<span className="wheel-note">
+							{' '}
+							— {[...on].join(', ')}
+						</span>
+					)}
+				</button>
 			</div>
 
-			{WHEELS.map((w) => {
+			{showing &&
+				WHEELS.map((w) => {
 				// The safe-move row is the one that needs a selected man, and saying so
 				// on the row itself is better than drawing nothing and letting the
 				// reader conclude the overlay is broken.
@@ -63,9 +92,9 @@ export function TrainingWheels({ on, onChange, notes = [], hasFocus = false, wor
 						</span>
 					</label>
 				);
-			})}
+				})}
 
-			{notes.length > 0 && (
+			{showing && notes.length > 0 && (
 				<ul className="wheel-says">
 					{notes.map((n) => (
 						<li key={n}>{n}</li>

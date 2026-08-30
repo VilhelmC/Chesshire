@@ -441,6 +441,17 @@ export function Train({
 	 */
 	function showMe() {
 		if (!state || busyRef.current || !state.expected.length) return;
+		// PRESSING IT AGAIN PUTS IT AWAY. A filter chip that only ever turns on is
+		// a one-way door, and the toolbar button is the same control as the chip.
+		if (tableOn.has('line')) {
+			setTableOn((cur) => {
+				const next = new Set(cur);
+				next.delete('line');
+				return next;
+			});
+			setHint([]);
+			return;
+		}
 		// Every acceptable move, not the first. Labelled when there is more than
 		// one, because three green arrows with no numbers reads as a single line
 		// with a fork in it rather than as three separate answers.
@@ -605,6 +616,15 @@ export function Train({
 	 */
 	async function showOptions() {
 		if (!state || busyRef.current || !canInspect) return;
+		if (tableOn.has('engine')) {
+			setTableOn((cur) => {
+				const next = new Set(cur);
+				next.delete('engine');
+				return next;
+			});
+			setHint([]);
+			return;
+		}
 		busyRef.current = true;
 		setBusy(true);
 		try {
@@ -1051,6 +1071,10 @@ export function Train({
 						? `Show the ${state!.expected.length} moves the line allows — you still play`
 						: 'Show the move the line allows — you still play',
 				icon: 'reveal',
+				// ACCENT FOLLOWS THE TABLE. The buttons switch a tag on now rather than
+				// owning a rendering, so a button that looks the same whether its rows
+				// are showing or not is lying about what pressing it did.
+				accent: tableOn.has('line'),
 				onClick: showMe,
 				disabled: !yourTurn || busy || state?.phase === 'freeplay',
 			},
@@ -1062,6 +1086,7 @@ export function Train({
 					? 'Show every option, weighted by how good it is (stops this move counting)'
 					: 'Show every option, weighted by how good it is',
 				icon: 'options',
+				accent: tableOn.has('engine'),
 				onClick: showOptions,
 				disabled: !canInspect || busy,
 			},
@@ -1070,7 +1095,7 @@ export function Train({
 				title: 'What players at your rating actually play here — frequency and score',
 				icon: 'stats',
 				onClick: showDistribution,
-				accent: !!distribution,
+				accent: tableOn.has('popular'),
 				disabled: !state || busy,
 			},
 			{
@@ -1196,6 +1221,7 @@ export function Train({
 						</div>
 					)}
 					<MoveList
+						region="train-move-list"
 						chips={chips()}
 						currentPly={previewing ? previewPly! : (state?.path.length ?? 0)}
 						onJump={busy ? undefined : previewAt}
@@ -1528,7 +1554,7 @@ export function Train({
 				  */}
 				{tableOn.size > 0 && moveRows.length > 0 && state && (
 					<>
-						<h3>Moves here</h3>
+						<h3 data-region="train-moves-head">Moves here</h3>
 						<MoveTable
 							rows={moveRows}
 							mover={colourOfFen(state.fen)}

@@ -60,9 +60,11 @@ The Lab, top to bottom:
 | `lab-counts` | the archived detector's per-puzzle results, used as a filter |
 | `lab-board` | the board column, including the caption under it |
 | `lab-solution` | the solution's moves, as clickable plies |
+| `move-list` | the played moves under the board — `train-move-list` in Train |
+| `explain-options` | the comparison set the verdict was reached by |
 | `lab-ply` | the right-hand column for the ply being looked at |
 | `ply-statement` | whose move it is and what was played — no judgement |
-| `lab-moves` / `train-moves` | the shared move table — one row per move, filter chips for line / engine / played, a `?` per row |
+| `lab-moves` / `train-moves` / `train-moves-head` | the shared move table — one row per move, filter chips for line / engine / played, a `?` per row |
 | `training-wheels` | the overlay checkboxes and what they found |
 | `mate-proof` | the ladder's surviving rung, computed on demand |
 | `mate-proof-line` / `mate-proof-tree` | the walkable line, and the certificate |

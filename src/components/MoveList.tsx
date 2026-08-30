@@ -132,6 +132,7 @@ export function MoveList({
 	onJump,
 	onPlayFrom,
 	titleOf,
+	region = 'move-list',
 }: {
 	chips: MoveChip[];
 	currentPly: number;
@@ -147,13 +148,15 @@ export function MoveList({
 	 * Same shape, different sentence, so the sentence belongs to the caller.
 	 */
 	titleOf?: (chip: MoveChip) => string;
+	/** Named so the region can be referred to. See `docs/REGIONS.md`. */
+	region?: string;
 }) {
 	const [ref, width] = useMeasure<HTMLDivElement>();
 	const per = pairsPerRow(width ?? 0, pairWidthFor(chips));
 
 	if (!chips.length) {
 		return (
-			<div ref={ref} style={{ fontSize: 13, opacity: 0.5, minHeight: 30 }}>
+			<div ref={ref} data-region={region} style={{ fontSize: 13, opacity: 0.5, minHeight: 30 }}>
 				Start of the game.
 			</div>
 		);
@@ -164,6 +167,7 @@ export function MoveList({
 	return (
 		<div
 			ref={ref}
+			data-region={region}
 			style={{
 				display: 'grid',
 				// Every pair gets the same three tracks, so the columns line up

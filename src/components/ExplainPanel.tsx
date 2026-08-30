@@ -43,8 +43,16 @@ import {
 } from '../domain/explain';
 import { LineStepper } from './LineStepper';
 import type { BoardOverride } from './LineStepper';
-import { Move } from './Move';
+import { MoveTable } from './MoveTable';
+import { mergeMoves, type MoveSource } from '../domain/moveTable';
 import { color, space, radius, text, mono, TOUCH } from '../ui/theme';
+
+/**
+ * The explainer's table has one source, so its filter chips would be a row of
+ * one button that does nothing. Frozen empty — `MoveTable` reads that as "show
+ * everything" and renders no chips.
+ */
+const NO_FILTER: ReadonlySet<MoveSource> = new Set<MoveSource>();
 
 /** One question: a position, a move, and what to weigh it against. */
 export type Ask = { fen: string; uci: string; alternatives?: string[] };
@@ -252,30 +260,38 @@ export function ExplainPanel({
 						<strong style={{ fontFamily: mono }}>{x.san}</strong> — {sentence(x)}
 					</div>
 
-					{/* The comparison set, on one scale. Click one to ask about it instead. */}
-					<div style={{ display: 'flex', gap: space.tight, flexWrap: 'wrap', marginBottom: space.snug }}>
-						{options.map((o) => (
-							<button
-								key={o.uci}
-								onClick={() => swap(o.uci)}
-								disabled={o.uci === x.uci}
-								title={o.uci === x.uci ? 'the move being explained' : `explain ${o.san} instead`}
-								style={{
-									border: `1px solid ${o.uci === x.uci ? color.accent : color.line}`,
-									background: o.uci === x.uci ? color.accentSoft : 'transparent',
-									borderRadius: radius.small,
-									padding: '2px 7px',
-									cursor: o.uci === x.uci ? 'default' : 'pointer',
-									fontSize: 13,
-								}}
-							>
-								<Move san={o.san} colour={x.fen.split(' ')[1] === 'b' ? 'b' : 'w'} size={13} />{' '}
-								<span style={{ fontFamily: mono, color: color.ink2 }}>
-									{o.mate !== null ? `#${Math.abs(o.mate)}${o.mate < 0 ? '↓' : ''}` : pawns(o.cp)}
-								</span>
-							</button>
-						))}
+					{/*
+					  * WHAT THESE OPTIONS ARE, said rather than left to be inferred.
+					  *
+					  * Will: "Why does the explain panel contain multiple move options?
+					  * It's not clear to me how the panel is organized. If there are
+					  * multiple options, it must be made clear to user why there are
+					  * options. Are they the best options?"
+					  *
+					  * They are the comparison set — the moves the verdict above was
+					  * reached BY. "A blunder" is not a property of a move, it is a
+					  * comparison, and a reader who cannot see what it was compared with
+					  * has been given a grade and no working. So the caption names them,
+					  * and the marked row is the move being explained.
+					  *
+					  * And it is the SAME TABLE Train and the Lab use. Will: "why does the
+					  * explain panel use a different UI than the move list that already
+					  * exists in train?" No reason that survived being asked.
+					  */}
+					<div style={{ fontSize: text.note, color: color.ink2, marginBottom: space.tight }}>
+						{x.self
+							? `${x.san} against the ${options.length - 1} best alternative${options.length === 2 ? '' : 's'} here — this is what the verdict above compares it with. Ask about any of them instead.`
+							: 'The engine’s best moves here.'}
 					</div>
+					<MoveTable
+						rows={mergeMoves({ engine: options.map((o) => ({ uci: o.uci, san: o.san, cp: o.cp, loss: o.loss, grade: 0 })) })}
+						mover={x.fen.split(' ')[1] === 'b' ? 'b' : 'w'}
+						on={NO_FILTER}
+						onToggle={() => {}}
+						onAsk={(uci) => uci !== x.uci && swap(uci)}
+						marked={x.uci}
+						region="explain-options"
+					/>
 
 					{/*
 					  * THE LINE, walked with the same widget the board uses.

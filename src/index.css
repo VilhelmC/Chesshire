@@ -231,3 +231,20 @@ body {
 .wheel-says li {
 	margin: 0.1rem 0;
 }
+
+/* The wheels header is a disclosure now — collapsed by default, and closing it
+   turns the overlays off, because a mark on the board with no visible control
+   behind it is worse than no mark. */
+.wheels-toggle {
+	border: 0;
+	background: none;
+	padding: 0;
+	font: inherit;
+	color: var(--ink2);
+	cursor: pointer;
+	text-align: left;
+	width: 100%;
+}
+.wheels-toggle strong {
+	color: var(--ink);
+}

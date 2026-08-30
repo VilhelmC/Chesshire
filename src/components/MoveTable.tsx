@@ -28,6 +28,7 @@
 import { Move } from './Move';
 import { evalText, lossText, type MoveRow, type MoveSource } from '../domain/moveTable';
 import { color, space, text, mono, radius } from '../ui/theme';
+import { sharePercent } from '../domain/distribution';
 
 const SOURCE_LABEL: Record<MoveSource, string> = {
 	line: 'the line',
@@ -77,10 +78,26 @@ export function MoveTable({
 	// A source with no rows at all is a chip nobody can usefully press.
 	const available = new Set<MoveSource>();
 	for (const r of rows) for (const s of r.sources) available.add(s);
+	// A column nobody has data for is a column of blanks with a heading, which
+	// reads as missing data rather than as a question not asked.
+	const anyPopularity = rows.some((r) => r.share !== null);
 
 	return (
 		<div data-region={region}>
-			<div style={{ display: 'flex', gap: space.tight, flexWrap: 'wrap', marginBottom: space.tight }}>
+			{/*
+			  * NO CHIPS WHEN THERE IS NOTHING TO CHOOSE BETWEEN. A single-source
+			  * table — the explainer's, which only ever has the engine — would show
+			  * one button that filters to everything, which is a control that does
+			  * nothing and has to be understood before it can be ignored.
+			  */}
+			<div
+				style={{
+					display: available.size > 1 ? 'flex' : 'none',
+					gap: space.tight,
+					flexWrap: 'wrap',
+					marginBottom: space.tight,
+				}}
+			>
 				{(['line', 'engine', 'popular'] as MoveSource[])
 					.filter((s) => available.has(s))
 					.map((s) => (
@@ -119,8 +136,8 @@ export function MoveTable({
 								<th style={th}>move</th>
 								<th style={{ ...th, textAlign: 'right' }}>eval</th>
 								<th style={{ ...th, textAlign: 'right' }}>loss</th>
-								<th style={{ ...th, textAlign: 'right' }}>played</th>
-								<th style={{ ...th, textAlign: 'right' }}>scores</th>
+								{anyPopularity && <th style={{ ...th, textAlign: 'right' }}>played</th>}
+								{anyPopularity && <th style={{ ...th, textAlign: 'right' }}>scores</th>}
 								<th style={th}> </th>
 							</tr>
 						</thead>
@@ -132,9 +149,11 @@ export function MoveTable({
 										<Move san={r.san} colour={mover} size={14} />
 										{/* The tags, so a row says which lists it is in without the
 										    reader having to toggle the filters to find out. */}
-										<span style={{ marginLeft: 6, fontSize: 10, color: color.ink3 }}>
-											{r.sources.map((s) => SOURCE_LABEL[s]).join(' · ')}
-										</span>
+										{available.size > 1 && (
+											<span style={{ marginLeft: 6, fontSize: 10, color: color.ink3 }}>
+												{r.sources.map((s) => SOURCE_LABEL[s]).join(' · ')}
+											</span>
+										)}
 									</td>
 									<td style={{ ...td, textAlign: 'right', fontFamily: mono }}>{evalText(r)}</td>
 									<td
@@ -147,12 +166,75 @@ export function MoveTable({
 									>
 										{lossText(r, best)}
 									</td>
-									<td style={{ ...td, textAlign: 'right', fontFamily: mono, color: color.ink2 }}>
-										{r.share === null ? '' : `${(r.share * 100).toFixed(0)}%`}
+									{/*
+									  * THE BAR, back from `DistributionList`. Its comment had the
+									  * reason and the first version of this table threw both away:
+									  * "Frequency is the length of the bar because frequency is the
+									  * point: this is a list of what you will actually meet."
+									  *
+									  * A column of percentages is read one number at a time; a column
+									  * of bars is read at a glance, which is the whole difference
+									  * between knowing 34% and seeing that one move is most of the
+									  * position.
+									  */}
+									{anyPopularity && (
+									<td style={{ ...td, minWidth: 92 }}>
+										{r.share === null ? null : (
+											<div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+												<div
+													style={{
+														flex: 1,
+														height: 8,
+														background: color.line,
+														borderRadius: radius.pill,
+														overflow: 'hidden',
+														minWidth: 40,
+													}}
+													title={r.games === null ? undefined : `${r.games.toLocaleString()} games`}
+												>
+													<div
+														style={{
+															width: `${Math.max(1, r.share * 100)}%`,
+															height: '100%',
+															background: color.accent,
+														}}
+													/>
+												</div>
+												<span
+													style={{
+														color: color.ink2,
+														fontVariantNumeric: 'tabular-nums',
+														whiteSpace: 'nowrap',
+														fontSize: text.note,
+													}}
+												>
+													{sharePercent(r.share)}
+												</span>
+											</div>
+										)}
 									</td>
-									<td style={{ ...td, textAlign: 'right', fontFamily: mono, color: color.ink2 }}>
+									)}
+									{anyPopularity && (
+									<td
+										style={{
+											...td,
+											textAlign: 'right',
+											fontFamily: mono,
+											// 50% is the neutral point of an expected score, not zero, so
+											// the tone turns there rather than at the bottom of the range.
+											color:
+												r.score === null
+													? color.ink2
+													: r.score > 0.55
+														? color.good
+														: r.score < 0.45
+															? color.bad
+															: color.ink2,
+										}}
+									>
 										{r.score === null ? '' : `${(r.score * 100).toFixed(0)}%`}
 									</td>
+									)}
 									<td style={td}>
 										{onAsk && (
 											<button
@@ -174,11 +256,13 @@ export function MoveTable({
 							))}
 						</tbody>
 					</table>
+					{anyPopularity && (
 					<div style={{ fontSize: text.note, color: color.ink3, marginTop: space.tight }}>
 						<strong>played</strong> is the share of games from this position; <strong>scores</strong> is the
 						expected score for {mover === 'w' ? 'White' : 'Black'} — a win is 100%, a draw 50%. Neither is
 						an evaluation. A blank cell is <em>not looked up</em>, never zero.
 					</div>
+					)}
 				</div>
 			)}
 		</div>

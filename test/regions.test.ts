@@ -28,7 +28,10 @@ const OWNED: Record<string, string> = {
 /** Passed as a `region` prop rather than written as an attribute. */
 const PASSED: Record<string, string> = {
 	'mate-proof': 'src/components/MateProof.tsx',
+	'explain-options': 'src/components/ExplainPanel.tsx',
+	'train-move-list': 'src/views/Train.tsx',
 	'lab-moves': 'src/views/Lab.tsx',
+	'train-moves-head': 'src/views/Train.tsx',
 	'train-moves': 'src/views/Train.tsx',
 	'explain-line': 'src/components/ExplainPanel.tsx',
 	'mate-proof-line': 'src/components/MateProof.tsx',
@@ -74,6 +77,7 @@ describe('the doc lists what the code emits', () => {
 			'src/components/ExplainPanel.tsx',
 			'src/components/LineStepper.tsx',
 			'src/components/MoveTable.tsx',
+			'src/components/MoveList.tsx',
 			'src/hooks/useTrainingWheels.ts',
 		];
 		const found = new Set<string>();
