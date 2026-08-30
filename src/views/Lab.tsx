@@ -45,6 +45,7 @@ import LEDGER from '../data/ledgerBuckets.json';
 import { recall, remember } from '../data/viewState';
 import { MateProof } from '../components/MateProof';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
+import { LineStepper } from '../components/LineStepper';
 import type { BoardOverride } from '../components/LinePlayer';
 import { build as buildGraph } from '../domain/graph';
 import { shapesFor, describe as readGraph, LAYERS, type Layer } from '../domain/graphShapes';
@@ -316,6 +317,19 @@ export function Lab() {
 	 * be worse than either.
 	 */
 	const [borrowed, setBorrowed] = useState<BoardOverride>(null);
+	/**
+	 * A line the explainer has handed over, walked with `LinePlayer` here.
+	 *
+	 * The Lab's solution list is the PUZZLE's moves and is not a general move
+	 * list, so it cannot host a borrowed line the way Train's can. Rather than
+	 * grow it into one for a bench screen, the Lab keeps the stepper — the same
+	 * `LineStepper` every other line uses, not a private one.
+	 */
+	const [lineShown, setLineShown] = useState<{
+		line: import('../domain/line').Line;
+		label: string;
+		onAsk?: (ply: number) => void;
+	} | null>(null);
 	/** Clicking a square focuses the overlay on that piece; a full board is a hairball. */
 	const [focus, setFocus] = useState<number | null>(null);
 	/**
@@ -1035,14 +1049,29 @@ export function Lab() {
 								{step && at > 0 && (
 									<div style={{ marginBottom: space.snug }}>
 										{asking ? (
-											<ExplainPanel
-												{...asking}
-												onBoard={setBorrowed}
-												onClose={() => {
-													setAsking(null);
-													setBorrowed(null);
-												}}
-											/>
+											<>
+												<ExplainPanel
+													{...asking}
+													onShowLine={(line, label, onAsk) =>
+														setLineShown({ line, label, onAsk })
+													}
+													onClose={() => {
+														setAsking(null);
+														setBorrowed(null);
+														setLineShown(null);
+													}}
+												/>
+												{lineShown && (
+													<LineStepper
+														line={lineShown.line}
+														label={lineShown.label}
+														onBoard={setBorrowed}
+														onClose={() => setLineShown(null)}
+														onAsk={(_s, i) => lineShown.onAsk?.(i)}
+														region="lab-line"
+													/>
+												)}
+											</>
 										) : (
 											<Button
 												onClick={() =>

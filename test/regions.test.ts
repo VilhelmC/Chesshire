@@ -28,12 +28,14 @@ const OWNED: Record<string, string> = {
 /** Passed as a `region` prop rather than written as an attribute. */
 const PASSED: Record<string, string> = {
 	'mate-proof': 'src/components/MateProof.tsx',
-	'explain-options': 'src/components/ExplainPanel.tsx',
+	'explain-numbers': 'src/components/ExplainPanel.tsx',
+	'line-banner': 'src/views/Train.tsx',
 	'train-move-list': 'src/views/Train.tsx',
+	'lab-line': 'src/views/Lab.tsx',
+	'quiz-line': 'src/views/Quiz.tsx',
 	'lab-moves': 'src/views/Lab.tsx',
 	'train-moves-head': 'src/views/Train.tsx',
 	'train-moves': 'src/views/Train.tsx',
-	'explain-line': 'src/components/ExplainPanel.tsx',
 	'mate-proof-line': 'src/components/MateProof.tsx',
 	'line-player': 'src/components/LinePlayer.tsx',
 };

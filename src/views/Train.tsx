@@ -39,6 +39,7 @@ import { LinePlayer, type BoardOverride } from '../components/LinePlayer';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
 import { TrainingWheels } from '../components/TrainingWheels';
 import { useTrainingWheels } from '../hooks/useTrainingWheels';
+import { useLineOverlay } from '../hooks/useLineOverlay';
 import { lineFromUci, type Line } from '../domain/line';
 import { color } from '../ui/theme';
 import { markTraining } from '../data/autoImport';
@@ -551,6 +552,14 @@ export function Train({
 	const [explain, setExplain] = useState<{ line: Line; label: string } | null>(null);
 	const [explaining, setExplaining] = useState<BoardOverride>(null);
 	/**
+	 * A borrowed line, shown in the move list under the board.
+	 *
+	 * One list, one cursor, one set of step buttons — the explainer and the
+	 * mate proof hand their sequence to this rather than each rendering a
+	 * stepper of their own.
+	 */
+	const lineOverlay = useLineOverlay();
+	/**
 	 * PLAN-EXPLAINER §5: one panel, three hosts. Train is the second — the same
 	 * `explain(fen, move, alternatives)` the Lab asks, reached through a different
 	 * door. The board needs no changes at all: `ExplainPanel` publishes through
@@ -934,7 +943,7 @@ export function Train({
 	// on drop; a move played FOR the user ("show me") showed an arrow, then
 	// nothing, then both moves animating together. The move was made before the
 	// thinking started; the picture should say so.
-	const shownFen = explaining?.fen ?? shown?.fen ?? preview?.fen ?? state?.fen ?? '';
+	const shownFen = lineOverlay.board?.fen ?? explaining?.fen ?? shown?.fen ?? preview?.fen ?? state?.fen ?? '';
 	// THE POSITION THE BOARD IS SHOWING, not the one the run is on.
 	//
 	// This took `state.fen` at first, which is the live position — so while the
@@ -969,7 +978,9 @@ export function Train({
 		[state?.expected, candidates, distribution],
 	);
 
-	const shownLastMove: [string, string] | undefined = explaining
+	const shownLastMove: [string, string] | undefined = lineOverlay.board
+		? lineOverlay.board.lastMove
+		: explaining
 		? explaining.lastMove
 		: previewing
 			? shown?.uci
@@ -1048,6 +1059,40 @@ export function Train({
 	}
 
 	function toolbarActions(): ToolbarAction[] {
+		// THE STEP BUTTONS DRIVE WHATEVER SEQUENCE IS SHOWING. While a line is
+		// borrowed they walk it; otherwise they take back and replay the run. One
+		// set of controls, because there is one move list.
+		if (lineOverlay.overlay)
+			return [
+				{
+					id: 'first',
+					title: 'Back to the start of the line',
+					icon: 'first',
+					onClick: () => lineOverlay.setAt(-1),
+					disabled: lineOverlay.overlay.at === -1,
+				},
+				{
+					id: 'back',
+					title: 'Previous move in the line',
+					icon: 'back',
+					onClick: () => lineOverlay.step(-1),
+					disabled: lineOverlay.overlay.at === -1,
+				},
+				{
+					id: 'forward',
+					title: 'Next move in the line',
+					icon: 'forward',
+					onClick: () => lineOverlay.step(1),
+					disabled: lineOverlay.overlay.at >= lineOverlay.overlay.line.steps.length - 1,
+				},
+				{
+					id: 'resign',
+					title: 'Stop showing this line',
+					icon: 'resign',
+					onClick: lineOverlay.close,
+				},
+			];
+
 		return [
 			{ id: 'first', title: 'Play again from move 1', icon: 'first', onClick: newRun, disabled: busy },
 			{ id: 'back', title: 'Take back your last move', icon: 'back', onClick: takeBack, disabled: busy || !history.length },
@@ -1186,7 +1231,9 @@ export function Train({
 					})
 				}
 				arrows={
-					explaining
+					lineOverlay.board
+						? lineOverlay.board.arrows
+						: explaining
 						? explaining.arrows
 						: // A wheel is a deliberate choice the reader has just made, so it
 						  // outranks the automatic arrows — but not an explanation, which is
@@ -1224,14 +1271,58 @@ export function Train({
 							</button>
 						</div>
 					)}
+					{/*
+					  * ONE MOVE LIST. While a line is borrowed it shows that instead of
+					  * the game — same component, same chips, same cursor — with a banner
+					  * saying whose line it is and how to give it back.
+					  */}
+					{lineOverlay.overlay && (
+						<div
+							data-region="line-banner"
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: 8,
+								fontSize: 13,
+								color: '#52514e',
+								marginBottom: 4,
+							}}
+						>
+							<span>{lineOverlay.overlay.label}</span>
+							<button
+								onClick={lineOverlay.close}
+								style={{
+									marginLeft: 'auto',
+									border: 'none',
+									background: 'none',
+									color: '#1565c0',
+									cursor: 'pointer',
+									fontSize: 13,
+								}}
+							>
+								Back to the game
+							</button>
+						</div>
+					)}
 					<MoveList
 						region="train-move-list"
-						chips={chips()}
-						currentPly={previewing ? previewPly! : (state?.path.length ?? 0)}
-						onJump={busy ? undefined : previewAt}
-						onPlayFrom={busy ? undefined : (ply) => void playFromPly(ply)}
+						onAsk={lineOverlay.overlay?.onAsk}
+						chips={lineOverlay.chips ?? chips()}
+						currentPly={
+							lineOverlay.overlay
+								? lineOverlay.overlay.at
+								: previewing
+									? previewPly!
+									: (state?.path.length ?? 0)
+						}
+						onJump={
+							lineOverlay.overlay ? lineOverlay.setAt : busy ? undefined : previewAt
+						}
+						onPlayFrom={
+							lineOverlay.overlay ? undefined : busy ? undefined : (ply) => void playFromPly(ply)
+						}
 					/>
-					<MoveListLegend />
+					{!lineOverlay.overlay && <MoveListLegend />}
 
 					{previewing && (
 						<div
@@ -1461,10 +1552,10 @@ export function Train({
 					{asking && (
 						<ExplainPanel
 							{...asking}
-							onBoard={setExplaining}
+							onShowLine={lineOverlay.show}
 							onClose={() => {
 								setAsking(null);
-								setExplaining(null);
+								lineOverlay.close();
 							}}
 						/>
 					)}

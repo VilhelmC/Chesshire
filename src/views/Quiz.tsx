@@ -26,7 +26,7 @@ import { Empty, Button, Panel } from '../ui/primitives';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
 import { TrainingWheels } from '../components/TrainingWheels';
 import { useTrainingWheels } from '../hooks/useTrainingWheels';
-import type { BoardOverride } from '../components/LinePlayer';
+import { LineStepper, type BoardOverride } from '../components/LineStepper';
 import { MoveList } from '../components/MoveList';
 import { Move } from '../components/Move';
 import { withGlyph } from '../domain/notation';
@@ -217,6 +217,12 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	 */
 	const [asking, setAsking] = useState<Ask | null>(null);
 	const [borrowed, setBorrowed] = useState<BoardOverride>(null);
+	/** A line the explainer handed over. Mistakes has no game move list to lend. */
+	const [lineShown, setLineShown] = useState<{
+		line: import('../domain/line').Line;
+		label: string;
+		onAsk?: (ply: number) => void;
+	} | null>(null);
 	/** The same overlays the Lab and Train have, from the same hook. */
 	/** The man the safe-moves overlay is about. See Train, and the wheel's own note. */
 	const [focus, setFocus] = useState<number | null>(null);
@@ -520,14 +526,27 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 							/>
 
 							{asking && (
-								<ExplainPanel
-									{...asking}
-									onBoard={setBorrowed}
-									onClose={() => {
-										setAsking(null);
-										setBorrowed(null);
-									}}
-								/>
+								<>
+									<ExplainPanel
+										{...asking}
+										onShowLine={(line, label, onAsk) => setLineShown({ line, label, onAsk })}
+										onClose={() => {
+											setAsking(null);
+											setBorrowed(null);
+											setLineShown(null);
+										}}
+									/>
+									{lineShown && (
+										<LineStepper
+											line={lineShown.line}
+											label={lineShown.label}
+											onBoard={setBorrowed}
+											onClose={() => setLineShown(null)}
+											onAsk={(_s, i) => lineShown.onAsk?.(i)}
+											region="quiz-line"
+										/>
+									)}
+								</>
 							)}
 
 							{candidates && (

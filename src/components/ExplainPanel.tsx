@@ -31,31 +31,29 @@
 // establish it, this file cannot show it.
 // ---------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { scoreMoves } from '../engine/compare';
 import {
 	explain,
-	shortlist,
 	DEFAULT_SEVERITY,
 	type Explanation,
 	type Severity,
 	type Because,
 } from '../domain/explain';
-import { LineStepper } from './LineStepper';
-import type { BoardOverride } from './LineStepper';
-import { MoveTable } from './MoveTable';
-import { mergeMoves, type MoveSource } from '../domain/moveTable';
+import type { Line } from '../domain/line';
 import { color, space, radius, text, mono, TOUCH } from '../ui/theme';
-
-/**
- * The explainer's table has one source, so its filter chips would be a row of
- * one button that does nothing. Frozen empty — `MoveTable` reads that as "show
- * everything" and renders no chips.
- */
-const NO_FILTER: ReadonlySet<MoveSource> = new Set<MoveSource>();
 
 /** One question: a position, a move, and what to weigh it against. */
 export type Ask = { fen: string; uci: string; alternatives?: string[] };
+
+/**
+ * One move's evaluation, as the engine states it.
+ *
+ * Mate is not a centipawn quantity, so it is never printed as one — the same
+ * refusal `lossText` makes about differences, applied to the value itself.
+ */
+const show = (o: { cp: number; mate: number | null }): string =>
+	o.mate !== null ? `#${Math.abs(o.mate)}${o.mate < 0 ? ' against' : ''}` : pawns(o.cp);
 
 const pawns = (cp: number) => `${cp > 0 ? '+' : cp < 0 ? '−' : ''}${(Math.abs(cp) / 100).toFixed(2)}`;
 
@@ -108,13 +106,18 @@ export function ExplainPanel({
 	fen,
 	uci,
 	alternatives,
-	onBoard,
+	onShowLine,
 	onClose,
 	depth = 12,
 	severity = DEFAULT_SEVERITY,
 }: Ask & {
-	/** Hand the board what to display, or null to give it back. */
-	onBoard: (o: BoardOverride) => void;
+	/**
+	 * Put a line in the move list that is already on screen.
+	 *
+	 * The panel used to drive the board itself, through a stepper of its own.
+	 * There is one move list now and a line borrows it.
+	 */
+	onShowLine?: (line: Line, label: string, onAsk?: (ply: number) => void) => void;
 	onClose?: () => void;
 	depth?: number;
 	severity?: Severity;
@@ -170,22 +173,20 @@ export function ExplainPanel({
 	// reusing the same layout components for consistency?)". Quite so.
 
 	/** Ask about a different move in the SAME position — "why not that one". */
-	const swap = useCallback((next: string) => {
-		setStack((s) => [...s.slice(0, -1), { ...s[s.length - 1], uci: next }]);
-	}, []);
 
-	/** Ask about the move played AT this ply, from the position before it. */
-	const drill = useCallback(
-		(ply: number) => {
-			if (!x) return;
-			const step = x.line.steps[ply];
-			if (!step) return;
-			setStack((s) => [...s, { fen: step.from, uci: step.uci }]);
-		},
-		[x],
-	);
 
-	const options = useMemo(() => (x ? shortlist(x.options, x.uci) : []), [x]);
+	/**
+	 * Ask about a move inside the line — the recursion.
+	 *
+	 * Pushes onto the stack, so the breadcrumb grows and the reader can walk back.
+	 * The ply index comes from the move list, which is now where the `?` lives.
+	 */
+	const drill = (ply: number) => {
+		if (!x) return;
+		const step = x.line.steps[ply];
+		if (!step) return;
+		setStack((s) => [...s, { fen: step.from, uci: step.uci }]);
+	};
 
 	return (
 		<div
@@ -261,74 +262,87 @@ export function ExplainPanel({
 					</div>
 
 					{/*
-					  * WHAT THESE OPTIONS ARE, said rather than left to be inferred.
+					  * TWO NUMBERS, AND WHY THERE ARE TWO.
 					  *
-					  * Will: "Why does the explain panel contain multiple move options?
-					  * It's not clear to me how the panel is organized. If there are
-					  * multiple options, it must be made clear to user why there are
-					  * options. Are they the best options?"
+					  * Will: "I still don't understand why the explain panel is
+					  * 'comparing' against the other best moves? What is the point of
+					  * that? The eval score is not a comparison score, it is an absolute
+					  * score for the line implied by that single move. So why are we
+					  * comparing?"
 					  *
-					  * They are the comparison set — the moves the verdict above was
-					  * reached BY. "A blunder" is not a property of a move, it is a
-					  * comparison, and a reader who cannot see what it was compared with
-					  * has been given a grade and no working. So the caption names them,
-					  * and the marked row is the move being explained.
+					  * The eval is absolute and he is right about that. But a VERDICT is
+					  * not: "a blunder" cannot be read off one number, because −4.29 after
+					  * your move is a disaster in an equal position and unremarkable in a
+					  * lost one. What separates those is what the position was worth
+					  * BEFORE — which is the value of its best move.
 					  *
-					  * And it is the SAME TABLE Train and the Lab use. Will: "why does the
-					  * explain panel use a different UI than the move list that already
-					  * exists in train?" No reason that survived being asked.
+					  * So there is exactly one comparison and it is the one the grade
+					  * rests on. The panel used to show a table of four alternatives,
+					  * which was answering a different question — "what else could I play"
+					  * — and that question belongs to the move table under the board,
+					  * where every move already has an eval and a `?`.
 					  */}
-					<div style={{ fontSize: text.note, color: color.ink2, marginBottom: space.tight }}>
-						{x.self
-							? `${x.san} against the ${options.length - 1} best alternative${options.length === 2 ? '' : 's'} here — this is what the verdict above compares it with. Ask about any of them instead.`
-							: 'The engine’s best moves here.'}
-					</div>
-					<MoveTable
-						rows={mergeMoves({ engine: options.map((o) => ({ uci: o.uci, san: o.san, cp: o.cp, loss: o.loss, grade: 0 })) })}
-						mover={x.fen.split(' ')[1] === 'b' ? 'b' : 'w'}
-						on={NO_FILTER}
-						onToggle={() => {}}
-						onAsk={(uci) => uci !== x.uci && swap(uci)}
-						marked={x.uci}
-						region="explain-options"
-					/>
+					{x.self && (
+						<div
+							data-region="explain-numbers"
+							style={{
+								display: 'flex',
+								gap: space.card,
+								flexWrap: 'wrap',
+								fontSize: text.note,
+								marginBottom: space.snug,
+							}}
+						>
+							<span>
+								after <strong style={{ fontFamily: mono }}>{x.san}</strong>:{' '}
+								<strong style={{ fontFamily: mono }}>{show(x.self)}</strong>
+							</span>
+							{x.best && x.best.uci !== x.uci && (
+								<span style={{ color: color.ink2 }}>
+									best here was <strong style={{ fontFamily: mono }}>{x.best.san}</strong>:{' '}
+									<strong style={{ fontFamily: mono }}>{show(x.best)}</strong>
+									{/* The one place a difference is honest to print. */}
+									{x.verdict.comparable && (
+										<> — a gap of {pawns(Math.abs(x.verdict.loss))}</>
+									)}
+								</span>
+							)}
+						</div>
+					)}
 
 					{/*
-					  * THE LINE, walked with the same widget the board uses.
+					  * THE LINE GOES INTO THE MOVE LIST THAT IS ALREADY ON SCREEN.
 					  *
-					  * The only thing the explainer adds is the `?` per ply — the recursion
-					  * — and the material swing as a mark. Everything else, including the
-					  * Start/◀/▶ buttons this panel never had, comes from `LineStepper`.
+					  * Will: "There is always just one move list and the explainer just
+					  * injects the temporary sequence." So this panel no longer renders a
+					  * stepper of its own — it hands the line to the host, which puts it
+					  * in the list under the board with a cursor, and the step buttons
+					  * that are already there drive it.
 					  */}
-					<LineStepper
-						line={x.line}
-						/*
-						  * ONE CAPTION. This said the same sentence twice for a while — the
-						  * stepper's label and a line under it — which is what happens when a
-						  * block is replaced rather than absorbed.
-						  *
-						  * The line's TAIL IS NOT EVIDENCE: a PV can be truncated by a
-						  * transposition-table hit, and nothing beyond the first move or two is
-						  * reliable. So an incomplete line says so, and the only number
-						  * attached is the material the TRACE independently supports.
-						  */
-						label={
-							(x.line.complete
-								? `the engine's line from ${x.san} — walk it, or ask about any move in it`
-								: `the engine's line from ${x.san}, as far as it replays`) +
-							(x.trace.net !== 0 ? ` · ${pawns(x.trace.net)} over the line` : '')
-						}
-						onBoard={onBoard}
-						onAsk={(_s, i) => drill(i)}
-						mark={(i) => {
-							const t = x.trace.steps[i];
-							if (t?.delta) return { text: pawns(t.delta), tone: t.delta > 0 ? 'good' : 'bad' };
-							// A forcing move is where the line is being driven, and it is what a
-							// reader stepping through wants to find. Marked, not described.
-							return t?.forcing ? { text: '!', tone: 'warn' } : undefined;
-						}}
-						region="explain-line"
-					/>
+					{onShowLine && x.line.steps.length > 0 && (
+						<button
+							onClick={() =>
+								onShowLine(
+									x.line,
+									`the engine's line from ${x.san}`,
+									(ply) => drill(ply),
+								)
+							}
+							style={{
+								border: `1px solid ${color.line}`,
+								borderRadius: radius.small,
+								background: 'transparent',
+								color: color.ink,
+								padding: '3px 9px',
+								fontSize: text.note,
+								cursor: 'pointer',
+								minHeight: TOUCH,
+							}}
+						>
+							Walk the line in the move list ({x.line.steps.length}{' '}
+							{x.line.steps.length === 1 ? 'move' : 'moves'})
+						</button>
+					)}
 
 				</>
 			)}

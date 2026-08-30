@@ -41,6 +41,13 @@ export type MoveChip = {
 	 * exactly the friction the coloured chips did not have.
 	 */
 	tone?: 'good' | 'bad' | 'warn' | 'muted';
+	/**
+	 * A short annotation beside the notation — an evaluation, a material swing.
+	 *
+	 * Added so a borrowed line can carry its numbers in the list that is already
+	 * on screen rather than needing a second list of its own.
+	 */
+	note?: string;
 };
 
 const TONE: Record<NonNullable<MoveChip['tone']>, string> = {
@@ -133,6 +140,7 @@ export function MoveList({
 	onPlayFrom,
 	titleOf,
 	region = 'move-list',
+	onAsk,
 }: {
 	chips: MoveChip[];
 	currentPly: number;
@@ -150,6 +158,13 @@ export function MoveList({
 	titleOf?: (chip: MoveChip) => string;
 	/** Named so the region can be referred to. See `docs/REGIONS.md`. */
 	region?: string;
+	/**
+	 * Ask about one move — the explainer's `?`.
+	 *
+	 * Absent on the game's own list, present when a line is borrowed, which is
+	 * what lets the recursion work without a second component.
+	 */
+	onAsk?: (ply: number) => void;
 }) {
 	const [ref, width] = useMeasure<HTMLDivElement>();
 	const per = pairsPerRow(width ?? 0, pairWidthFor(chips));
@@ -196,6 +211,7 @@ export function MoveList({
 					onJump={onJump}
 					onPlayFrom={onPlayFrom}
 					titleOf={titleOf}
+					onAsk={onAsk}
 				/>
 			))}
 		</div>
@@ -208,12 +224,14 @@ function Pair({
 	onJump,
 	onPlayFrom,
 	titleOf,
+	onAsk,
 }: {
 	pair: MovePair;
 	currentPly: number;
 	onJump?: (ply: number) => void;
 	onPlayFrom?: (ply: number) => void;
 	titleOf?: (chip: MoveChip) => string;
+	onAsk?: (ply: number) => void;
 }) {
 	return (
 		<>
@@ -229,8 +247,8 @@ function Pair({
 			>
 				{pair.no}.
 			</span>
-			<Cell chip={pair.white} currentPly={currentPly} onJump={onJump} onPlayFrom={onPlayFrom} titleOf={titleOf} />
-			<Cell chip={pair.black} currentPly={currentPly} onJump={onJump} onPlayFrom={onPlayFrom} titleOf={titleOf} />
+			<Cell chip={pair.white} currentPly={currentPly} onJump={onJump} onPlayFrom={onPlayFrom} titleOf={titleOf} onAsk={onAsk} />
+			<Cell chip={pair.black} currentPly={currentPly} onJump={onJump} onPlayFrom={onPlayFrom} titleOf={titleOf} onAsk={onAsk} />
 		</>
 	);
 }
@@ -241,12 +259,14 @@ function Cell({
 	currentPly,
 	onJump,
 	onPlayFrom,
+	onAsk,
 }: {
 	chip: MoveChip | null;
 	currentPly: number;
 	onJump?: (ply: number) => void;
 	onPlayFrom?: (ply: number) => void;
 	titleOf?: (chip: MoveChip) => string;
+	onAsk?: (ply: number) => void;
 }) {
 	// An empty cell, not a missing one: the ellipsis is what keeps Black's column
 	// under Black's column when a line starts mid-move.
@@ -339,12 +359,40 @@ function Cell({
 			}}
 		>
 			<Move san={chip.san} colour={chip.white ? 'w' : 'b'} size={13} />
+			{/* An evaluation or a material swing, when a borrowed line carries one. */}
+			{chip.note && <span style={{ fontSize: 10, opacity: 0.75, marginLeft: 3 }}>{chip.note}</span>}
 			<sup
 				title={`ply ${plyIndex}`}
 				style={{ fontSize: 9, opacity: 0.4, marginLeft: 3, fontWeight: 400, verticalAlign: 'super' }}
 			>
 				{plyIndex}
 			</sup>
+			{/*
+			  * THE `?` LIVES IN THE MOVE LIST NOW. Will: "our standard move list
+			  * component needs a way to let user ask for move explanation". Nested in
+			  * the chip's button, so it is a span with a click rather than a button —
+			  * a button inside a button is not valid HTML and browsers unnest it.
+			  */}
+			{onAsk && (
+				<span
+					role="button"
+					tabIndex={0}
+					title={`Why ${chip.san}?`}
+					onClick={(e) => {
+						e.stopPropagation();
+						onAsk(chip.ply);
+					}}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.stopPropagation();
+							onAsk(chip.ply);
+						}
+					}}
+					style={{ marginLeft: 4, color: '#1565c0', cursor: 'pointer', fontSize: 12 }}
+				>
+					?
+				</span>
+			)}
 		</button>
 	);
 }

@@ -32,16 +32,24 @@ export type TrainingWheelsProps = {
 
 export function TrainingWheels({ on, onChange, notes = [], hasFocus = false, working = null }: TrainingWheelsProps) {
 	/**
-	 * COLLAPSED BY DEFAULT ONCE NOTHING IS ON.
+	 * COLLAPSED BY DEFAULT, AND COLLAPSING CHANGES NOTHING ELSE.
 	 *
-	 * Five checkboxes and their explanations is a tall block to keep on screen in
-	 * Train and Mistakes, where the board and the move list are what the reader is
-	 * actually looking at. Open it, use it, and it stays open while anything is
-	 * ticked — the summary line says what is on, so collapsing never hides the
-	 * fact that an overlay is drawing.
+	 * Five checkboxes and their explanations is a tall block to keep beside the
+	 * board in Train and Mistakes, so it folds. What it must not do is touch the
+	 * wheels themselves.
+	 *
+	 * The first version cleared them on close, reasoning that a mark on the board
+	 * with no visible control behind it is worse than no mark. Will: "when
+	 * training wheels panel is collapsed all the training wheels are being
+	 * untoggled — that's wrong — state should persist regardless of whether the
+	 * panel with the training wheel options is currently displayed."
+	 *
+	 * Right, and the reasoning was the mistake: A DISCLOSURE IS NOT A SWITCH. The
+	 * worry it was answering — an overlay nobody can account for — is answered by
+	 * the header, which names what is on while collapsed.
 	 */
 	const [open, setOpen] = useState(false);
-	const showing = open || on.size > 0;
+	const showing = open;
 
 	const toggle = (key: Wheel) => {
 		const next = new Set(on);
@@ -57,21 +65,19 @@ export function TrainingWheels({ on, onChange, notes = [], hasFocus = false, wor
 					type="button"
 					className="wheels-toggle"
 					aria-expanded={showing}
-					onClick={() => {
-						// Closing it turns the overlays off. An overlay still drawing under
-						// a collapsed panel is a mark on the board with no way to find out
-						// what put it there.
-						if (showing) onChange(new Set());
-						setOpen(!showing);
-					}}
+					onClick={() => setOpen(!open)}
 				>
 					<span aria-hidden="true">{showing ? '▾' : '▸'}</span> <strong>training wheels</strong>
-					{!showing && <span className="wheel-note"> — overlays for what is on the board</span>}
-					{showing && on.size > 0 && (
-						<span className="wheel-note">
-							{' '}
-							— {[...on].join(', ')}
-						</span>
+					{/*
+					  * WHAT IS ON, WHETHER OR NOT THE PANEL IS OPEN. This is what makes
+					  * folding safe: a reader who collapses the panel with two overlays
+					  * running can still see, from the header alone, that they are running
+					  * and which they are.
+					  */}
+					{on.size > 0 ? (
+						<span className="wheel-note"> — {[...on].join(', ')} on</span>
+					) : (
+						<span className="wheel-note"> — overlays for what is on the board</span>
 					)}
 				</button>
 			</div>
