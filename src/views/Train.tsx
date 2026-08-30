@@ -1519,7 +1519,14 @@ export function Train({
 				  * of the engine's picks are TAGS on it. A move in two lists used to
 				  * appear twice, in two shapes, with different columns filled in.
 				  */}
-				{moveRows.length > 0 && state && (
+				{/*
+				  * ONLY ONCE A BUTTON HAS ASKED. `state.expected` is always populated —
+				  * out of book it is every legal move — so gating on "are there rows"
+				  * put thirty unevaluated rows on screen unbidden the moment the table
+				  * shipped. The three buttons are what request a source; before any of
+				  * them is pressed there is no question on the table.
+				  */}
+				{tableOn.size > 0 && moveRows.length > 0 && state && (
 					<>
 						<h3>Moves here</h3>
 						<MoveTable
