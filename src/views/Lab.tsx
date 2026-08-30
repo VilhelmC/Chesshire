@@ -1,26 +1,28 @@
-// The Lab — the detector, shown its working, on positions nobody chose.
+// The Lab — positions nobody chose, and every lens turned off by default.
 //
 // ---------------------------------------------------------------------------
 // This screen exists to be distrusted. Every other tab presents a conclusion;
-// this one presents the computation, on puzzles whose answers were set by
-// Lichess rather than by me, and it shows the ones the detector gets WRONG as
-// prominently as the ones it gets right.
+// this one presents the working, on puzzles whose answers were set by Lichess
+// rather than by me.
 //
-// Three things on it are easy to misread, so they are named explicitly rather
-// than left to be inferred:
+// IT USED TO BE A DETECTOR'S SCREEN. The ranking was `resolve.ts`'s, the values
+// beside it were its own, and Stockfish appeared only in a clearly-labelled
+// column if you asked. That detector is in `attic/depth-search/` (M6) and two
+// things follow that are easy to misread, so they are named here:
 //
-//   * The RANKING is the detector's, and so are the values beside it. Nothing on
-//     this screen is a Stockfish evaluation. Stockfish's opinion enters only
-//     off-screen, in scripts/race-ablate.mjs, where it adjudicates disagreements.
-//   * The MOVE MARKED in the ranking is the puzzle's — Lichess's answer — not the
-//     detector's choice. The detector's choice is always the first row. When the
-//     marked row is not the first row, that is precisely the failure being shown.
-//   * Only the SOLVER's plies are counted. The opponent's replies in a Lichess
-//     line are one engine's pick among moves that may lose equally, so the
-//     detector preferring a different one is not evidence of anything.
+//   * THE RANKING IS STOCKFISH'S, and it is the only ranking on the screen. It
+//     is not this project's opinion about anything — which is the point, since
+//     the engine is the oracle (PLAN-EXPLAINER §0) and everything this project
+//     does say is a lens the reader switches on.
+//   * NOTHING IS DRAWN UNASKED. The board shows the move that was played and,
+//     in grey, the one before it. The ladder, the training wheels and the
+//     explainer all draw only when turned on. An arrow that appears without
+//     being asked for reads as the app's answer, and there is no longer an
+//     analytical answer this project stands behind.
 //
-// The annotation is computed live, by the same resolve.ts the app ships, one ply
-// at a time — a whole chain at once used to lock the tab up for seconds.
+// Only the SOLVER's plies are counted anywhere on this screen. The opponent's
+// replies in a Lichess line are one engine's pick among moves that may lose
+// equally, so a disagreement there is not evidence of anything.
 // ---------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
@@ -280,21 +282,20 @@ export function Lab() {
 	 * to be checked.
 	 */
 	/**
-	 * Stockfish's opinion, off by default.
+	 * The engine table.
 	 *
-	 * The detector's ranking is the subject of this screen, and putting an engine
-	 * column beside it permanently would turn every position into a comparison
-	 * with an authority rather than something to read. Asked for, it is the
-	 * fastest way to settle "is the detector wrong here or am I" — so it is one
-	 * toggle away and it says whose numbers they are.
+	 * It was "Stockfish's opinion, off by default", on the argument that a
+	 * permanent engine column turns every position into a comparison with an
+	 * authority rather than something to read. That argument was about TRAINING,
+	 * and this is a bench — it went on by default while Will was troubleshooting
+	 * the ledger and has stayed on.
+	 *
+	 * Since M6 it is not a column beside a rival ranking; it is the only ranking.
+	 * The toggle survives because a reader who wants to look at a position without
+	 * being told the answer should be able to.
 	 */
-	// On by default now. Will wants the reference alongside while troubleshooting
-	// the ledger, and the original argument for hiding it — that an engine column
-	// turns every position into a comparison with an authority — is about training,
-	// not about a bench.
 	const [showEngine, setShowEngine] = useState(true);
 	/** The old depth search's ranking, explanation and move-list colours. */
-	const [showOld, setShowOld] = useState(false);
 
 	/** Which layer of the attack graph is drawn on the board (PLAN.md M1f). */
 	const [graphLayer, setGraphLayer] = useState<Layer>('off');
@@ -410,14 +411,15 @@ export function Lab() {
 				mistake: i === 0,
 				// And amber is "worth another look", which here is a ply the detector
 				// did not get right.
-				// NOT GATED ON `showOld`, and that was the bug. Will: "it's very
+				// NOT GATED ON ANY TOGGLE, and that was once the bug. Will: "it's very
 				// difficult to see from the move list styling where the solver errors
-				// are. Is styling being applied?" It was not. `showOld` is the OLD DEPTH
-				// SEARCH checkbox — a different evaluator, off by default — and both the
-				// marker and the tone below were behind it, so with the box unchecked
-				// every ply rendered muted grey whatever the solver had said. The
-				// verdict being displayed is the solver's own and has nothing to do with
-				// which rival columns are on screen.
+				// are. Is styling being applied?" It was not: both the marker and the
+				// tone were behind the OLD DEPTH SEARCH checkbox — a different
+				// evaluator, off by default — so with the box unchecked every ply
+				// rendered muted grey whatever the solver had said. That stack is in
+				// `attic/depth-search` now and the checkbox with it; the point survives
+				// it, because the verdict displayed is the SOLVER'S OWN and never had
+				// anything to do with which rival columns were on screen.
 				suboptimal: i > 0 && !!st.solver && st.verdict !== 'found' && st.verdict !== 'coerced',
 				white: st.mover === 'white',
 				// Colour carries the verdict, as the old chips did: reading it off a
@@ -660,12 +662,11 @@ export function Lab() {
 		<div>
 			<Note style={{ marginBottom: space.card }}>
 				{ALL.length} puzzles from the Lichess database — positions and answers chosen by
-				someone else. Everything below is the <strong>detector's</strong> own output,
-				computed live by the code the app ships. Stockfish appears only if you ask for
-				it, in its own clearly-labelled column. Only the solving side's moves are counted, since the opponent's replies in a
-				Lichess line are one engine's pick among moves that may lose equally. A ply where
-				the answer scores top but so do nine other moves counts as <em>no opinion</em>,
-				not as a success.
+				someone else. The ranking below is <strong>Stockfish's</strong>, and it is the
+				only ranking here: nothing on this screen is this project's opinion unless you
+				switch it on. Only the solving side's moves are counted, since the opponent's
+				replies in a Lichess line are one engine's pick among moves that may lose
+				equally.
 			</Note>
 
 			<div style={{ display: 'flex', gap: space.snug, flexWrap: 'wrap', marginBottom: space.card }}>
@@ -735,10 +736,6 @@ export function Lab() {
 					Stockfish column
 				</label>
 					<label style={{ fontSize: text.note, color: color.ink2, marginLeft: 12 }}>
-						<input type="checkbox" checked={showOld} onChange={(e) => setShowOld(e.target.checked)} />{' '}
-						old depth search
-					</label>
-					<label style={{ fontSize: text.note, color: color.ink2, marginLeft: 12 }}>
 						graph layer{' '}
 						<select
 							value={graphLayer}
@@ -778,6 +775,15 @@ export function Lab() {
 				<span style={{ fontSize: text.note, color: color.ink2, alignSelf: 'center' }}>
 					{lookupError && <strong style={{ color: color.bad }}>{lookupError} </strong>}
 					{pool.length} in this filter ·{' '}
+					{/*
+					  * THESE COUNTS ARE THE ARCHIVED DETECTOR'S, and saying so is the
+					  * difference between metadata and a claim. They are baked into
+					  * labPuzzles.json by the annotation run, and they describe how
+					  * `attic/depth-search/resolve.ts` did on each puzzle — which is still
+					  * a useful way to FILTER (a puzzle it solved outright is one with an
+					  * unambiguous answer) and is no longer a statement about anything the
+					  * app computes.
+					  */}
 					<strong style={{ color: color.good }}>{sharp} solved outright</strong> ·{' '}
 					<strong style={{ color: color.warn }}>{coerced} tied, most coercive</strong> ·{' '}
 					<strong style={{ color: color.warn }}>{tied} only by a tie</strong> ·{' '}
@@ -964,7 +970,10 @@ export function Lab() {
 									if (!st) return 'Go back to this move';
 									if (c.mistake) return `${c.san} — the blunder the puzzle is built on`;
 									if (!st.solver) return `${c.san} — the opponent's reply, shown but not counted`;
-									return `${c.san} — the detector ${VERDICT_WORD[st.verdict]}`;
+									// The shipped annotation, which is the ARCHIVED detector's. Named
+									// as such: it is a fact about how labPuzzles.json was built, not a
+									// verdict anything on this screen is still producing.
+									return `${c.san} — the archived detector ${VERDICT_WORD[st.verdict]}`;
 								}}
 							/>
 							<div style={{ fontSize: text.note, color: color.ink2, marginTop: space.tight, display: 'flex', gap: space.card, flexWrap: 'wrap' }}>
@@ -994,10 +1003,9 @@ export function Lab() {
 						{at === 0 ? (
 							<Section>
 								<strong>{step.playedText}</strong> — the blunder, about to be played by{' '}
-								{side(step.mover)}. It is what creates the tactic, so the detector is not
-								expected to agree with it. The answer belongs to {side(solver)}, whose side of
-								the board you are looking at; pick a move from the solution to see what the
-								detector makes of it.
+								{side(step.mover)}. It is what creates the tactic. The answer belongs to{' '}
+								{side(solver)}, whose side of the board you are looking at; pick a move from
+								the solution to see the position it is played in.
 							</Section>
 						) : (
 							<Section>
@@ -1264,6 +1272,29 @@ const buttonStyle: React.CSSProperties = {
  * outside the engine's top twelve — a table that silently omits the answer is
  * the one thing this screen must not do.
  */
+/**
+ * The gap to the best move — or the reason there isn't one.
+ *
+ * MATE IS FOLDED INTO THE ±10000 BAND so that a mate outranks any evaluation on
+ * a single number. That is right for ORDERING and meaningless as a DIFFERENCE:
+ * subtracting −107 from +10000 gives "−100.97", which is not a hundred pawns,
+ * is not anything, and was on screen for every move in a mating position.
+ *
+ * `explain.ts` already refuses this — its `comparable` flag exists for exactly
+ * this case, and `m3-gate.mjs` caught the same sentence ("−110.92 against Nh6+")
+ * on its first run. This table was written later and reintroduced it. Same bug,
+ * second time, so the rule is worth stating plainly: A CENTIPAWN GAP IS ONLY A
+ * NUMBER WHEN BOTH SIDES OF THE SUBTRACTION ARE CENTIPAWNS.
+ */
+function lossText(row: Candidate, best: Candidate | undefined): string {
+	if (!best || row.uci === best.uci) return '—';
+	const mate = (c: Candidate) => Math.abs(c.cp) >= 9000;
+	if (mate(best) && !mate(row)) return 'no mate';
+	if (mate(best) && mate(row)) return row.cp === best.cp ? '—' : 'slower';
+	if (mate(row)) return '—';
+	return row.loss ? `−${(row.loss / 100).toFixed(2)}` : '—';
+}
+
 function EngineTable({
 	rows,
 	played,
@@ -1299,7 +1330,7 @@ function EngineTable({
 							<td style={{ ...td, fontWeight: r.uci === played ? 600 : 400 }}>{r.san}</td>
 							<td style={{ ...td, textAlign: 'right', fontFamily: mono }}>{cp(r.cp)}</td>
 							<td style={{ ...td, textAlign: 'right', fontFamily: mono, color: r.loss ? color.ink2 : color.good }}>
-								{r.loss ? `−${(r.loss / 100).toFixed(2)}` : '—'}
+								{lossText(r, rows[0])}
 							</td>
 						</tr>
 					))}
