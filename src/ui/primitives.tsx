@@ -23,15 +23,25 @@ export function Section({
 	note,
 	actions,
 	children,
+	region,
 }: {
 	title?: string;
 	note?: React.ReactNode;
 	/** Controls belonging to the section as a whole, aligned with its title. */
 	actions?: React.ReactNode;
 	children: React.ReactNode;
+	/**
+	 * A stable name for this block, emitted as `data-region`.
+	 *
+	 * See `docs/REGIONS.md`. Will: *"can we make sure containers and divs are
+	 * named so it's actually possible to refer to them"* — the immediate cause
+	 * being that neither of us could point at a part of the Lab without
+	 * describing where it sat on the screen.
+	 */
+	region?: string;
 }) {
 	return (
-		<section style={{ marginBottom: space.section }}>
+		<section data-region={region} style={{ marginBottom: space.section }}>
 			{(title || actions) && (
 				<div
 					style={{

@@ -127,7 +127,7 @@ describe('the mate line', () => {
 		const line = mateLine(at(MATE));
 		expect(line).not.toBeNull();
 		expect(line!.map((m) => makeSquare(m.from) + makeSquare(m.to))).toEqual(['a1a8']);
-		expect(mateNote(line!)).toContain('mate in 1');
+		expect(mateNote(line, 'white')).toContain('White mates in 1');
 	});
 
 	it('returns THE shortest mate, not the first one move ordering happens to find', () => {
@@ -152,7 +152,7 @@ describe('the mate line', () => {
 		expect(line!.length).toBeGreaterThan(1);
 		// Ours, theirs, ours … and it ends with our move.
 		expect(line!.length % 2).toBe(1);
-		expect(mateNote(line!)).toContain('one line of it');
+		expect(mateNote(line, 'white')).toContain('one line of it');
 	});
 
 	it('numbers the arrows and alternates the brush', () => {

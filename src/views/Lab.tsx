@@ -43,7 +43,7 @@ import { Note, Section, Button } from '../ui/primitives';
 import PUZZLES from '../data/labPuzzles.json';
 import LEDGER from '../data/ledgerBuckets.json';
 import { recall, remember } from '../data/viewState';
-import { LadderPanel } from '../components/LadderPanel';
+import { MateProof } from '../components/MateProof';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
 import type { BoardOverride } from '../components/LinePlayer';
 import type { Shape as ComplexShape } from '../components/Board';
@@ -300,16 +300,6 @@ export function Lab() {
 	/** Which layer of the attack graph is drawn on the board (PLAN.md M1f). */
 	const [graphLayer, setGraphLayer] = useState<Layer>('off');
 	/**
-	 * Shapes published by `ComplexPanel`'s ledger tab.
-	 *
-	 * Will: "Why are the squares indicated in the ledger not annotated graphically
-	 * on the board? We developed UI for this?" The UI exists and draws a DIFFERENT
-	 * ledger — `graphShapes`'s `owed` layer is built from `ledger2` and `cover2`,
-	 * which is M2. So the picture and the table were of two systems. The panel now
-	 * publishes its own rows and they take the board while that tab is open.
-	 */
-	const [complexShapes, setComplexShapes] = useState<ComplexShape[]>([]);
-	/**
 	 * The question the explainer is answering, or null.
 	 *
 	 * Held here rather than inside the panel because opening a new question from
@@ -481,7 +471,10 @@ export function Lab() {
 		() => (step && wheels.size ? wheelShapes(step.pos, wheels, focus) : []),
 		[step, wheels, focus],
 	);
-	const wheelSays = useMemo(() => (step && wheels.size ? wheelNotes(step.pos, wheels) : []), [step, wheels]);
+	const wheelSays = useMemo(
+		() => (step && wheels.size ? wheelNotes(step.pos, wheels, focus) : []),
+		[step, wheels, focus],
+	);
 
 	/**
 	 * MATE IS THE EXCEPTION and gets its own effect.
@@ -516,7 +509,10 @@ export function Lab() {
 				found = null;
 			}
 			if (cancelled) return;
-			setMate(found ? { arrows: mateArrows(found), note: mateNote(found) } : null);
+			// The note is set EITHER WAY. A ticked wheel that says nothing when it
+			// finds nothing is indistinguishable from one that is broken — which is
+			// exactly how Will hit this, on an opponent ply where White had no mate.
+			setMate({ arrows: found ? mateArrows(found) : [], note: mateNote(found, step.pos.turn) });
 			setMateWorking(false);
 		}, 0);
 		return () => {
@@ -669,7 +665,7 @@ export function Lab() {
 				equally.
 			</Note>
 
-			<div style={{ display: 'flex', gap: space.snug, flexWrap: 'wrap', marginBottom: space.card }}>
+			<div data-region="lab-controls" style={{ display: 'flex', gap: space.snug, flexWrap: 'wrap', marginBottom: space.card }}>
 				<label style={{ fontSize: text.note, color: color.ink2 }}>
 					Motif{' '}
 					<select
@@ -772,7 +768,7 @@ export function Lab() {
 					</button>
 				</form>
 
-				<span style={{ fontSize: text.note, color: color.ink2, alignSelf: 'center' }}>
+				<span data-region="lab-counts" style={{ fontSize: text.note, color: color.ink2, alignSelf: 'center' }}>
 					{lookupError && <strong style={{ color: color.bad }}>{lookupError} </strong>}
 					{pool.length} in this filter ·{' '}
 					{/*
@@ -797,6 +793,7 @@ export function Lab() {
 				<div style={{ display: 'flex', gap: space.card, flexWrap: 'wrap', alignItems: 'flex-start' }}>
 					<div
 						ref={boardRef}
+						data-region="lab-board"
 						style={{
 							flex: '1 1 420px',
 							minWidth: 320,
@@ -836,8 +833,6 @@ export function Lab() {
 									  // which is showing a different position entirely.
 									  wheelDraw.length || (mate?.arrows.length ?? 0)
 									? [...wheelDraw, ...(mate?.arrows ?? [])]
-									: complexShapes.length
-									? complexShapes
 									: graphLayer !== 'off'
 									? graphShapes
 									: playing
@@ -984,7 +979,7 @@ export function Lab() {
 						</div>
 					</div>
 
-					<div style={{ flex: 1, minWidth: 320 }}>
+					<div data-region="lab-ply" style={{ flex: 1, minWidth: 320 }}>
 						<h3 style={{ marginTop: 0 }}>
 							{puzzle.themes.join(', ')}{' '}
 							<span style={{ fontWeight: 400, color: color.ink2, fontSize: text.body }}>
@@ -1024,6 +1019,7 @@ export function Lab() {
 								  * engine table below.
 								  */}
 								<div
+									data-region="ply-statement"
 									style={{
 										padding: space.snug,
 										borderRadius: radius.panel,
@@ -1107,7 +1103,7 @@ export function Lab() {
 									/>
 								)}
 
-								{step && at > 0 && <LadderPanel pos={step.pos} played={step.played} plyKey={key} onShapes={setComplexShapes} onBoard={setBorrowed} />}
+								{step && at > 0 && <MateProof pos={step.pos} plyKey={key} onBoard={setBorrowed} />}
 
 
 
@@ -1306,7 +1302,7 @@ function EngineTable({
 }) {
 	const has = rows.some((r) => r.uci === played);
 	return (
-		<div style={{ overflowX: 'auto' }}>
+		<div data-region="engine-table" style={{ overflowX: 'auto' }}>
 			<table style={{ borderCollapse: 'collapse', fontSize: text.body, width: '100%' }}>
 				<caption style={{ captionSide: 'top', textAlign: 'left', fontSize: text.note, color: color.ink2, paddingBottom: space.tight }}>
 					Stockfish, ranked. ★ is the puzzle's move. <em>Click a row to ask why.</em>

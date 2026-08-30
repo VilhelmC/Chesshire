@@ -41,8 +41,8 @@ import {
 	type Severity,
 	type Because,
 } from '../domain/explain';
-import { stepAt, arrowFor } from '../domain/line';
-import type { BoardOverride } from './LinePlayer';
+import { LineStepper } from './LineStepper';
+import type { BoardOverride } from './LineStepper';
 import { Move } from './Move';
 import { color, space, radius, text, mono, TOUCH } from '../ui/theme';
 
@@ -116,7 +116,6 @@ export function ExplainPanel({
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	/** Ply being viewed; −1 is the position before the line starts. */
-	const [at, setAt] = useState(-1);
 	/** Explanations already computed, so going back and re-asking are free. */
 	const cache = useRef(new Map<string, Explanation>());
 
@@ -128,7 +127,6 @@ export function ExplainPanel({
 
 	useEffect(() => {
 		let live = true;
-		setAt(-1);
 		const hit = cache.current.get(key);
 		if (hit) {
 			setX(hit);
@@ -155,16 +153,13 @@ export function ExplainPanel({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [key, depth]);
 
-	// Drive the board: the position at the current ply, with the next move drawn.
-	useEffect(() => {
-		if (!x) return;
-		const { fen: shown, lastMove } = stepAt(x.line, at);
-		onBoard({ fen: shown, lastMove, arrows: arrowFor(x.line, at) });
-		// Giving the board back on unmount matters more than it looks: an override
-		// left behind freezes the host on a position from an explanation.
-		return () => onBoard(null);
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [x, at]);
+	// THE BOARD IS DRIVEN BY `LineStepper` NOW, not from here.
+	//
+	// This used to keep its own `at`, its own effect and its own row of chips —
+	// the same job the line under the board was already doing, in a second
+	// implementation that had drifted apart from it. Will: "Why does it look
+	// different from how the line is displayed under the board (shouldn't we be
+	// reusing the same layout components for consistency?)". Quite so.
 
 	/** Ask about a different move in the SAME position — "why not that one". */
 	const swap = useCallback((next: string) => {
@@ -186,6 +181,7 @@ export function ExplainPanel({
 
 	return (
 		<div
+			data-region="explain-panel"
 			style={{
 				border: `1px solid ${color.line}`,
 				borderRadius: radius.panel,
@@ -281,55 +277,27 @@ export function ExplainPanel({
 						))}
 					</div>
 
-					{/* The line, walkable, with a "?" on every ply. */}
-					<div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', alignItems: 'center' }}>
-						<Chip label="start" on={at === -1} onClick={() => setAt(-1)} />
-						{x.line.steps.map((s, i) => {
+					{/*
+					  * THE LINE, walked with the same widget the board uses.
+					  *
+					  * The only thing the explainer adds is the `?` per ply — the recursion
+					  * — and the material swing as a mark. Everything else, including the
+					  * Start/◀/▶ buttons this panel never had, comes from `LineStepper`.
+					  */}
+					<LineStepper
+						line={x.line}
+						label={`the engine's line from ${x.san} — walk it, or ask about any move in it`}
+						onBoard={onBoard}
+						onAsk={(_s, i) => drill(i)}
+						mark={(i) => {
 							const t = x.trace.steps[i];
-							return (
-								<span key={i} style={{ display: 'inline-flex', alignItems: 'center' }}>
-									<Chip
-										label={
-											<>
-												<Move san={s.san} colour={s.colour} size={13} />
-												{t?.delta ? (
-													<span
-														style={{
-															fontFamily: mono,
-															fontSize: 10,
-															marginLeft: 3,
-															color: t.delta > 0 ? color.good : color.bad,
-														}}
-													>
-														{pawns(t.delta)}
-													</span>
-												) : null}
-											</>
-										}
-										on={at === i}
-										onClick={() => setAt(i)}
-										/* A forcing move is where the line is being driven, and it is what a
-										   reader stepping through wants to find. Marked rather than described. */
-										accent={t?.forcing ? color.warn : undefined}
-									/>
-									<button
-										onClick={() => drill(i)}
-										title={`Why ${s.san}?`}
-										style={{
-											border: 'none',
-											background: 'none',
-											color: color.accent,
-											cursor: 'pointer',
-											fontSize: 12,
-											padding: '0 2px',
-										}}
-									>
-										?
-									</button>
-								</span>
-							);
-						})}
-					</div>
+							if (t?.delta) return { text: pawns(t.delta), tone: t.delta > 0 ? 'good' : 'bad' };
+							// A forcing move is where the line is being driven, and it is what a
+							// reader stepping through wants to find. Marked, not described.
+							return t?.forcing ? { text: '!', tone: 'warn' } : undefined;
+						}}
+						region="explain-line"
+					/>
 
 					<div style={{ fontSize: text.note, color: color.ink3, fontFamily: mono, marginTop: space.tight }}>
 						{/*
@@ -349,32 +317,3 @@ export function ExplainPanel({
 	);
 }
 
-function Chip({
-	label,
-	on,
-	onClick,
-	accent,
-}: {
-	label: React.ReactNode;
-	on: boolean;
-	onClick: () => void;
-	accent?: string;
-}) {
-	return (
-		<button
-			onClick={onClick}
-			style={{
-				border: `1px solid ${on ? color.accent : (accent ?? 'transparent')}`,
-				background: on ? color.accentSoft : 'transparent',
-				borderRadius: radius.small,
-				padding: '2px 5px',
-				cursor: 'pointer',
-				fontSize: 13,
-				display: 'inline-flex',
-				alignItems: 'center',
-			}}
-		>
-			{label}
-		</button>
-	);
-}

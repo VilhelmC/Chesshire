@@ -119,21 +119,37 @@ export function stepAt(line: Line, index: number): { fen: string; lastMove?: [st
 }
 
 /**
- * An arrow for the move about to be played, so the NEXT move is visible from
- * the current position rather than only after it has happened.
+ * An arrow for the move that PRODUCED the position being shown.
+ *
+ * ---------------------------------------------------------------------------
+ * It used to draw the move about to be played — `steps[index + 1]` — on the
+ * reasoning that the next move is the interesting one and the move just played
+ * is already marked by chessground's last-move squares.
+ *
+ * Will, on the explainer: *"When I click a move the next move in the sequence is
+ * drawn with an arrow, not what just changed."*
+ *
+ * That is the whole objection and it is right. AN ARROW IS THE LOUDEST THING ON
+ * A BOARD, and pointing it at a move the reader did not click, while the move
+ * they did click gets only a pair of tinted squares, makes the two channels
+ * disagree about what the subject is. The subject is what you clicked.
+ *
+ * At the start of a line nothing has been played yet, so the first move is drawn
+ * FAINTLY — `q3` rather than `q0`. It is a preview of the claim rather than a
+ * report of it, and the ramp says which.
  */
 export function arrowFor(line: Line, index: number): { orig: string; dest: string; brush: string }[] {
-	const next = line.steps[index + 1];
-	if (!next) return [];
-	return [
-		{
-			orig: next.uci.slice(0, 2),
-			dest: next.uci.slice(2, 4),
-			// The quality ramp's strongest brush: this is the move being asserted,
-			// not one of several candidates.
-			brush: 'q0',
-		},
+	const draw = (uci: string, brush: string) => [
+		{ orig: uci.slice(0, 2), dest: uci.slice(2, 4), brush },
 	];
+	if (index < 0) {
+		const first = line.steps[0];
+		// Faint: this has not happened, it is where the line begins.
+		return first ? draw(first.uci, 'q3') : [];
+	}
+	const here = line.steps[Math.min(index, line.steps.length - 1)];
+	// The quality ramp's strongest brush: this is the move being asserted.
+	return here ? draw(here.uci, 'q0') : [];
 }
 
 /** Plain text for the whole line, for a tooltip or a copy. */

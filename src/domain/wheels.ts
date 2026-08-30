@@ -33,7 +33,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Chess } from 'chessops/chess';
-import type { Square } from 'chessops/types';
+import type { Color, Square } from 'chessops/types';
 import { makeSquare } from 'chessops/util';
 import type { Shape } from '../components/Board';
 import { moves } from './primitives/core';
@@ -120,22 +120,77 @@ export function wheelShapes(pos: Chess, on: ReadonlySet<Wheel>, focus?: Square |
 }
 
 /**
- * One line per wheel that has something to say, for a caption under the board.
+ * What each ACTIVE wheel found — including when it found nothing.
  *
- * Fixed text from the primitives' own marks, never generated. The overlay draws
- * the geometry; this says what it is called, because a ring the reader cannot
- * name has taught them a shape rather than an idea.
+ * ---------------------------------------------------------------------------
+ * A TICKED WHEEL THAT SAYS NOTHING IS INDISTINGUISHABLE FROM A BROKEN ONE.
+ *
+ * The first version returned a line only when a wheel fired. Will ticked `mate`
+ * on an opponent ply, got a blank board, and reported it as not displaying — and
+ * he was right to: White genuinely had no forced mate there (White was the one
+ * being mated), the wheel searched, found none, and said nothing at all. The
+ * reader has no way to tell that apart from a control that does not work.
+ *
+ * So every active wheel reports, and the empty answer is a sentence rather than
+ * an absence. This is the same discipline the explainer runs on — true or
+ * silent — with the observation that on a control the user just switched on,
+ * silence is not neutral.
+ *
+ * WHOSE OPTIONS THESE ARE is the second half. Every wheel is keyed on
+ * `pos.turn`, so on an opponent ply they show the OPPONENT's forks, mates and
+ * safe moves. That is the symmetry Will asked for and it was already there —
+ * what was missing is that nothing on screen said so, which makes a correct
+ * answer look like the wrong question.
  */
-export function wheelNotes(pos: Chess, on: ReadonlySet<Wheel>): string[] {
+export function wheelNotes(pos: Chess, on: ReadonlySet<Wheel>, focus?: Square | null): string[] {
+	if (!on.size) return [];
 	const out: string[] = [];
-	if (on.has('forks'))
-		for (const f of forks(pos)) out.push(`${sq(f.move.to)} forks ${f.targets.map(sq).join(' and ')}`);
-	if (on.has('pins'))
-		for (const p of pins(pos)) out.push(`${sq(p.shield)} is pinned to the king by ${sq(p.pinner)}`);
-	if (on.has('deficient'))
-		for (const d of deficiencies(pos)) out.push(`${sq(d.square)} cannot be won — they can always answer`);
+	const side = pos.turn === 'white' ? 'White' : 'Black';
+
+	if (on.has('safe')) {
+		if (focus === undefined || focus === null) out.push('safe moves: click one of ' + side + "'s men");
+		else if (!pos.board[pos.turn].has(focus)) out.push(`safe moves: that man is not ${side}'s to move`);
+		else {
+			const mine = moves(pos).filter((m) => m.from === focus);
+			const safe = mine.filter((m) => costs(pos, m) === 0).length;
+			out.push(
+				safe === 0
+					? `safe moves: ${sq(focus)} has none — every move drops material`
+					: `safe moves: ${safe} of ${mine.length} from ${sq(focus)} hold`,
+			);
+		}
+	}
+
+	if (on.has('forks')) {
+		const f = forks(pos);
+		out.push(
+			f.length
+				? f.map((x) => `${sq(x.move.to)} forks ${x.targets.map(sq).join(' and ')}`).join('; ')
+				: `forks: none for ${side} here`,
+		);
+	}
+
+	if (on.has('pins')) {
+		const p = pins(pos);
+		out.push(
+			p.length
+				? p.map((x) => `${sq(x.shield)} is pinned to the king by ${sq(x.pinner)}`).join('; ')
+				: 'pins: nothing is pinned, either side',
+		);
+	}
+
+	if (on.has('deficient')) {
+		const d = deficiencies(pos);
+		out.push(
+			d.length
+				? d.map((x) => `${sq(x.square)} cannot be won — they can always answer`).join('; ')
+				: `not worth attacking: nothing ${side} can reach is out of reach`,
+		);
+	}
+
 	return out;
 }
+
 
 // ---------------------------------------------------------------------------
 // MATE IS THE ONE WHEEL THAT IS NOT A BOARD COMPUTATION.
@@ -151,7 +206,6 @@ export function wheelNotes(pos: Chess, on: ReadonlySet<Wheel>): string[] {
 //   straight to depth 5      mean  79.1ms  p90 199ms  max 1038ms  — WRONG (below)
 //   deepening, no probe      mean 140.6ms  p90 335ms  max 1258ms
 //   SHIPPED: probe + deepen  mean  88.3ms  p90 221ms  max 1055ms
-//                            over one frame 77.5%  over 100ms 23.4%  over 500ms 2.2%
 //
 // Correctness costs 12% over the fast-and-wrong version, and the probe pays for
 // most of the deepening back.
@@ -162,9 +216,11 @@ export function wheelNotes(pos: Chess, on: ReadonlySet<Wheel>): string[] {
 // is flagged `slow` in `WHEELS` so a host cannot forget.
 //
 // It is also not a decoration: a forced mate exists on 24.4% of solver plies in
-// a puzzle corpus, which is a set selected for having tactics. On a real game it
-// will be rarer still.
+// a puzzle corpus, which is a set selected for having tactics.
 // ---------------------------------------------------------------------------
+
+/** The measured horizon: 98.20% of all 1,937,001 Lichess mate puzzles. */
+export const DEPTH = 5;
 
 /**
  * One line of the forced mate, or null if there is none within `depth`.
@@ -175,23 +231,18 @@ export function wheelNotes(pos: Chess, on: ReadonlySet<Wheel>): string[] {
  * shows the line a defender would actually choose (`principalLine` takes the
  * longest resistance at each of their turns), and neither pretends to be the
  * other.
- *
- * Depth 5 is the measured horizon: it covers 98.20% of all 1,937,001 mate
- * puzzles in the Lichess corpus (`FINDING-THE-MATE-HORIZON.md`).
  */
-export function mateLine(pos: Chess, depth = 5): NormalMove[] | null {
+export function mateLine(pos: Chess, depth = DEPTH): NormalMove[] | null {
 	const attacker = pos.turn;
 	const goal = mateGoal(attacker, { narrow: true, seed: true });
+
 	// ONE FULL-DEPTH PASS FIRST, TO LEARN WHETHER THERE IS A MATE AT ALL.
 	//
 	// A forced mate exists on 24.4% of solver plies, so three quarters of the time
 	// the deepening below would run all five passes and find nothing. Asking the
-	// cheap question first — is there one? — costs those positions a single pass
-	// instead. Measured: 79.3ms mean for this pass against 141.8ms for deepening
+	// cheap question first costs those positions a single pass instead. Measured:
+	// 88.3ms mean for probe-then-deepen against 140.6ms for deepening
 	// unconditionally (`scripts/mate-line-cost.mjs`).
-	//
-	// It does NOT tell us which move or how long, and deliberately: that is the
-	// next block's job and mixing them is how the bug below happened.
 	let any = false;
 	for (const m of allMoves(pos)) {
 		const child = pos.clone();
@@ -210,12 +261,8 @@ export function mateLine(pos: Chess, depth = 5): NormalMove[] | null {
 	// "Kf1 Kg8 Rf6 Kh8 Rf8#" — a real forced mate, five plies long, offered to a
 	// reader while Rb8# sits on the board. Every claim in it is true and the
 	// overlay is still lying, because "the forced mate" and "a forced mate" are
-	// not the same sentence.
-	//
-	// Move ordering decided which one was found, which is exactly the kind of
-	// thing that must not be load-bearing. Asking for depth 1 first, then 2, makes
-	// the SHORTEST mate the one that is returned — a property of the question
-	// rather than of the move list's order.
+	// not the same sentence. Move ordering decided which one was found, which is
+	// exactly the kind of thing that must not be load-bearing.
 	for (let d = 1; d <= depth; d++) {
 		for (const m of allMoves(pos)) {
 			const child = pos.clone();
@@ -245,9 +292,16 @@ export function mateArrows(line: NormalMove[]): Shape[] {
 	}));
 }
 
-/** The caption for a mate line. Fixed text; the count is the only variable. */
-export function mateNote(line: NormalMove[]): string {
+/**
+ * The mate wheel's line, said in words — including when there is none.
+ *
+ * Separate from `wheelNotes` because it is the one wheel that needs a search, so
+ * the host has it as state rather than as a pure call. See `mateLine`.
+ */
+export function mateNote(line: NormalMove[] | null, turn: Color): string {
+	const side = turn === 'white' ? 'White' : 'Black';
+	if (!line) return `mate: no forced mate for ${side} within ${DEPTH} moves`;
 	const ours = Math.ceil(line.length / 2);
 	// "One line" is load-bearing: the proof answers every reply and this does not.
-	return `mate in ${ours} — one line of it; the proof tab answers every reply`;
+	return `${side} mates in ${ours} — one line of it; the proof tab answers every reply`;
 }

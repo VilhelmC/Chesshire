@@ -203,3 +203,47 @@ git mv attic/complex/gamma.ts         src/domain/gamma.ts
 git mv attic/complex/ComplexPanel.tsx src/components/ComplexPanel.tsx
 git mv attic/complex/*.test.ts        test/
 ```
+
+---
+
+## ladder — the three-tab panel, not the search
+
+**Archived:** 2026-08-30.
+
+**What it was.** `LadderPanel.tsx` rendered all of `ladderReport`: a rung table,
+a proof tab with the mate tree, a ranked-options tab, and the exclusions above
+the answer.
+
+**Why it is here.** Will, looking at the Lab in a browser:
+
+> Why do we still have all the ladder UI? What purpose does it fill?
+
+The screenshot answered it. On an opponent ply the panel announced `+5.00 forced
+— proved, with every higher rung excluded` for a move that Stockfish, one panel
+above, called `mated`. The ladder was not lying by its own lights — it proves
+what WE can force and says nothing about what they answer with — but a confident
+bold green number that disagrees with the oracle is worse than no number, and
+producing it cost a ten-second freeze on every ply.
+
+**What replaced it.** `src/components/MateProof.tsx`, which keeps the one rung
+that is gated correct — 0% missed on `mateIn1`/`2`/`3` over 2,656 solver plies
+(`FINDING-THE-MATE-HORIZON.md`) — and computes it only when asked. The mate rung
+terminates on `isCheckmate()` rather than on an evaluation, so there is no
+judgement in it to be wrong about, and it answers a question Stockfish
+structurally cannot: `#3` is a number, "every reply is answered, and here they
+are" is a proof.
+
+**NOT archived with it:** `pns.ts` and `ladder.ts`. `PLAN-EXPLAINER.md` §8 keeps
+them as a Lab inspection tool, and `MateProof` uses `mateGoal`, `mateTree` and
+`principalLine` directly. What went is the presentation of the rungs the ladder
+gets wrong, not the search.
+
+**Restore:**
+
+```
+git mv attic/ladder/LadderPanel.tsx src/components/LadderPanel.tsx
+```
+
+Its `Man`, `pawns`, `rungName` and `asked` helpers are self-contained; the
+`Shape` publishing it did through `onShapes` was removed from `Lab.tsx` and would
+need re-adding.

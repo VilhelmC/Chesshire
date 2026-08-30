@@ -38,7 +38,7 @@ export function TrainingWheels({ on, onChange, notes = [], hasFocus = false, wor
 	};
 
 	return (
-		<div className="wheels">
+		<div className="wheels" data-region="training-wheels">
 			<div className="wheels-head">
 				<strong>training wheels</strong>
 				{on.size > 0 && (
