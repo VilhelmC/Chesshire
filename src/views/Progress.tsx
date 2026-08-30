@@ -4,7 +4,7 @@
 // number you can do nothing with. "Solid to move 4, falls apart on move 5" tells
 // you what to train tomorrow.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ProgressTree } from '../components/ProgressTree';
 import { MoveLine } from '../components/Move';
 import { buildTree, weakSpots, accuracyOf, deepestKnown, type TreeNode } from '../domain/tree';
@@ -31,7 +31,8 @@ import {
 	MIN_MOVES_PER_BAND as MIN_BAND,
 	type MeasurableGame,
 } from '../domain/performance';
-import { accuracy, freeplayLosses, type AnswerRow, type RunRow } from '../domain/progress';
+import { accuracy, freeplayLosses, gameLosses, type AnswerRow, type RunRow } from '../domain/progress';
+import { fromGame, type Reviewable } from '../domain/reviewable';
 import { color } from '../ui/theme';
 
 // Single series, so no categorical palette to validate — one hue for magnitude,
@@ -52,6 +53,12 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 	const [played, setPlayed] = useState<PlayedGame[]>([]);
 	/** The same games, kept whole, for the accuracy measurement. */
 	const [rawGames, setRawGames] = useState<MeasurableGame[]>([]);
+	/**
+	 * And again as reviewables, which is where the evaluations get turned to OUR
+	 * point of view. Not reconstructed from `rawGames`: that conversion has a
+	 * warning on it in `fromGame` for good reason, and one copy of it is enough.
+	 */
+	const [playedGames, setPlayedGames] = useState<Reviewable[]>([]);
 
 	async function reload() {
 		const d = await loadProgress();
@@ -76,6 +83,9 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 					mistakePaths: byGame.get(g.id) ?? [],
 				})),
 			);
+			setPlayedGames(
+				games.map(fromGame).filter((r): r is Reviewable => r !== null),
+			);
 			setRawGames(
 				games.map((g) => ({
 					id: g.id,
@@ -88,6 +98,7 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 		} catch {
 			setPlayed([]);
 			setRawGames([]);
+			setPlayedGames([]);
 		}
 		setLoaded(true);
 	}
@@ -133,6 +144,29 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 	const series = ratingSeries(
 		scored.map((a) => ({ runId: a.runId, ts: a.ts, cpLoss: a.cpLoss })),
 	);
+
+	/*
+	 * TWO NUMBERS, BECAUSE THEY MEASURE TWO THINGS.
+	 *
+	 * Will: "why is my rating estimate only based on 28 scored moves, when there
+	 * are plenty of games imported." Because imported games never reached the
+	 * estimator at all — see `gameLosses`. They do now, and they are kept
+	 * SEPARATE rather than pooled: one is real opponents at your own time
+	 * control, the other is a bot after a punished mistake, and merged into a
+	 * single figure a change in it could not be attributed to either.
+	 */
+	const fromGames = useMemo(
+		() =>
+			estimate(
+				gameLosses(
+					playedGames,
+					// The app's own idea of where the book ends: the longest named
+					// opening that is a prefix of the game.
+					(moves) => nameForPath(moves)?.path.length ?? 0,
+				),
+			),
+		[playedGames],
+	);
 	/** A readable label for a position with no name of its own. */
 	function nameFor(node: TreeNode): string {
 		return (
@@ -156,10 +190,13 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 
 	if (!loaded) return <p style={{ opacity: 0.6 }}>Loading…</p>;
 
-	if (!root.total.attempts && !scored.length) {
+	// `fromGames` belongs in this test now: a deck built entirely from imported
+	// games has no answers at all and still has a rating, and the old condition
+	// sent exactly that reader away with "play a few runs".
+	if (!root.total.attempts && !scored.length && fromGames.elo === null) {
 		return (
 			<p style={{ opacity: 0.7 }}>
-				No answers recorded yet. Play a few runs on the Train tab and this fills in.
+				Nothing measured yet. Play a run on the Train tab, or import your games on Settings.
 			</p>
 		);
 	}
@@ -259,34 +296,34 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 			>
 				<h3 style={{ margin: '0 0 2px', color: INK }}>Estimated rating</h3>
 				<p style={{ fontSize: 13, color: INK_2, margin: '0 0 10px' }}>
-					From free-play moves only. Recalling a repertoire move measures memory, so those are
-					excluded — otherwise the number would climb every time you revised.
+					Two measurements of two different things, kept apart on purpose. Both skip the
+					opening: recalling a memorised move measures memory, so counting it would show the
+					number climbing every time you revised.
 				</p>
 
-				{rating.elo === null ? (
-					<p style={{ fontSize: 14, color: INK_2 }}>
-						Nothing measured yet. Punish a mistake, then use <em>play on</em> — those moves get
-						scored.
-					</p>
+				<div style={{ display: 'flex', gap: 32, flexWrap: 'wrap', marginBottom: 4 }}>
+					<Estimate
+						label="from your games"
+						note="real opponents, past the named opening"
+						e={fromGames}
+						empty="Import your games on the Settings tab."
+					/>
+					<Estimate
+						label="from free play"
+						note="played on against the bot after a mistake"
+						e={rating}
+						empty="Punish a mistake, then use play on."
+					/>
+				</div>
+
+				{series.length >= 2 ? (
+					<RatingChart series={series} />
 				) : (
-					<>
-						<div style={{ display: 'flex', gap: 16, alignItems: 'baseline', flexWrap: 'wrap' }}>
-							<div style={{ fontSize: 34, fontWeight: 700, color: INK, lineHeight: 1.1 }}>
-								{rating.elo}
-							</div>
-							<div style={{ fontSize: 13, color: INK_2 }}>
-								{rating.confident ? '' : 'provisional — '}
-								{rating.sample} scored moves · {rating.acpl}cp average loss
-							</div>
-						</div>
-						{series.length >= 2 ? (
-							<RatingChart series={series} />
-						) : (
-							<p style={{ fontSize: 13, color: INK_2, marginTop: 8 }}>
-								One run so far — the trend needs at least two.
-							</p>
-						)}
-					</>
+					rating.elo !== null && (
+						<p style={{ fontSize: 13, color: INK_2, marginTop: 8 }}>
+							One run so far — the free-play trend needs at least two.
+						</p>
+					)
 				)}
 			</section>
 
@@ -507,6 +544,39 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 			>
 				Reset progress
 			</button>
+		</div>
+	);
+}
+
+/** One estimate, said the same way wherever it appears. */
+function Estimate({
+	label,
+	note,
+	e,
+	empty,
+}: {
+	label: string;
+	note: string;
+	e: { elo: number | null; acpl: number | null; sample: number; confident: boolean };
+	empty: string;
+}) {
+	return (
+		<div>
+			<div style={{ fontSize: 13, color: INK_2 }}>{label}</div>
+			{e.elo === null ? (
+				<div style={{ fontSize: 14, color: INK_2, marginTop: 4, maxWidth: 240 }}>{empty}</div>
+			) : (
+				<>
+					<div style={{ fontSize: 34, fontWeight: 700, color: INK, lineHeight: 1.1 }}>
+						{e.elo}
+					</div>
+					<div style={{ fontSize: 13, color: INK_2 }}>
+						{e.confident ? '' : 'provisional — '}
+						{e.sample} moves · {e.acpl}cp average loss
+					</div>
+					<div style={{ fontSize: 12, color: INK_2, opacity: 0.75 }}>{note}</div>
+				</>
+			)}
 		</div>
 	);
 }

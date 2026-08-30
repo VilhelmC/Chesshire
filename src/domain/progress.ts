@@ -6,8 +6,11 @@
 // same answer, so each line's accuracy was mostly measuring the shared trunk.
 // Positions form a tree, so the numbers are computed on a tree.
 //
-// What remains here is the shape of what gets written, plus the free-play losses
+// What remains here is the shape of what gets written, plus the two populations
 // the rating estimate is built from.
+
+import { annotate } from './annotate';
+import type { Reviewable } from './reviewable';
 
 export type AnswerRow = {
 	id: string;
@@ -88,6 +91,58 @@ export function freeplayLosses(answers: AnswerRow[]): number[] {
 				a.cpLoss >= 0,
 		)
 		.map((a) => a.cpLoss);
+}
+
+/**
+ * Centipawn losses from the games you actually played.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "why is my rating estimate only based on 28 scored moves, when there
+ * are plenty of games imported."
+ *
+ * Because none of them counted. `freeplayLosses` reads `db.answers`, which only
+ * Train writes, and only in the `freeplay` phase — the moves played on against
+ * the bot after a punished mistake. Imported games go to `db.imported` and fed
+ * the transfer and accuracy sections and nothing else. So a deck built from
+ * seventeen real games contributed nothing to the number claiming to estimate
+ * how well he plays, and 461 of his own scored moves sat one table away.
+ *
+ * That was an omission and not a decision. The exclusion this file already
+ * carried is about REPERTOIRE ANSWERS — "recalling a memorised move measures
+ * memory" — and a real game against a real opponent is not that.
+ *
+ * ---------------------------------------------------------------------------
+ * BUT THE SAME ARGUMENT REACHES INTO THE GAMES THEMSELVES.
+ *
+ * The opening plies of a real game are also recall, and they are also nearly
+ * lossless, so counting them flatters the estimate exactly as counting book
+ * answers would. Measured on the 17 games in the deck:
+ *
+ *   every move of ours          461 moves, 49cp  ->  1666
+ *   past the named opening      433 moves, 51cp  ->  1640
+ *   past a fixed ply 10         388 moves, 54cp  ->  1615
+ *
+ * So the effect is real and worth about 25-50 points. This takes the middle
+ * row, and takes it by the app's OWN notion of where the book ends — the
+ * longest named opening that is a prefix of the game — rather than by a ply
+ * number chosen to look reasonable. That is the same question the whole app is
+ * about, asked once more.
+ */
+export function gameLosses(
+	games: readonly Reviewable[],
+	bookDepth: (moves: string[]) => number,
+): number[] {
+	const out: number[] = [];
+	for (const g of games) {
+		if (!g.evals.length) continue;
+		const book = bookDepth(g.moves);
+		for (const a of annotate(g.evals, g.ourColour)) {
+			// Ours, measured, and past the point where it was still recall.
+			if (a.side !== 'us' || a.loss === null || a.ply <= book) continue;
+			out.push(a.loss);
+		}
+	}
+	return out;
 }
 
 export function accuracy(correct: number, attempts: number): number | null {

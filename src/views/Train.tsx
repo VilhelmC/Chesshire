@@ -57,7 +57,9 @@ import {
 	type Candidate,
 } from '../engine/candidates';
 import { BOT_LEVELS, levelFor, estimate, type Estimate } from '../domain/rating';
-import { freeplayLosses } from '../domain/progress';
+import { freeplayLosses, gameLosses } from '../domain/progress';
+import { fromGame, type Reviewable } from '../domain/reviewable';
+import { db } from '../data/db';
 import { loadProgress } from '../data/progress';
 import { logAnswer, logRun } from '../data/progress';
 import { saveSession, loadSession, clearSession } from '../data/session';
@@ -303,7 +305,27 @@ export function Train({
 		void (async () => {
 			setMemory(await loadMemory());
 			const { answers } = await loadProgress();
-			setRating(estimate(freeplayLosses(answers)));
+			/*
+			 * THE GAMES YOU PLAYED ARE THE BETTER MEASUREMENT, so the bot matches
+			 * against those when there are enough of them.
+			 *
+			 * Will: "why is my rating estimate only based on 28 scored moves, when
+			 * there are plenty of games imported." It was, and the answer was that
+			 * imported games never reached the estimator — which also meant the bot
+			 * was sizing itself off a couple of dozen moves played against a bot,
+			 * rather than off hundreds played against people. Free play stays as the
+			 * fallback: a reader with no imported games still gets a level.
+			 */
+			try {
+				const games = await db.imported.toArray();
+				const played = games.map(fromGame).filter((r): r is Reviewable => r !== null);
+				const fromGames = estimate(
+					gameLosses(played, (moves) => nameForPath(moves)?.path.length ?? 0),
+				);
+				setRating(fromGames.confident ? fromGames : estimate(freeplayLosses(answers)));
+			} catch {
+				setRating(estimate(freeplayLosses(answers)));
+			}
 			setMemoryReady(true);
 		})();
 	}, []);
@@ -1708,12 +1730,12 @@ export function Train({
 				</div>
 				<p style={{ fontSize: 12, opacity: 0.65 }}>
 					{rating.elo === null
-						? 'No estimate yet — play on from a won position and your moves get scored.'
+						? 'No estimate yet — import your games on Settings, or play on from a won position.'
 						: rating.confident
-							? `Estimated ${rating.elo} from ${rating.sample} free-play moves (${rating.acpl}cp average loss).`
+							? `Estimated ${rating.elo} from ${rating.sample} scored moves (${rating.acpl}cp average loss).`
 							: `Provisional ${rating.elo} from only ${rating.sample} moves — not yet trusted.`}{' '}
-					Repertoire answers are excluded: recalling a memorised move measures memory, not
-					strength.
+					Opening moves are excluded, in your games and in the repertoire alike: recalling a
+					memorised move measures memory, not strength. Progress breaks it down.
 				</p>
 
 				<h3>Scheduling</h3>
