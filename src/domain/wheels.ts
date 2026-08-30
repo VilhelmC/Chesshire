@@ -32,13 +32,15 @@
 // whole.
 // ---------------------------------------------------------------------------
 
-import type { Chess } from 'chessops/chess';
+import { Chess } from 'chessops/chess';
+import { parseFen, makeFen } from 'chessops/fen';
 import type { Color, Square } from 'chessops/types';
 import { makeSquare } from 'chessops/util';
 import type { Shape } from '../components/Board';
 import { moves } from './primitives/core';
 import { costs, forks } from './primitives';
 import { pins } from './primitives/pin';
+import { other } from './exchange';
 import { deficiencies } from './primitives/muster';
 import { allMoves, mateGoal, mateTree, principalLine } from './ladder';
 import { solve } from './pns';
@@ -97,12 +99,22 @@ export function wheelShapes(pos: Chess, on: ReadonlySet<Wheel>, focus?: Square |
 		}
 	}
 
-	if (on.has('forks'))
+	if (on.has('forks')) {
 		for (const f of forks(pos)) {
 			out.push({ orig: sq(f.move.from), dest: sq(f.move.to), brush: 'yellow' });
 			// Rings on the men that are hit. A shape with no `dest` is a circle.
 			for (const t of f.targets) out.push({ orig: sq(t), brush: 'yellow' });
 		}
+		// THEIRS TOO, in red — a fork coming at you is the half of the concept the
+		// first version left out. Red rather than yellow because the two answer
+		// different questions and a reader must not have to work out which is which.
+		const flipped = nullMove(pos);
+		if (flipped)
+			for (const f of forks(flipped)) {
+				out.push({ orig: sq(f.move.from), dest: sq(f.move.to), brush: 'red' });
+				for (const t of f.targets) out.push({ orig: sq(t), brush: 'red' });
+			}
+	}
 
 	if (on.has('pins'))
 		for (const p of pins(pos)) {
@@ -162,12 +174,20 @@ export function wheelNotes(pos: Chess, on: ReadonlySet<Wheel>, focus?: Square | 
 	}
 
 	if (on.has('forks')) {
-		const f = forks(pos);
-		out.push(
-			f.length
-				? f.map((x) => `${sq(x.move.to)} forks ${x.targets.map(sq).join(' and ')}`).join('; ')
-				: `forks: none for ${side} here`,
-		);
+		// BOTH SIDES, for the reason the mate wheel got the same treatment: a fork
+		// coming at you is worth at least as much to see as one you can play. The
+		// threat costs nothing extra — forks is a board computation, and the null
+		// move is a reparse.
+		const mine = forks(pos);
+		const flipped = nullMove(pos);
+		const theirs = flipped ? forks(flipped) : [];
+		const say = (f: ReturnType<typeof forks>) =>
+			f.map((x) => `${sq(x.move.to)} forks ${x.targets.map(sq).join(' and ')}`).join('; ');
+		if (!mine.length && !theirs.length) out.push('forks: none for either side here');
+		else {
+			if (mine.length) out.push(`forks for ${side}: ${say(mine)}`);
+			if (theirs.length) out.push(`forks THREATENED against ${side}: ${say(theirs)}`);
+		}
 	}
 
 	if (on.has('pins')) {
@@ -221,6 +241,61 @@ export function wheelNotes(pos: Chess, on: ReadonlySet<Wheel>, focus?: Square | 
 
 /** The measured horizon: 98.20% of all 1,937,001 Lichess mate puzzles. */
 export const DEPTH = 5;
+
+/**
+ * The same position with the other side to move — a NULL MOVE.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS EXISTS. Will:
+ *
+ *   "You are applying the concept 'mate' asymmetrically, only when the winner is
+ *    the player to move. But mates should be shown for both players. A player
+ *    that might be mated has every reason to know."
+ *
+ * Exactly so, and it was a real hole: every wheel is keyed on `pos.turn`, which
+ * makes "is there a mate here" mean "can I mate", when half the value of the
+ * question is "am I about to be mated".
+ *
+ * The standard way to ask the second one is to hand the opponent the move and
+ * search again. That is a null move, and it is legal to REASON about even though
+ * it is not legal to play — with one exception this returns null for: A SIDE IN
+ * CHECK CANNOT PASS, so "what would they do with a free move" is not a question
+ * that position poses. The threat there is the check itself.
+ *
+ * En passant goes with the turn. A capture available to the side that just
+ * double-stepped is not available to the other, and leaving the square set would
+ * invent a capture.
+ */
+export function nullMove(pos: Chess): Chess | null {
+	if (pos.isCheck()) return null;
+	const setup = parseFen(makeFen(pos.toSetup())).unwrap();
+	setup.turn = other(setup.turn);
+	setup.epSquare = undefined;
+	const flipped = Chess.fromSetup(setup);
+	return flipped.isOk ? flipped.unwrap() : null;
+}
+
+/**
+ * What each side can force, in one answer.
+ *
+ * `deliver` is the mate the side to move can play. `threat` is the one they walk
+ * into if they do nothing — the opponent's mate, found by handing them the move.
+ *
+ * BOTH ARE DRAWN, and a learner needs the second more than the first: missing a
+ * mate costs half a point, walking into one costs the game.
+ */
+export type Mates = {
+	deliver: NormalMove[] | null;
+	threat: NormalMove[] | null;
+};
+
+export function matesBothWays(pos: Chess, depth = DEPTH): Mates {
+	const flipped = nullMove(pos);
+	return {
+		deliver: mateLine(pos, depth),
+		threat: flipped ? mateLine(flipped, depth) : null,
+	};
+}
 
 /**
  * One line of the forced mate, or null if there is none within `depth`.
@@ -282,14 +357,22 @@ export function mateLine(pos: Chess, depth = DEPTH): NormalMove[] | null {
  * brushes as well as different numbers, since "whose move is this" is the first
  * question asked of any arrow on a board.
  */
-export function mateArrows(line: NormalMove[]): Shape[] {
+export function mateArrows(line: NormalMove[], threat = false): Shape[] {
 	return line.map((m, i) => ({
 		orig: sq(m.from),
 		dest: sq(m.to),
-		// Ours on even plies — the line always starts with the side to move.
-		brush: i % 2 === 0 ? 'blue' : 'red',
-		label: String(i + 1),
+		// The mover on even plies — a line always starts with whoever is to move in
+		// the position it was searched from. A THREAT is drawn on the warning ramp
+		// throughout, because the question it answers is not "what can I play" but
+		// "what is coming", and those must not look alike.
+		brush: threat ? (i % 2 === 0 ? 'red' : 'yellow') : i % 2 === 0 ? 'blue' : 'red',
+		label: `${threat ? '!' : ''}${i + 1}`,
 	}));
+}
+
+/** Arrows for both halves of the mate question. */
+export function matesArrows(m: Mates): Shape[] {
+	return [...(m.deliver ? mateArrows(m.deliver) : []), ...(m.threat ? mateArrows(m.threat, true) : [])];
 }
 
 /**
@@ -298,10 +381,27 @@ export function mateArrows(line: NormalMove[]): Shape[] {
  * Separate from `wheelNotes` because it is the one wheel that needs a search, so
  * the host has it as state rather than as a pure call. See `mateLine`.
  */
-export function mateNote(line: NormalMove[] | null, turn: Color): string {
+export function mateNotes(m: Mates, turn: Color, canPass: boolean): string[] {
 	const side = turn === 'white' ? 'White' : 'Black';
-	if (!line) return `mate: no forced mate for ${side} within ${DEPTH} moves`;
-	const ours = Math.ceil(line.length / 2);
-	// "One line" is load-bearing: the proof answers every reply and this does not.
-	return `${side} mates in ${ours} — one line of it; the proof tab answers every reply`;
+	const them = turn === 'white' ? 'Black' : 'White';
+	const count = (line: NormalMove[]) => Math.ceil(line.length / 2);
+	const out: string[] = [];
+
+	out.push(
+		m.deliver
+			? `${side} mates in ${count(m.deliver)} — one line of it; the proof answers every reply`
+			: `no forced mate for ${side} within ${DEPTH} moves`,
+	);
+
+	// THE HALF THAT WAS MISSING. Will: "a player that might be mated has every
+	// reason to know". Louder than the first line, because it is the one that
+	// costs a whole game rather than half a point.
+	if (m.threat) out.push(`${them.toUpperCase()} THREATENS MATE in ${count(m.threat)} — ${side} must answer it`);
+	else if (!canPass)
+		// The null move is not available in check, so no threat was searched. Saying
+		// "no threat" would be a claim nothing established.
+		out.push(`${side} is in check — the threat is the check`);
+	else out.push(`no mate threatened against ${side} within ${DEPTH} moves`);
+
+	return out;
 }

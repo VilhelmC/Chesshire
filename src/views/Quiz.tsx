@@ -24,6 +24,8 @@ import {
 import { applyUci, sameMove, replayLine } from '../domain/chess';
 import { Empty, Button, Panel } from '../ui/primitives';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
+import { TrainingWheels } from '../components/TrainingWheels';
+import { useTrainingWheels } from '../hooks/useTrainingWheels';
 import type { BoardOverride } from '../components/LinePlayer';
 import { MoveList } from '../components/MoveList';
 import { Move } from '../components/Move';
@@ -215,6 +217,8 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	 */
 	const [asking, setAsking] = useState<Ask | null>(null);
 	const [borrowed, setBorrowed] = useState<BoardOverride>(null);
+	/** The same overlays the Lab and Train have, from the same hook. */
+	const wheels = useTrainingWheels(current?.fen ?? null);
 	const atCard = previewPly === null || previewPly >= lastPly;
 	const boardFen = atCard ? current?.fen : line[previewPly as number]?.fen;
 
@@ -420,6 +424,8 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 						arrows={
 							borrowed
 								? borrowed.arrows
+								: wheels.arrows.length
+								? wheels.arrows
 								: [
 							...(candidates ?? []).map((c) => ({
 								orig: c.uci.slice(0, 2),
@@ -496,6 +502,13 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 									{feedback.text}
 								</div>
 							)}
+
+							<TrainingWheels
+								on={wheels.on}
+								onChange={wheels.setOn}
+								notes={wheels.notes}
+								working={wheels.working}
+							/>
 
 							{asking && (
 								<ExplainPanel

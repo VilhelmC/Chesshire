@@ -36,6 +36,8 @@ import { DistributionList } from '../components/Distribution';
 import { ShareMenu, canShareNatively } from '../components/ShareMenu';
 import { LinePlayer, type BoardOverride } from '../components/LinePlayer';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
+import { TrainingWheels } from '../components/TrainingWheels';
+import { useTrainingWheels } from '../hooks/useTrainingWheels';
 import { lineFromUci, type Line } from '../domain/line';
 import { color } from '../ui/theme';
 import { markTraining } from '../data/autoImport';
@@ -531,6 +533,15 @@ export function Train({
 	 * `BoardOverride`, which `explaining` already honours for `LinePlayer`.
 	 */
 	const [asking, setAsking] = useState<Ask | null>(null);
+	/**
+	 * The same overlays the Lab has, on the position being played.
+	 *
+	 * Will: "Maybe we should integrate with train and mistakes so I can test in a
+	 * more realistic setting." The Lab is a bench; this is where somebody is
+	 * actually learning, which is where a training wheel belongs. One hook, so a
+	 * change lands in all three tabs at once.
+	 */
+	const wheels = useTrainingWheels(state?.fen ?? null);
 	async function showDistribution() {
 		if (!state) return;
 		if (distribution) return setDistribution(null);
@@ -1082,6 +1093,11 @@ export function Train({
 				arrows={
 					explaining
 						? explaining.arrows
+						: // A wheel is a deliberate choice the reader has just made, so it
+						  // outranks the automatic arrows — but not an explanation, which is
+						  // showing a different position entirely.
+						  wheels.arrows.length
+						? wheels.arrows
 						: previewing
 							? []
 							: hint.length
@@ -1333,6 +1349,15 @@ export function Train({
 							label={explain.label}
 							onBoard={setExplaining}
 							onClose={() => setExplain(null)}
+						/>
+					)}
+
+					{state && (
+						<TrainingWheels
+							on={wheels.on}
+							onChange={wheels.setOn}
+							notes={wheels.notes}
+							working={wheels.working}
 						/>
 					)}
 

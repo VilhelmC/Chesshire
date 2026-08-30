@@ -72,6 +72,7 @@ describe('the doc lists what the code emits', () => {
 			'src/components/MateProof.tsx',
 			'src/components/ExplainPanel.tsx',
 			'src/components/LineStepper.tsx',
+			'src/hooks/useTrainingWheels.ts',
 		];
 		const found = new Set<string>();
 		for (const f of files)

@@ -46,11 +46,10 @@ import { recall, remember } from '../data/viewState';
 import { MateProof } from '../components/MateProof';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
 import type { BoardOverride } from '../components/LinePlayer';
-import type { Shape as ComplexShape } from '../components/Board';
 import { build as buildGraph } from '../domain/graph';
 import { shapesFor, describe as readGraph, LAYERS, type Layer } from '../domain/graphShapes';
 import { TrainingWheels } from '../components/TrainingWheels';
-import { wheelShapes, wheelNotes, mateLine, mateArrows, mateNote, type Wheel } from '../domain/wheels';
+import { useTrainingWheels } from '../hooks/useTrainingWheels';
 
 /** Per-ply result, precomputed: hit, ties at the top, legal moves, is-solver. */
 export type PlyFlags = {
@@ -318,13 +317,6 @@ export function Lab() {
 	/** Clicking a square focuses the overlay on that piece; a full board is a hairball. */
 	const [focus, setFocus] = useState<number | null>(null);
 	/**
-	 * The training-wheels menu (PLAN-EXPLAINER §5). Independent of whether an
-	 * explanation is open, which is the point of it being a separate control: a
-	 * reader looking at a position wants to name what is on the board without
-	 * first asking a question about a move.
-	 */
-	const [wheels, setWheels] = useState<ReadonlySet<Wheel>>(() => new Set<Wheel>());
-	/**
 	 * Train's "show options": every engine move drawn on the board, weighted.
 	 *
 	 * The toolbar's options button used to toggle the Stockfish COLUMN, which is a
@@ -464,62 +456,11 @@ export function Lab() {
 		[graphLayer, step],
 	);
 
-	// Four of the five wheels are pure board computations — the most expensive is a
-	// few milliseconds — so this memoises on the position and the focused man and
-	// needs no engine, no cache and no loading state.
-	const wheelDraw = useMemo(
-		() => (step && wheels.size ? wheelShapes(step.pos, wheels, focus) : []),
-		[step, wheels, focus],
-	);
-	const wheelSays = useMemo(
-		() => (step && wheels.size ? wheelNotes(step.pos, wheels, focus) : []),
-		[step, wheels, focus],
-	);
-
-	/**
-	 * MATE IS THE EXCEPTION and gets its own effect.
-	 *
-	 * It is a df-pn search — `scripts/mate-line-cost.mjs` measured mean 80ms and a
-	 * worst case of 987ms — so running it inside the memo above would freeze the
-	 * board for up to a second every time the ply changed. `working` exists so the
-	 * checkbox says what it is doing rather than appearing to have done nothing.
-	 *
-	 * `cancelled` guards the position changing while a solve is in flight: without
-	 * it a slow search resolves after the reader has stepped on and draws a mate
-	 * from the previous position onto this one.
-	 */
-	const [mate, setMate] = useState<{ arrows: ComplexShape[]; note: string } | null>(null);
-	const [mateWorking, setMateWorking] = useState(false);
-	useEffect(() => {
-		if (!step || !wheels.has('mate')) {
-			setMate(null);
-			setMateWorking(false);
-			return;
-		}
-		let cancelled = false;
-		setMateWorking(true);
-		// A macrotask, so the checkbox and the working state paint before the search
-		// blocks the thread. This is not concurrency — it is the minimum needed for
-		// the UI to be honest about what it is doing.
-		const id = setTimeout(() => {
-			let found: ReturnType<typeof mateLine> = null;
-			try {
-				found = mateLine(step.pos);
-			} catch {
-				found = null;
-			}
-			if (cancelled) return;
-			// The note is set EITHER WAY. A ticked wheel that says nothing when it
-			// finds nothing is indistinguishable from one that is broken — which is
-			// exactly how Will hit this, on an opponent ply where White had no mate.
-			setMate({ arrows: found ? mateArrows(found) : [], note: mateNote(found, step.pos.turn) });
-			setMateWorking(false);
-		}, 0);
-		return () => {
-			cancelled = true;
-			clearTimeout(id);
-		};
-	}, [step, wheels]);
+	// EVERY TAB GETS THE SAME WHEELS, from one hook. Will: "We should reuse all
+	// components across tabs so if we have to make changes we only do it in one
+	// place and it applies the same everywhere." The Lab was the only host for a
+	// while and all of this lived here inline.
+	const wheels = useTrainingWheels(step ? fenOf(step.pos) : null, focus);
 
 	const graphShapes = useMemo(
 		() => (graph && step ? shapesFor(graph, graphLayer, focus, step.pos.board) : []),
@@ -831,8 +772,8 @@ export function Lab() {
 									: // The wheels are a deliberate choice the reader has just made, so
 									  // they outrank the automatic overlays — but not a borrowed board,
 									  // which is showing a different position entirely.
-									  wheelDraw.length || (mate?.arrows.length ?? 0)
-									? [...wheelDraw, ...(mate?.arrows ?? [])]
+									  wheels.arrows.length
+									? wheels.arrows
 									: graphLayer !== 'off'
 									? graphShapes
 									: playing
@@ -1095,11 +1036,11 @@ export function Lab() {
 
 								{step && (
 									<TrainingWheels
-										on={wheels}
-										onChange={setWheels}
-										notes={mate ? [...wheelSays, mate.note] : wheelSays}
+										on={wheels.on}
+										onChange={wheels.setOn}
+										notes={wheels.notes}
 										hasFocus={focus !== null}
-										working={mateWorking ? 'mate' : null}
+										working={wheels.working}
 									/>
 								)}
 

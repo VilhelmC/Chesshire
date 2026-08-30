@@ -13,7 +13,7 @@
 // old fixed 420 was hardcoded in four places and made the app unusable at any
 // width below about 900.
 
-import { Board } from './Board';
+import { Board, type Shape } from './Board';
 import { EvalBar } from './EvalBar';
 import { MaterialBar } from './MaterialBar';
 import { Toolbar, type ToolbarAction } from './Toolbar';
@@ -77,7 +77,19 @@ export function BoardPanel({
 	evalCp?: number | null;
 	interactive?: boolean;
 	lastMove?: [string, string];
-	arrows?: { orig: string; dest: string; brush: string; label?: string }[];
+	/**
+	 * THE SAME `Shape` THE BOARD TAKES, not a hand-written copy of it.
+	 *
+	 * This was declared as `{ orig; dest; brush; label? }` with `dest` REQUIRED,
+	 * which is a narrower type than the board it forwards to — and the difference
+	 * is exactly the shapes that matter: a `Shape` with no `dest` is a CIRCLE, and
+	 * circles are how the pin and deficiency overlays mark a square. They could be
+	 * drawn in the Lab, which uses `Board` directly, and not in Train or Mistakes,
+	 * which go through here.
+	 *
+	 * A wrapper that retypes what it forwards will always drift from it.
+	 */
+	arrows?: Shape[];
 	onMove?: (uci: string) => void;
 	version?: number;
 	actions?: ToolbarAction[];

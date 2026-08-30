@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import { positionFromFen } from '../src/domain/chess';
 import { makeSquare, parseSquare } from 'chessops/util';
-import { WHEELS, wheelShapes, wheelNotes, mateLine, mateArrows, mateNote, type Wheel } from '../src/domain/wheels';
+import { WHEELS, wheelShapes, wheelNotes, mateLine, mateArrows, mateNotes, matesBothWays, nullMove, type Wheel } from '../src/domain/wheels';
 
 const at = (fen: string) => positionFromFen(fen);
 const on = (...k: Wheel[]) => new Set<Wheel>(k);
@@ -127,7 +127,7 @@ describe('the mate line', () => {
 		const line = mateLine(at(MATE));
 		expect(line).not.toBeNull();
 		expect(line!.map((m) => makeSquare(m.from) + makeSquare(m.to))).toEqual(['a1a8']);
-		expect(mateNote(line, 'white')).toContain('White mates in 1');
+		expect(mateNotes({ deliver: line, threat: null }, 'white', true)[0]).toContain('White mates in 1');
 	});
 
 	it('returns THE shortest mate, not the first one move ordering happens to find', () => {
@@ -152,7 +152,7 @@ describe('the mate line', () => {
 		expect(line!.length).toBeGreaterThan(1);
 		// Ours, theirs, ours … and it ends with our move.
 		expect(line!.length % 2).toBe(1);
-		expect(mateNote(line, 'white')).toContain('one line of it');
+		expect(mateNotes({ deliver: line, threat: null }, 'white', true)[0]).toContain('one line of it');
 	});
 
 	it('numbers the arrows and alternates the brush', () => {
@@ -169,5 +169,58 @@ describe('the mate line', () => {
 		// A forced mate exists on 24.4% of plies in a corpus selected FOR tactics, so
 		// null is the ordinary answer and must not be an error.
 		expect(mateLine(at('6k1/5pp1/7p/8/8/8/5PPP/R5K1 w - - 0 1'))).toBeNull();
+	});
+});
+
+describe('mate is asked for BOTH sides', () => {
+	// Verified against the running code before being written down: a lone rook
+	// cannot mate a king in the open, so the first three positions I reached for
+	// were bad chess rather than a bad detector.
+	/** ♚h8, ♜a2 against ♔g1 boxed in by its own ♙f2 ♙g2 ♙h2. Black plays ...Ra1#. */
+	const THREATENED = '7k/8/8/8/8/8/r4PPP/6K1 w - - 0 1';
+	/** The same rook already giving check on g2. */
+	const IN_CHECK = '7k/8/8/8/8/8/6r1/6K1 w - - 0 1';
+
+	it('reports the mate coming at you, not only the one you can play', () => {
+		// Will: "you are applying the concept 'mate' asymmetrically, only when the
+		// winner is the player to move. But mates should be shown for both players.
+		// A player that might be mated has every reason to know."
+		//
+		// The old wheel searched White's mates here, found none, and said "no forced
+		// mate" — true, and the least useful true thing available.
+		const m = matesBothWays(at(THREATENED));
+		expect(m.deliver).toBeNull();
+		expect(m.threat!.map((x) => makeSquare(x.from) + makeSquare(x.to))).toEqual(['a2a1']);
+		const notes = mateNotes(m, 'white', true);
+		expect(notes[0]).toContain('no forced mate for White');
+		expect(notes[1]).toContain('BLACK THREATENS MATE in 1');
+	});
+
+	it('does not invent a threat when the mover is in check', () => {
+		// A side in check cannot pass, so "what would they do with a free move" is
+		// not a question the position poses — and answering it anyway would be a
+		// claim nothing established.
+		const pos = at(IN_CHECK);
+		expect(pos.isCheck()).toBe(true);
+		expect(nullMove(pos)).toBeNull();
+		expect(matesBothWays(pos).threat).toBeNull();
+		expect(mateNotes(matesBothWays(pos), 'white', false)[1]).toContain('the threat is the check');
+	});
+
+	it('says so plainly when neither side has one', () => {
+		const m = matesBothWays(at('6k1/5pp1/7p/8/8/8/5PPP/R5K1 w - - 0 1'));
+		expect(m.deliver).toBeNull();
+		expect(m.threat).toBeNull();
+		expect(mateNotes(m, 'white', true)[1]).toContain('no mate threatened');
+	});
+
+	it('draws a threat on the warning ramp, never the same as a mate you can play', () => {
+		// Two questions that must not look alike: "what can I play" and "what is
+		// coming". Marked with a ! as well as recoloured, so the difference survives
+		// a reader who cannot tell the two hues apart.
+		const line = mateLine(at(MATE))!;
+		expect(mateArrows(line)[0].brush).toBe('blue');
+		expect(mateArrows(line, true)[0].brush).toBe('red');
+		expect(mateArrows(line, true)[0].label).toBe('!1');
 	});
 });
