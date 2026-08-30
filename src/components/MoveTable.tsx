@@ -25,6 +25,7 @@
 // "equal", which is a claim; "…" is the truth.
 // ---------------------------------------------------------------------------
 
+import { useState } from 'react';
 import { Move } from './Move';
 import { evalText, lossText, type MoveRow, type MoveSource } from '../domain/moveTable';
 import { color, space, text, mono, radius } from '../ui/theme';
@@ -57,6 +58,15 @@ export type MoveTableProps = {
 	region?: string;
 	/** Said when the filters admit nothing. */
 	empty?: string;
+	/**
+	 * How many rows before the tail is folded away.
+	 *
+	 * `DistributionList` had `limit = 8` and the first version of this table
+	 * dropped it, so an opening position rendered its entire long tail — thirty
+	 * rows, every share under 1%, every bar empty. The tail is real data and
+	 * occasionally what you want, so it folds rather than vanishing.
+	 */
+	limit?: number;
 };
 
 export function MoveTable({
@@ -68,12 +78,16 @@ export function MoveTable({
 	marked,
 	region = 'move-table',
 	empty = 'Nothing to show with these filters.',
+	limit = 10,
 }: MoveTableProps) {
+	const [all, setAll] = useState(false);
 	// The best row for the loss column is the best row OVERALL, not the best one
 	// the filter happens to admit — otherwise hiding the engine's pick silently
 	// re-bases every gap beneath it.
 	const best = rows.find((r) => r.cp !== null);
-	const shown = on.size ? rows.filter((r) => r.sources.some((s) => on.has(s))) : rows;
+	const admitted = on.size ? rows.filter((r) => r.sources.some((s) => on.has(s))) : rows;
+	const shown = all ? admitted : admitted.slice(0, limit);
+	const folded = admitted.length - shown.length;
 
 	// A source with no rows at all is a chip nobody can usefully press.
 	const available = new Set<MoveSource>();
@@ -256,6 +270,36 @@ export function MoveTable({
 							))}
 						</tbody>
 					</table>
+					{folded > 0 && (
+						<button
+							onClick={() => setAll(true)}
+							style={{
+								border: 'none',
+								background: 'none',
+								color: color.accent,
+								cursor: 'pointer',
+								fontSize: text.note,
+								padding: `${space.tight}px 0 0`,
+							}}
+						>
+							show {folded} more
+						</button>
+					)}
+					{all && admitted.length > limit && (
+						<button
+							onClick={() => setAll(false)}
+							style={{
+								border: 'none',
+								background: 'none',
+								color: color.accent,
+								cursor: 'pointer',
+								fontSize: text.note,
+								padding: `${space.tight}px 0 0`,
+							}}
+						>
+							show fewer
+						</button>
+					)}
 					{anyPopularity && (
 					<div style={{ fontSize: text.note, color: color.ink3, marginTop: space.tight }}>
 						<strong>played</strong> is the share of games from this position; <strong>scores</strong> is the

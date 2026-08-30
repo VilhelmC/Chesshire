@@ -958,7 +958,11 @@ export function Train({
 	const moveRows = useMemo(
 		() =>
 			mergeMoves({
-				line: state?.expected?.map((e) => ({ uci: e.uci, san: e.san })),
+				// ONLY WHEN THERE IS A LINE. Out of book `expected` is every legal
+				// move — the run will accept anything sound — so tagging them all "the
+				// line" put the label on thirty rows and made it mean nothing. A
+				// position with no canon has no canon moves to show.
+				line: state?.phase === 'book' ? state.expected.map((e) => ({ uci: e.uci, san: e.san })) : undefined,
 				engine: candidates ?? undefined,
 				popular: distribution?.moves,
 			}),
