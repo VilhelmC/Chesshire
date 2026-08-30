@@ -286,7 +286,22 @@ export function ExplainPanel({
 					  */}
 					<LineStepper
 						line={x.line}
-						label={`the engine's line from ${x.san} — walk it, or ask about any move in it`}
+						/*
+						  * ONE CAPTION. This said the same sentence twice for a while — the
+						  * stepper's label and a line under it — which is what happens when a
+						  * block is replaced rather than absorbed.
+						  *
+						  * The line's TAIL IS NOT EVIDENCE: a PV can be truncated by a
+						  * transposition-table hit, and nothing beyond the first move or two is
+						  * reliable. So an incomplete line says so, and the only number
+						  * attached is the material the TRACE independently supports.
+						  */
+						label={
+							(x.line.complete
+								? `the engine's line from ${x.san} — walk it, or ask about any move in it`
+								: `the engine's line from ${x.san}, as far as it replays`) +
+							(x.trace.net !== 0 ? ` · ${pawns(x.trace.net)} over the line` : '')
+						}
 						onBoard={onBoard}
 						onAsk={(_s, i) => drill(i)}
 						mark={(i) => {
@@ -299,18 +314,6 @@ export function ExplainPanel({
 						region="explain-line"
 					/>
 
-					<div style={{ fontSize: text.note, color: color.ink3, fontFamily: mono, marginTop: space.tight }}>
-						{/*
-						  * The line's TAIL IS NOT EVIDENCE. A PV can be truncated by a
-						  * transposition-table hit, and nothing beyond the first move or two is
-						  * reliable — so it is offered to walk, and no claim is made about it
-						  * that the material trace does not independently support.
-						  */}
-						{x.line.complete
-							? 'the engine’s line — walk it, or ask about any move in it'
-							: 'the engine’s line, as far as it replays'}
-						{x.trace.net !== 0 && ` · ${pawns(x.trace.net)} over the line`}
-					</div>
 				</>
 			)}
 		</div>
