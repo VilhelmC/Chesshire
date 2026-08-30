@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { BoardPanel } from '../components/BoardPanel';
 import type { ToolbarAction } from '../components/Toolbar';
 import { analysePosition, toColourPov } from '../data/cloudEval';
-import { candidateMoves, brushForGrade, colourForGrade, type Candidate } from '../engine/candidates';
+import { candidateMoves, brushForGrade, type Candidate } from '../engine/candidates';
 import { loadMistakes, saveCard, clearMistakes, deleteCard } from '../data/mistakes';
 import {
 	due,
@@ -26,8 +26,13 @@ import { Empty, Button, Panel } from '../ui/primitives';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
 import { TrainingWheels } from '../components/TrainingWheels';
 import { useTrainingWheels } from '../hooks/useTrainingWheels';
-import { LineStepper, type BoardOverride } from '../components/LineStepper';
-import { MoveList } from '../components/MoveList';
+import { useLineOverlay } from '../hooks/useLineOverlay';
+import { MoveList, MoveListLegend } from '../components/MoveList';
+import { MoveTable } from '../components/MoveTable';
+import { mergeMoves, type MoveSource } from '../domain/moveTable';
+import { distributionOf, type Distribution } from '../domain/distribution';
+import { fetchExplorer } from '../data/explorer';
+import { colourOfFen } from '../domain/notation';
 import { Move } from '../components/Move';
 import { withGlyph } from '../domain/notation';
 import { nameForPath } from '../domain/openings';
@@ -62,6 +67,17 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	/** Evaluation of the card's position, from our side. Null until it arrives. */
 	const [evalCp, setEvalCp] = useState<number | null>(null);
 	const [candidates, setCandidates] = useState<Candidate[] | null>(null);
+	/** What players actually play here — the same explorer Train asks. */
+	const [distribution, setDistribution] = useState<Distribution | null>(null);
+	/**
+	 * Which tags the shared move table is showing.
+	 *
+	 * Mistakes used to render its own ordered list of candidates — a fourth
+	 * rendering of "moves you could play here", with its own columns and its own
+	 * colour swatch. Will: "UI should be basically the same for mistakes as for
+	 * train". It is the same table now, and the buttons switch tags on it.
+	 */
+	const [tableOn, setTableOn] = useState<ReadonlySet<MoveSource>>(() => new Set<MoveSource>());
 	const [busy, setBusy] = useState(false);
 	const vp = useViewport();
 	/**
@@ -175,12 +191,29 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		};
 	}, [current?.id]);
 
+	/** One place to switch a tag on the shared table. */
+	function tag(src: MoveSource, on: boolean) {
+		setTableOn((cur) => {
+			const next = new Set(cur);
+			if (on) next.add(src);
+			else next.delete(src);
+			return next;
+		});
+	}
+
 	/** Every legal move, weighted by quality — the trainer's own help, unchanged. */
 	async function showOptions() {
 		if (!current || busy) return;
+		// A second press puts the rows away, exactly as in Train: the button
+		// switches a tag on the one table rather than owning a rendering.
+		if (tableOn.has('engine')) {
+			tag('engine', false);
+			return;
+		}
 		setBusy(true);
 		try {
 			setCandidates(await candidateMoves(current.fen, current.ourColour, 5));
+			tag('engine', true);
 			// Using help means the answer no longer counts, exactly as in the trainer
 			// — but it does not mean the answer has been SHOWN. Weighted options are a
 			// hint; the solution is still a separate thing to ask for.
@@ -189,6 +222,29 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 			setFeedback({ ok: false, text: (e as Error).message });
 		} finally {
 			setBusy(false);
+		}
+	}
+
+	/**
+	 * What people actually played from this position.
+	 *
+	 * Train has had this since the explorer went in; a mistake is a position out
+	 * of a real game and the same question applies to it. Costs one request, and
+	 * only when asked.
+	 */
+	async function showDistribution() {
+		if (!current) return;
+		if (distribution) {
+			setDistribution(null);
+			tag('popular', false);
+			return;
+		}
+		try {
+			const data = await fetchExplorer(current.fen);
+			setDistribution(distributionOf(data, colourOfFen(current.fen)));
+			tag('popular', true);
+		} catch (e) {
+			setFeedback({ ok: false, text: (e as Error).message });
 		}
 	}
 
@@ -216,19 +272,47 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	 * Train ask, not a third implementation of the same idea.
 	 */
 	const [asking, setAsking] = useState<Ask | null>(null);
-	const [borrowed, setBorrowed] = useState<BoardOverride>(null);
-	/** A line the explainer handed over. Mistakes has no game move list to lend. */
-	const [lineShown, setLineShown] = useState<{
-		line: import('../domain/line').Line;
-		label: string;
-		onAsk?: (ply: number) => void;
-	} | null>(null);
+	/**
+	 * A line the explainer handed over, shown in the move list already on screen.
+	 *
+	 * I claimed this view had no game list to lend and so had to keep a stepper of
+	 * its own. That was wrong, and Will said so: "all the mistakes are from actual
+	 * play so they should come with a move list". They do — the card carries the
+	 * path and it has been replayed under the board since the run-up went in. So
+	 * the line borrows THAT list, the way Train's does, and there is one move list
+	 * in this view as well.
+	 */
+	const lineOverlay = useLineOverlay();
 	/** The same overlays the Lab and Train have, from the same hook. */
 	/** The man the safe-moves overlay is about. See Train, and the wheel's own note. */
 	const [focus, setFocus] = useState<number | null>(null);
-	const wheels = useTrainingWheels(current?.fen ?? null, focus);
 	const atCard = previewPly === null || previewPly >= lastPly;
 	const boardFen = atCard ? current?.fen : line[previewPly as number]?.fen;
+	// THE POSITION THE BOARD IS SHOWING, not the card's. Train had this exact bug:
+	// stepping back through the run-up left the wheels describing a position that
+	// was no longer on screen. The borrowed line is excluded on purpose — while it
+	// is up the explainer owns the arrows.
+	const wheels = useTrainingWheels(boardFen ?? current?.fen ?? null, focus);
+
+	/**
+	 * Everything known about the moves here, merged — the same table Train shows.
+	 *
+	 * `line` is the card's own answer, and it is only tagged once the answer has
+	 * been revealed: before that, putting it in the table would be the solution
+	 * printed next to the question.
+	 */
+	const moveRows = useMemo(
+		() =>
+			mergeMoves({
+				line:
+					reveal && current
+						? [{ uci: current.expectedUci, san: current.expectedSan }]
+						: undefined,
+				engine: candidates ?? undefined,
+				popular: distribution?.moves,
+			}),
+		[reveal, current, candidates, distribution],
+	);
 
 	/**
 	 * The move that produced the position being shown.
@@ -237,10 +321,10 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	 * thing you need to see in order to know what you are being asked.
 	 */
 	const lastMove = ((): [string, string] | undefined => {
-		// While the panel is walking a line it owns the board, so the highlight has
-		// to follow it. Leaving the card's own last move lit would put a marker on
-		// a position that is no longer on screen.
-		if (borrowed) return borrowed.lastMove;
+		// While a line is borrowed it owns the board, so the highlight has to follow
+		// it. Leaving the card's own last move lit would put a marker on a position
+		// that is no longer on screen.
+		if (lineOverlay.board) return lineOverlay.board.lastMove;
 		const uci = line[atCard ? lastPly : (previewPly as number)]?.uci;
 		return uci ? [uci.slice(0, 2), uci.slice(2, 4)] : undefined;
 	})();
@@ -252,6 +336,40 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	}
 
 	function actions(): ToolbarAction[] {
+		// THE STEP BUTTONS DRIVE WHATEVER SEQUENCE IS SHOWING — the same rule Train
+		// follows. While a line is borrowed they walk it; otherwise they walk the
+		// run-up to the card. One set of controls, because there is one move list.
+		if (lineOverlay.overlay)
+			return [
+				{
+					id: 'first',
+					title: 'Back to the start of the line',
+					icon: 'first',
+					onClick: () => lineOverlay.setAt(-1),
+					disabled: lineOverlay.overlay.at === -1,
+				},
+				{
+					id: 'back',
+					title: 'Previous move in the line',
+					icon: 'back',
+					onClick: () => lineOverlay.step(-1),
+					disabled: lineOverlay.overlay.at === -1,
+				},
+				{
+					id: 'forward',
+					title: 'Next move in the line',
+					icon: 'forward',
+					onClick: () => lineOverlay.step(1),
+					disabled: lineOverlay.overlay.at >= lineOverlay.overlay.line.steps.length - 1,
+				},
+				{
+					id: 'resign',
+					title: 'Stop showing this line',
+					icon: 'resign',
+					onClick: lineOverlay.close,
+				},
+			];
+
 		return [
 			{
 				id: 'first',
@@ -278,16 +396,33 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 				id: 'options',
 				title: 'Show every legal move, weighted by how good it is (stops this card counting)',
 				icon: 'options',
+				// ACCENT FOLLOWS THE TABLE, as in Train: the button switches a tag on
+				// rather than owning a rendering, and one that looked the same either
+				// way would be lying about what pressing it did. It is also no longer
+				// disabled once pressed — pressing again puts the rows away.
+				accent: tableOn.has('engine'),
 				onClick: showOptions,
-				disabled: !current || busy || !!candidates,
+				disabled: !current || busy,
+			},
+			{
+				id: 'stats',
+				title: 'What players actually play here — frequency and score',
+				icon: 'stats',
+				accent: tableOn.has('popular'),
+				onClick: showDistribution,
+				disabled: !current || busy,
 			},
 			{
 				id: 'reveal',
 				title: 'Show me the move (stops this card counting)',
 				icon: 'reveal',
+				accent: reveal,
 				onClick: () => {
 					setReveal(true);
 					setHelped(true);
+					// The answer joins the one table, tagged "the line", instead of
+					// being a second way of naming a move.
+					tag('line', true);
 				},
 				disabled: !current || reveal,
 			},
@@ -308,6 +443,11 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		setReveal(false);
 		setHelped(false);
 		setCandidates(null);
+		// Everything the table was showing belonged to the last card's position.
+		setDistribution(null);
+		setTableOn(new Set());
+		setAsking(null);
+		lineOverlay.close();
 		// Back to the position being asked about. Carrying a preview across cards
 		// would show one card's history under another card's question.
 		setPreviewPly(null);
@@ -412,14 +552,14 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 			>
 				{current ? (
 					<BoardPanel
-						fen={borrowed?.fen ?? boardFen ?? current.fen}
+						fen={lineOverlay.board?.fen ?? boardFen ?? current.fen}
 						ourColour={current.ourColour}
 						evalCp={evalCp}
 						lastMove={lastMove}
 						// Only the card's own position accepts a move. Stepping back is
 						// for looking; answering somewhere else in the game would be
 						// answering a different question.
-						interactive={!busy && atCard}
+						interactive={!busy && atCard && !lineOverlay.overlay}
 						onSelectSquare={(sqName) =>
 							setFocus((f) => {
 								const n = parseSquare(sqName);
@@ -436,8 +576,8 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 						// the same conflation as the button being greyed out: asking for
 						// options meant you could not also be shown the move.
 						arrows={
-							borrowed
-								? borrowed.arrows
+							lineOverlay.board
+								? lineOverlay.board.arrows
 								: wheels.arrows.length
 								? wheels.arrows
 								: [
@@ -526,99 +666,108 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 							/>
 
 							{asking && (
-								<>
-									<ExplainPanel
-										{...asking}
-										onShowLine={(line, label, onAsk) => setLineShown({ line, label, onAsk })}
-										onClose={() => {
-											setAsking(null);
-											setBorrowed(null);
-											setLineShown(null);
-										}}
-									/>
-									{lineShown && (
-										<LineStepper
-											line={lineShown.line}
-											label={lineShown.label}
-											onBoard={setBorrowed}
-											onClose={() => setLineShown(null)}
-											onAsk={(_s, i) => lineShown.onAsk?.(i)}
-											region="quiz-line"
-										/>
-									)}
-								</>
+								<ExplainPanel
+									{...asking}
+									onShowLine={lineOverlay.show}
+									onClose={() => {
+										setAsking(null);
+										lineOverlay.close();
+									}}
+								/>
 							)}
 
-							{candidates && (
-								<ol
-									style={{
-										fontSize: 13,
-										paddingLeft: 0,
-										listStyle: 'none',
-										margin: '8px 0 0',
-									}}
-								>
-									{candidates.map((c) => (
-										<li
-											key={c.uci}
-											// §1's doorway: any move on the list can be asked
-											// about, against the others as its comparison set.
-											onClick={() =>
-												setAsking({
-													fen: current.fen,
-													uci: c.uci,
-													alternatives: candidates.map((o) => o.uci),
-												})
-											}
-											title={`Why ${c.san}?`}
-											style={{
-												display: 'flex',
-												alignItems: 'center',
-												gap: 8,
-												padding: '3px 0',
-												cursor: 'pointer',
-											}}
-										>
-											{/* Same swatch and ramp as the board draws. */}
-											<span
-												style={{
-													width: 18,
-													height: 6,
-													borderRadius: 3,
-													background: colourForGrade(c.grade),
-													flexShrink: 0,
-												}}
-											/>
-											<Move san={c.san} colour={current.ourColour} bold size={13} />
-											<span style={{ opacity: 0.75, marginLeft: 'auto' }}>
-												{c.cp > 0 ? '+' : ''}
-												{(c.cp / 100).toFixed(2)}
-												{c.loss > 0 && <span style={{ opacity: 0.6 }}> −{c.loss}</span>}
-											</span>
-										</li>
-									))}
-								</ol>
+							{/*
+							  * THE SAME TABLE TRAIN HAS. One row per move, with the tags
+							  * that say where it came from — the engine's picks, what
+							  * people play, and the card's own answer once revealed. Every
+							  * row has a `?`, which is the doorway §1 asked for.
+							  */}
+							{tableOn.size > 0 && moveRows.length > 0 && (
+								<div style={{ marginTop: 10 }}>
+									<MoveTable
+										rows={moveRows}
+										mover={current.ourColour}
+										on={tableOn}
+										onToggle={(src) => tag(src, !tableOn.has(src))}
+										onAsk={(uci) =>
+											setAsking({
+												fen: current.fen,
+												uci,
+												alternatives: moveRows.map((r) => r.uci),
+											})
+										}
+										askedPopularity={distribution !== null}
+										region="quiz-moves"
+									/>
+								</div>
 							)}
 
 							{/* The run-up to the position. A mistake from a real game
 								without the moves that produced it is a puzzle with the
 								premise removed — and every card already stores the path,
-								so nothing is fetched to show this. */}
-							{lastPly > 0 && (
+								so nothing is fetched to show this.
+
+								ONE MOVE LIST: while a line is borrowed it shows that
+								instead of the game, with a banner saying whose it is. */}
+							{(lastPly > 0 || lineOverlay.overlay) && (
 								<div style={{ marginTop: 10 }}>
+									{lineOverlay.overlay && (
+										<div
+											data-region="line-banner"
+											style={{
+												display: 'flex',
+												alignItems: 'center',
+												gap: 8,
+												fontSize: 13,
+												color: INK_2,
+												marginBottom: 4,
+											}}
+										>
+											<span>{lineOverlay.overlay.label}</span>
+											<button
+												onClick={lineOverlay.close}
+												style={{
+													marginLeft: 'auto',
+													border: 'none',
+													background: 'none',
+													color: '#1565c0',
+													cursor: 'pointer',
+													fontSize: 13,
+												}}
+											>
+												Back to the game
+											</button>
+										</div>
+									)}
 									<MoveList
+										region="quiz-move-list"
+										onAsk={lineOverlay.overlay?.onAsk}
 										// Index 0 is the starting position, not a move.
-										chips={line.slice(1).map((m, i) => ({
-											san: m.san ?? '',
-											ply: i + 1,
-											mistake: false,
-											suboptimal: false,
-											white: i % 2 === 0,
-										}))}
-										currentPly={atCard ? lastPly : (previewPly as number)}
-										onJump={(ply) => setPreviewPly(ply >= lastPly ? null : ply)}
+										chips={
+											lineOverlay.chips ??
+											line.slice(1).map((m, i) => ({
+												san: m.san ?? '',
+												ply: i + 1,
+												mistake: false,
+												suboptimal: false,
+												white: i % 2 === 0,
+											}))
+										}
+										currentPly={
+											lineOverlay.overlay
+												? lineOverlay.overlay.at
+												: atCard
+													? lastPly
+													: (previewPly as number)
+										}
+										onJump={
+											lineOverlay.overlay
+												? lineOverlay.setAt
+												: (ply) => setPreviewPly(ply >= lastPly ? null : ply)
+										}
 									/>
-									{!atCard && (
+									{!lineOverlay.overlay && <MoveListLegend />}
+									{!lineOverlay.overlay && !atCard && (
 										<Panel tone="accent" style={{ marginTop: 8, fontSize: 13 }}>
 											Looking back at move {Math.ceil(((previewPly ?? 0) + 1) / 2)}. Step
 											forward to answer the card.

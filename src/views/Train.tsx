@@ -1666,6 +1666,7 @@ export function Train({
 								state?.fen &&
 								setAsking({ fen: state.fen, uci, alternatives: moveRows.map((r) => r.uci) })
 							}
+							askedPopularity={distribution !== null}
 							region="train-moves"
 						/>
 					</>

@@ -67,6 +67,16 @@ export type MoveTableProps = {
 	 * occasionally what you want, so it folds rather than vanishing.
 	 */
 	limit?: number;
+	/**
+	 * The explorer has been asked and has answered.
+	 *
+	 * A position deep in a real game has no games in the explorer, and pressing
+	 * "played here" then did nothing visible: no rows, no chip (a source with no
+	 * rows has no chip to press), no message. Silence after a button press reads
+	 * as a broken button rather than as an answer, so the host says it asked and
+	 * this says what came back.
+	 */
+	askedPopularity?: boolean;
 };
 
 export function MoveTable({
@@ -79,6 +89,7 @@ export function MoveTable({
 	region = 'move-table',
 	empty = 'Nothing to show with these filters.',
 	limit = 10,
+	askedPopularity = false,
 }: MoveTableProps) {
 	const [all, setAll] = useState(false);
 	// The best row for the loss column is the best row OVERALL, not the best one
@@ -138,6 +149,12 @@ export function MoveTable({
 					</span>
 				)}
 			</div>
+
+			{askedPopularity && !anyPopularity && (
+				<div style={{ fontSize: text.note, color: color.ink2, marginBottom: space.tight }}>
+					No games from this position in the explorer.
+				</div>
+			)}
 
 			{!shown.length ? (
 				<div style={{ fontSize: text.note, color: color.ink2 }}>{empty}</div>
