@@ -29,7 +29,7 @@ import {
 	type RestorePoint,
 	type SessionConfig,
 } from '../engine/session';
-import { applyUci, replayLine } from '../domain/chess';
+import { applyUci, replayLine, parseSquare } from '../domain/chess';
 import { getToken, fetchExplorer } from '../data/explorer';
 import { distributionOf, type Distribution } from '../domain/distribution';
 import { DistributionList } from '../components/Distribution';
@@ -541,7 +541,15 @@ export function Train({
 	 * actually learning, which is where a training wheel belongs. One hook, so a
 	 * change lands in all three tabs at once.
 	 */
-	const wheels = useTrainingWheels(state?.fen ?? null);
+	/**
+	 * The man the safe-moves overlay is about.
+	 *
+	 * That wheel draws for ONE piece — a position has 27 legal moves on average
+	 * and drawing them all is a scribble — so it needs somewhere to be told which.
+	 * Clicking the same square again clears it.
+	 */
+	const [focus, setFocus] = useState<number | null>(null);
+	const wheels = useTrainingWheels(state?.fen ?? null, focus);
 	async function showDistribution() {
 		if (!state) return;
 		if (distribution) return setDistribution(null);
@@ -1090,6 +1098,12 @@ export function Train({
 				evalCp={previewing ? null : (state?.evalNow ?? null)}
 				interactive={yourTurn && !busy && !previewing && !explaining}
 				lastMove={shownLastMove}
+				onSelectSquare={(sqName) =>
+					setFocus((f) => {
+						const n = parseSquare(sqName);
+						return n === undefined || f === n ? null : n;
+					})
+				}
 				arrows={
 					explaining
 						? explaining.arrows
@@ -1357,6 +1371,7 @@ export function Train({
 							on={wheels.on}
 							onChange={wheels.setOn}
 							notes={wheels.notes}
+							hasFocus={focus !== null}
 							working={wheels.working}
 						/>
 					)}

@@ -21,7 +21,7 @@ import {
 	RETIRE_STREAK,
 	type MistakeCard,
 } from '../domain/mistakes';
-import { applyUci, sameMove, replayLine } from '../domain/chess';
+import { applyUci, sameMove, replayLine, parseSquare } from '../domain/chess';
 import { Empty, Button, Panel } from '../ui/primitives';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
 import { TrainingWheels } from '../components/TrainingWheels';
@@ -218,7 +218,9 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	const [asking, setAsking] = useState<Ask | null>(null);
 	const [borrowed, setBorrowed] = useState<BoardOverride>(null);
 	/** The same overlays the Lab and Train have, from the same hook. */
-	const wheels = useTrainingWheels(current?.fen ?? null);
+	/** The man the safe-moves overlay is about. See Train, and the wheel's own note. */
+	const [focus, setFocus] = useState<number | null>(null);
+	const wheels = useTrainingWheels(current?.fen ?? null, focus);
 	const atCard = previewPly === null || previewPly >= lastPly;
 	const boardFen = atCard ? current?.fen : line[previewPly as number]?.fen;
 
@@ -412,6 +414,12 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 						// for looking; answering somewhere else in the game would be
 						// answering a different question.
 						interactive={!busy && atCard}
+						onSelectSquare={(sqName) =>
+							setFocus((f) => {
+								const n = parseSquare(sqName);
+								return n === undefined || f === n ? null : n;
+							})
+						}
 						onMove={onMove}
 						version={boardVersion}
 						actions={actions()}
@@ -507,6 +515,7 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 								on={wheels.on}
 								onChange={wheels.setOn}
 								notes={wheels.notes}
+								hasFocus={focus !== null}
 								working={wheels.working}
 							/>
 

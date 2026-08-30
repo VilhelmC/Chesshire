@@ -62,6 +62,7 @@ export function BoardPanel({
 	interactive = false,
 	lastMove,
 	arrows = [],
+	onSelectSquare,
 	onMove,
 	version,
 	actions = [],
@@ -90,6 +91,16 @@ export function BoardPanel({
 	 * A wrapper that retypes what it forwards will always drift from it.
 	 */
 	arrows?: Shape[];
+	/**
+	 * A square was clicked.
+	 *
+	 * Forwarded because the safe-moves overlay needs a focused man — it draws for
+	 * ONE piece, since a position has 27 legal moves on average and drawing them
+	 * all is a scribble. Without this the wheel says "click a man on the board"
+	 * and clicking a man does nothing, which is a worse state than not offering
+	 * the wheel at all.
+	 */
+	onSelectSquare?: (square: string) => void;
 	onMove?: (uci: string) => void;
 	version?: number;
 	actions?: ToolbarAction[];
@@ -115,6 +126,7 @@ export function BoardPanel({
 					lastMove={lastMove}
 					arrows={arrows}
 					onMove={onMove}
+					onSelectSquare={onSelectSquare}
 					size={size}
 					version={version}
 				/>
