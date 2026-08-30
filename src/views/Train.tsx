@@ -32,7 +32,8 @@ import {
 import { applyUci, replayLine, parseSquare } from '../domain/chess';
 import { getToken, fetchExplorer } from '../data/explorer';
 import { distributionOf, type Distribution } from '../domain/distribution';
-import { DistributionList } from '../components/Distribution';
+import { MoveTable } from '../components/MoveTable';
+import { mergeMoves, type MoveSource } from '../domain/moveTable';
 import { ShareMenu, canShareNatively } from '../components/ShareMenu';
 import { LinePlayer, type BoardOverride } from '../components/LinePlayer';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
@@ -50,7 +51,6 @@ import { MoveList, MoveListLegend, type MoveChip } from '../components/MoveList'
 import {
 	candidateMoves,
 	brushForGrade,
-	colourForGrade,
 	type Candidate,
 } from '../engine/candidates';
 import { BOT_LEVELS, levelFor, estimate, type Estimate } from '../domain/rating';
@@ -451,6 +451,10 @@ export function Train({
 				...(many ? { label: e.san } : {}),
 			})),
 		);
+		// AND SWITCH ITS ROWS ON IN THE ONE TABLE. The button used to own a
+		// rendering; now it owns a filter tag, so "the line's moves" appear beside
+		// their evaluation and their popularity instead of in a list of their own.
+		setTableOn((cur) => new Set([...cur, 'line' as MoveSource]));
 		setStats((s) => ({ ...s, shown: s.shown + 1 }));
 		missedThisItem.current = true;
 		assistedThisItem.current = true;
@@ -522,6 +526,15 @@ export function Train({
 	 * this is usually not even a request.
 	 */
 	const [distribution, setDistribution] = useState<Distribution | null>(null);
+	/**
+	 * WHICH LISTS THE ONE TABLE IS SHOWING.
+	 *
+	 * Will: "we should unify these three buttons: one table, the buttons just
+	 * toggle different entries (may overlap)". So the three toolbar buttons no
+	 * longer each own a rendering — they fetch their source and switch its tag on.
+	 * Empty means everything that has been fetched.
+	 */
+	const [tableOn, setTableOn] = useState<ReadonlySet<MoveSource>>(() => new Set<MoveSource>());
 	const [sharing, setSharing] = useState(false);
 	/** A claim being demonstrated on the board rather than described in prose. */
 	const [explain, setExplain] = useState<{ line: Line; label: string } | null>(null);
@@ -549,13 +562,21 @@ export function Train({
 	 * Clicking the same square again clears it.
 	 */
 	const [focus, setFocus] = useState<number | null>(null);
-	const wheels = useTrainingWheels(state?.fen ?? null, focus);
 	async function showDistribution() {
 		if (!state) return;
-		if (distribution) return setDistribution(null);
+		if (distribution) {
+			setDistribution(null);
+			setTableOn((cur) => {
+				const next = new Set(cur);
+				next.delete('popular');
+				return next;
+			});
+			return;
+		}
 		try {
 			const data = await fetchExplorer(state.fen);
 			setDistribution(distributionOf(data, colourOfFen(state.fen)));
+			setTableOn((cur) => new Set([...cur, 'popular' as MoveSource]));
 		} catch (e) {
 			setError((e as Error).message);
 		}
@@ -589,6 +610,7 @@ export function Train({
 		try {
 			const cands = await candidateMoves(state.fen, state.ourColour, 5);
 			setCandidates(cands);
+			setTableOn((cur) => new Set([...cur, 'engine' as MoveSource]));
 			setHint(
 				cands.map((c) => ({
 					orig: c.uci.slice(0, 2),
@@ -893,6 +915,36 @@ export function Train({
 	// nothing, then both moves animating together. The move was made before the
 	// thinking started; the picture should say so.
 	const shownFen = explaining?.fen ?? shown?.fen ?? preview?.fen ?? state?.fen ?? '';
+	// THE POSITION THE BOARD IS SHOWING, not the one the run is on.
+	//
+	// This took `state.fen` at first, which is the live position — so while the
+	// reader was stepping back through the line, or previewing, the overlay was
+	// computed for a position that was not on screen. An overlay describing a
+	// different board than the one under it is worse than no overlay.
+	//
+	// `explaining` is deliberately excluded: while a line is being walked the
+	// explainer owns the arrows anyway, and recomputing the wheels for each ply of
+	// somebody else's line is work nobody asked for.
+	const wheels = useTrainingWheels(shown?.fen ?? preview?.fen ?? state?.fen ?? null, focus);
+
+	/**
+	 * Everything known about the moves here, merged.
+	 *
+	 * The three sources arrive independently — the line is in `state`, the engine
+	 * costs a search, the explorer a round trip — so this merges whatever has
+	 * turned up rather than waiting for all three. A row with no evaluation shows
+	 * "…", never a zero.
+	 */
+	const moveRows = useMemo(
+		() =>
+			mergeMoves({
+				line: state?.expected?.map((e) => ({ uci: e.uci, san: e.san })),
+				engine: candidates ?? undefined,
+				popular: distribution?.moves,
+			}),
+		[state?.expected, candidates, distribution],
+	);
+
 	const shownLastMove: [string, string] | undefined = explaining
 		? explaining.lastMove
 		: previewing
@@ -1427,15 +1479,6 @@ export function Train({
 						/>
 					)}
 
-					{distribution && state && (
-						<div style={{ marginTop: 10 }}>
-							<DistributionList
-								distribution={distribution}
-								mover={colourOfFen(state.fen)}
-							/>
-						</div>
-					)}
-
 					{error && <div style={{ color: '#c62828', fontSize: 14 }}>{error}</div>}
 				</div>
 			</BoardPanel>
@@ -1467,62 +1510,36 @@ export function Train({
 				</div>
 
 
-				{candidates && (
+				{/*
+				  * ONE TABLE, THREE FILTERS. Will: "we should unify these three
+				  * buttons: one table, the buttons just toggle which moves are
+				  * included ... so we use the same component for all three."
+				  *
+				  * The move is the row; being in the line, being popular and being one
+				  * of the engine's picks are TAGS on it. A move in two lists used to
+				  * appear twice, in two shapes, with different columns filled in.
+				  */}
+				{moveRows.length > 0 && state && (
 					<>
-						<h3>Options here</h3>
-						<ul style={{ listStyle: 'none', padding: 0, margin: '0 0 8px' }}>
-							{candidates.map((c) => (
-								<li
-									key={c.uci}
-									// PLAN-EXPLAINER §1: "clicks an engine move → that one, the
-									// other engine moves". The comparison set is the list the
-									// reader is looking at, which is the honest one — asking about
-									// a move against a different set of alternatives would give a
-									// different verdict for reasons invisible on screen.
-									onClick={() =>
-										state?.fen &&
-										setAsking({
-											fen: state.fen,
-											uci: c.uci,
-											alternatives: candidates.map((o) => o.uci),
-										})
-									}
-									title={`Why ${c.san}?`}
-									style={{
-										display: 'flex',
-										alignItems: 'center',
-										gap: 8,
-										padding: '3px 0',
-										fontSize: 14,
-										cursor: state?.fen ? 'pointer' : 'default',
-									}}
-								>
-									{/* Swatch uses the board's own ramp, so the two are read together. */}
-									<span
-										style={{
-											width: 18,
-											height: 6,
-											borderRadius: 3,
-											background: colourForGrade(c.grade),
-											flexShrink: 0,
-										}}
-									/>
-									<Move san={c.san} colour={state?.ourColour ?? 'w'} bold size={14} />
-									<span style={{ opacity: 0.75, marginLeft: 'auto' }}>
-										{c.cp > 0 ? '+' : ''}
-										{(c.cp / 100).toFixed(2)}
-										{c.loss > 0 && (
-											<span style={{ opacity: 0.6 }}> −{c.loss}</span>
-										)}
-									</span>
-								</li>
-							))}
-						</ul>
-						<p style={{ fontSize: 12, opacity: 0.65 }}>
-							Arrow weight and swatch share one ramp — thick and dark is best. The evaluation
-							is drawn on each arrow head too. This move will not count towards your
-							accuracy.
-						</p>
+						<h3>Moves here</h3>
+						<MoveTable
+							rows={moveRows}
+							mover={colourOfFen(state.fen)}
+							on={tableOn}
+							onToggle={(src) =>
+								setTableOn((cur) => {
+									const next = new Set(cur);
+									if (next.has(src)) next.delete(src);
+									else next.add(src);
+									return next;
+								})
+							}
+							onAsk={(uci) =>
+								state?.fen &&
+								setAsking({ fen: state.fen, uci, alternatives: moveRows.map((r) => r.uci) })
+							}
+							region="train-moves"
+						/>
 					</>
 				)}
 

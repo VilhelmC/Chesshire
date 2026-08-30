@@ -38,7 +38,7 @@ import { canLink, downloadAs, linkFile, restoreLink, writeLinked, type LinkState
 import { makeSan } from 'chessops/san';
 import type { Chess } from 'chessops/chess';
 import type { NormalMove, Role, Color } from 'chessops/types';
-import { color, space, radius, text, mono } from '../ui/theme';
+import { color, space, radius, text } from '../ui/theme';
 import { Note, Section, Button } from '../ui/primitives';
 import PUZZLES from '../data/labPuzzles.json';
 import LEDGER from '../data/ledgerBuckets.json';
@@ -49,6 +49,8 @@ import type { BoardOverride } from '../components/LinePlayer';
 import { build as buildGraph } from '../domain/graph';
 import { shapesFor, describe as readGraph, LAYERS, type Layer } from '../domain/graphShapes';
 import { TrainingWheels } from '../components/TrainingWheels';
+import { MoveTable } from '../components/MoveTable';
+import { mergeMoves, type MoveSource } from '../domain/moveTable';
 import { useTrainingWheels } from '../hooks/useTrainingWheels';
 
 /** Per-ply result, precomputed: hit, ties at the top, legal moves, is-solver. */
@@ -149,8 +151,6 @@ function figurine(pos: Chess, u: string): string {
 const side = (c: Color) => (c === 'white' ? 'White' : 'Black');
 
 
-/** Engine centipawns, from the mover's point of view, signed. */
-const cp = (n: number) => (Math.abs(n) >= 9000 ? (n > 0 ? 'mate' : 'mated') : `${n > 0 ? '+' : ''}${(n / 100).toFixed(2)}`);
 
 type Verdict = 'blunder' | 'found' | 'coerced' | 'tied' | 'missed';
 
@@ -294,6 +294,8 @@ export function Lab() {
 	 * being told the answer should be able to.
 	 */
 	const [showEngine, setShowEngine] = useState(true);
+	/** Which lists the shared move table admits. Empty means everything. */
+	const [tableOn, setTableOn] = useState<ReadonlySet<MoveSource>>(() => new Set<MoveSource>());
 	/** The old depth search's ranking, explanation and move-list colours. */
 
 	/** Which layer of the attack graph is drawn on the board (PLAN.md M1f). */
@@ -998,9 +1000,28 @@ export function Lab() {
 								  */}
 								{showEngine &&
 									(engineRows ? (
-										<EngineTable rows={engineRows} played={step.played} onAsk={(uci) =>
-											setAsking({ fen: fenOf(step.pos), uci, alternatives: engineRows.map((r) => r.uci) })
-										} />
+										<MoveTable
+											rows={mergeMoves({ engine: engineRows })}
+											mover={step.mover === 'white' ? 'w' : 'b'}
+											on={tableOn}
+											onToggle={(src) =>
+												setTableOn((cur) => {
+													const next = new Set(cur);
+													if (next.has(src)) next.delete(src);
+													else next.add(src);
+													return next;
+												})
+											}
+											onAsk={(uci) =>
+												setAsking({
+													fen: fenOf(step.pos),
+													uci,
+													alternatives: engineRows.map((r) => r.uci),
+												})
+											}
+											marked={step.played}
+											region="lab-moves"
+										/>
 									) : (
 										<Note>Asking Stockfish…</Note>
 									))}
@@ -1209,84 +1230,4 @@ const buttonStyle: React.CSSProperties = {
  * outside the engine's top twelve — a table that silently omits the answer is
  * the one thing this screen must not do.
  */
-/**
- * The gap to the best move — or the reason there isn't one.
- *
- * MATE IS FOLDED INTO THE ±10000 BAND so that a mate outranks any evaluation on
- * a single number. That is right for ORDERING and meaningless as a DIFFERENCE:
- * subtracting −107 from +10000 gives "−100.97", which is not a hundred pawns,
- * is not anything, and was on screen for every move in a mating position.
- *
- * `explain.ts` already refuses this — its `comparable` flag exists for exactly
- * this case, and `m3-gate.mjs` caught the same sentence ("−110.92 against Nh6+")
- * on its first run. This table was written later and reintroduced it. Same bug,
- * second time, so the rule is worth stating plainly: A CENTIPAWN GAP IS ONLY A
- * NUMBER WHEN BOTH SIDES OF THE SUBTRACTION ARE CENTIPAWNS.
- */
-function lossText(row: Candidate, best: Candidate | undefined): string {
-	if (!best || row.uci === best.uci) return '—';
-	const mate = (c: Candidate) => Math.abs(c.cp) >= 9000;
-	if (mate(best) && !mate(row)) return 'no mate';
-	if (mate(best) && mate(row)) return row.cp === best.cp ? '—' : 'slower';
-	if (mate(row)) return '—';
-	return row.loss ? `−${(row.loss / 100).toFixed(2)}` : '—';
-}
 
-function EngineTable({
-	rows,
-	played,
-	onAsk,
-}: {
-	rows: Candidate[];
-	played: string;
-	onAsk: (uci: string) => void;
-}) {
-	const has = rows.some((r) => r.uci === played);
-	return (
-		<div data-region="engine-table" style={{ overflowX: 'auto' }}>
-			<table style={{ borderCollapse: 'collapse', fontSize: text.body, width: '100%' }}>
-				<caption style={{ captionSide: 'top', textAlign: 'left', fontSize: text.note, color: color.ink2, paddingBottom: space.tight }}>
-					Stockfish, ranked. ★ is the puzzle's move. <em>Click a row to ask why.</em>
-				</caption>
-				<thead>
-					<tr style={{ color: color.ink2 }}>
-						<th style={th}> </th>
-						<th style={th}>move</th>
-						<th style={{ ...th, textAlign: 'right' }}>eval</th>
-						<th style={{ ...th, textAlign: 'right' }}>loss</th>
-					</tr>
-				</thead>
-				<tbody>
-					{rows.map((r) => (
-						<tr
-							key={r.uci}
-							onClick={() => onAsk(r.uci)}
-							style={{ cursor: 'pointer', borderTop: `1px solid ${color.line}` }}
-						>
-							<td style={td}>{r.uci === played ? '★' : ''}</td>
-							<td style={{ ...td, fontWeight: r.uci === played ? 600 : 400 }}>{r.san}</td>
-							<td style={{ ...td, textAlign: 'right', fontFamily: mono }}>{cp(r.cp)}</td>
-							<td style={{ ...td, textAlign: 'right', fontFamily: mono, color: r.loss ? color.ink2 : color.good }}>
-								{lossText(r, rows[0])}
-							</td>
-						</tr>
-					))}
-					{!has && (
-						// Said, rather than left blank. A blank cell reads as "zero" or as
-						// "the engine agrees"; being outside the top twelve is neither, and
-						// is itself a judgement worth printing as one.
-						<tr style={{ borderTop: `1px solid ${color.line}` }}>
-							<td style={td}>★</td>
-							<td style={{ ...td, fontWeight: 600 }} colSpan={3}>
-								<span style={{ color: color.ink2 }}>the puzzle's move is not in its top twelve</span>
-							</td>
-						</tr>
-					)}
-				</tbody>
-			</table>
-		</div>
-	);
-}
-
-const th: React.CSSProperties = { fontWeight: 400, padding: '2px 12px 4px 0' };
-const td: React.CSSProperties = { padding: '3px 12px 3px 0' };

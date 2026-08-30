@@ -21,7 +21,6 @@ const OWNED: Record<string, string> = {
 	'lab-board': 'src/views/Lab.tsx',
 	'lab-ply': 'src/views/Lab.tsx',
 	'ply-statement': 'src/views/Lab.tsx',
-	'engine-table': 'src/views/Lab.tsx',
 	'training-wheels': 'src/components/TrainingWheels.tsx',
 	'explain-panel': 'src/components/ExplainPanel.tsx',
 };
@@ -29,6 +28,8 @@ const OWNED: Record<string, string> = {
 /** Passed as a `region` prop rather than written as an attribute. */
 const PASSED: Record<string, string> = {
 	'mate-proof': 'src/components/MateProof.tsx',
+	'lab-moves': 'src/views/Lab.tsx',
+	'train-moves': 'src/views/Train.tsx',
 	'explain-line': 'src/components/ExplainPanel.tsx',
 	'mate-proof-line': 'src/components/MateProof.tsx',
 	'line-player': 'src/components/LinePlayer.tsx',
@@ -72,6 +73,7 @@ describe('the doc lists what the code emits', () => {
 			'src/components/MateProof.tsx',
 			'src/components/ExplainPanel.tsx',
 			'src/components/LineStepper.tsx',
+			'src/components/MoveTable.tsx',
 			'src/hooks/useTrainingWheels.ts',
 		];
 		const found = new Set<string>();

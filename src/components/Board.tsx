@@ -313,9 +313,18 @@ export function Board({
 				},
 			},
 			draggable: { enabled: interactive || editable, deleteOnDropOff: editable },
-			// Edit mode needs clicks to select a square; ordinary boards keep the
-			// behaviour they had.
-			selectable: { enabled: interactive || editable },
+			// SELECTING A SQUARE IS INSPECTION, NOT A MOVE, so it is enabled whenever
+			// anybody is listening for it — not only when the board is playable.
+			//
+			// It used to be `interactive || editable`, which meant the safe-moves
+			// overlay could not be pointed at a man while the engine was thinking, or
+			// on the opponent's turn, or at the end of a line. The wheel would say
+			// "click a man on the board" and clicking did nothing.
+			//
+			// This cannot leak a move: `movable.dests` is an empty Map unless the
+			// board is interactive, so a selection on a quiet board highlights and
+			// goes no further.
+			selectable: { enabled: interactive || editable || !!onSelectRef.current },
 			drawable: {
 				enabled: false,
 				autoShapes,

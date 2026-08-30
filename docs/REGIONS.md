@@ -62,7 +62,7 @@ The Lab, top to bottom:
 | `lab-solution` | the solution's moves, as clickable plies |
 | `lab-ply` | the right-hand column for the ply being looked at |
 | `ply-statement` | whose move it is and what was played — no judgement |
-| `engine-table` | Stockfish's ranking, clickable into the explainer |
+| `lab-moves` / `train-moves` | the shared move table — one row per move, filter chips for line / engine / played, a `?` per row |
 | `training-wheels` | the overlay checkboxes and what they found |
 | `mate-proof` | the ladder's surviving rung, computed on demand |
 | `mate-proof-line` / `mate-proof-tree` | the walkable line, and the certificate |
