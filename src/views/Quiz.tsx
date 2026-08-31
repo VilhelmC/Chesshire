@@ -31,7 +31,7 @@ import { useCommentary } from '../hooks/useCommentary';
 import { Commentary } from '../components/CommentaryPanel';
 import { MoveList, MoveListLegend } from '../components/MoveList';
 import { MoveTable } from '../components/MoveTable';
-import { mergeMoves, type MoveSource } from '../domain/moveTable';
+import { mergeMoves, filterMoves, type MoveSource } from '../domain/moveTable';
 import { distributionOf, type Distribution } from '../domain/distribution';
 import { fetchExplorer } from '../data/explorer';
 import { colourOfFen } from '../domain/notation';
@@ -323,6 +323,34 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	);
 
 	/**
+	 * The rows the table admits, drawn on the board.
+	 *
+	 * The grade comes from the engine's own ranking or not at all — see Train's
+	 * `tableArrows` for why re-deriving it from the visible subset would be a
+	 * claim nothing supports. The card's answer keeps its plain green, and is
+	 * pushed last so it sits on top rather than being replaced.
+	 */
+	const tableArrows = useMemo(() => {
+		const graded = new Map((candidates ?? []).map((c) => [c.uci, c]));
+		const out = (tableOn.size ? filterMoves(moveRows, tableOn) : []).map((row) => {
+			const c = graded.get(row.uci);
+			return {
+				orig: row.uci.slice(0, 2),
+				dest: row.uci.slice(2, 4),
+				brush: c ? brushForGrade(c.grade) : 'green',
+				...(c ? { label: `${c.cp > 0 ? '+' : ''}${(c.cp / 100).toFixed(1)}` } : {}),
+			};
+		});
+		if (reveal && current)
+			out.push({
+				orig: current.expectedUci.slice(0, 2),
+				dest: current.expectedUci.slice(2, 4),
+				brush: 'green',
+			});
+		return out;
+	}, [moveRows, tableOn, candidates, reveal, current]);
+
+	/**
 	 * The move that produced the position being shown.
 	 *
 	 * On the card itself this is the OPPONENT'S last move — which is exactly the
@@ -583,29 +611,17 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 						// being replaced by them. This used to be an either/or, which is
 						// the same conflation as the button being greyed out: asking for
 						// options meant you could not also be shown the move.
+						//
+						// AND THE OPTIONS ARE THE TABLE'S, filtered — same derivation as
+						// Train's, for the same reason. The board and the table were being
+						// driven from two places, so pressing a filter chip narrowed the
+						// list and left the arrows alone.
 						arrows={
 							lineOverlay.board
 								? lineOverlay.board.arrows
 								: wheels.arrows.length
-								? wheels.arrows
-								: [
-							...(candidates ?? []).map((c) => ({
-								orig: c.uci.slice(0, 2),
-								dest: c.uci.slice(2, 4),
-								brush: brushForGrade(c.grade),
-								label: `${c.cp > 0 ? '+' : ''}${(c.cp / 100).toFixed(1)}`,
-							})),
-							...(reveal
-								? [
-										{
-											orig: current.expectedUci.slice(0, 2),
-											dest: current.expectedUci.slice(2, 4),
-											brush: 'green',
-										},
-									]
-								: []),
-								  ]
-						}
+									? wheels.arrows
+									: tableArrows}
 					>
 						<div style={{ marginTop: 10, minHeight: 96 }}>
 							{brokenReason(current) ? (

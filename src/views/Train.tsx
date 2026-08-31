@@ -33,7 +33,7 @@ import { applyUci, replayLine, parseSquare } from '../domain/chess';
 import { getToken, fetchExplorer } from '../data/explorer';
 import { distributionOf, type Distribution } from '../domain/distribution';
 import { MoveTable } from '../components/MoveTable';
-import { mergeMoves, type MoveSource } from '../domain/moveTable';
+import { mergeMoves, filterMoves, type MoveSource } from '../domain/moveTable';
 import { ShareMenu, canShareNatively } from '../components/ShareMenu';
 import { LinePlayer, type BoardOverride } from '../components/LinePlayer';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
@@ -163,6 +163,11 @@ export function Train({
 			finished: state?.finished ?? null,
 			feedback,
 			hintArrows: hint.length,
+			// The two that decide what the board draws, since they are derived and
+			// so cannot be read off any stored value.
+			tableOn: [...tableOn],
+			tableArrows: tableArrows.length,
+			wheelArrows: wheels.arrows.length,
 			// What the last move cost, so "it feels slow" becomes a number.
 			lastMoveCost: { ...lastCost.current },
 		})),
@@ -484,13 +489,10 @@ export function Train({
 		// Every acceptable move, not the first. Labelled when there is more than
 		// one, because three green arrows with no numbers reads as a single line
 		// with a fork in it rather than as three separate answers.
-		const many = state.expected.length > 1;
-		setHint(
-			state.expected.map((e) => ({
-				...arrowFor(e.uci, 'green'),
-				...(many ? { label: e.san } : {}),
-			})),
-		);
+		// NO ARROWS SET HERE. Switching the tag on is the whole action; the board
+		// follows the filter — see `tableArrows`. This used to push every book move
+		// into `hint`, which is what put thirty-six of them on the board at once
+		// and made the next button press wipe them.
 		// AND SWITCH ITS ROWS ON IN THE ONE TABLE. The button used to own a
 		// rendering; now it owns a filter tag, so "the line's moves" appear beside
 		// their evaluation and their popularity instead of in a list of their own.
@@ -668,14 +670,6 @@ export function Train({
 			const cands = await candidateMoves(state.fen, state.ourColour, 5);
 			setCandidates(cands);
 			setTableOn((cur) => new Set([...cur, 'engine' as MoveSource]));
-			setHint(
-				cands.map((c) => ({
-					orig: c.uci.slice(0, 2),
-					dest: c.uci.slice(2, 4),
-					brush: brushForGrade(c.grade),
-					label: `${c.cp > 0 ? '+' : ''}${(c.cp / 100).toFixed(1)}`,
-				})),
-			);
 			if (yourTurn) {
 				missedThisItem.current = true;
 				assistedThisItem.current = true;
@@ -1011,6 +1005,53 @@ export function Train({
 		[state?.expected, candidates, distribution],
 	);
 
+	/**
+	 * THE BOARD DRAWS WHAT THE TABLE IS SHOWING.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * Will, on the thirty-six green arrows "show me the move" produced: "that
+	 * wouldn't be a problem if user also toggled intersection with show picked or
+	 * best."
+	 *
+	 * Exactly, and it is a better answer than the cap I was about to offer. The
+	 * arrows were never too many — they were UNFILTERED, because the board and
+	 * the table were being driven from different places. `showMe` pushed every
+	 * book move into `hint`, `showOptions` overwrote it with the engine's five,
+	 * and whichever button was pressed last won. The intersection the table had
+	 * just learned to compute never reached the board at all.
+	 *
+	 * So the arrows are DERIVED from the admitted rows rather than stored. Turn
+	 * on "the line" alone and you get every book move, which is what was asked
+	 * for; add "engine" and the board narrows to the moves both back. The filter
+	 * chips became the arrow control without gaining a single button.
+	 *
+	 * ---------------------------------------------------------------------------
+	 * THE GRADE COMES FROM THE ENGINE OR NOT AT ALL. The colour ramp means "how
+	 * far behind the best move, among everything the engine ranked" — a fact
+	 * about a search over all legal moves, not about whichever rows a filter
+	 * admits. Re-deriving it from the visible subset would make a move change
+	 * colour when a chip was pressed, which is a claim about the position that
+	 * nothing supports. A row the engine never scored is drawn green: shown, but
+	 * making no claim about how good it is.
+	 */
+	const gradeByUci = useMemo(
+		() => new Map((candidates ?? []).map((c) => [c.uci, c])),
+		[candidates],
+	);
+
+	const tableArrows = useMemo<Arrow[]>(() => {
+		if (!tableOn.size) return [];
+		return filterMoves(moveRows, tableOn).map((row) => {
+			const c = gradeByUci.get(row.uci);
+			return c
+				? {
+						...arrowFor(row.uci, brushForGrade(c.grade)),
+						label: `${c.cp > 0 ? '+' : ''}${(c.cp / 100).toFixed(1)}`,
+					}
+				: arrowFor(row.uci, 'green');
+		});
+	}, [moveRows, tableOn, gradeByUci]);
+
 	const shownLastMove: [string, string] | undefined = lineOverlay.board
 		? lineOverlay.board.lastMove
 		: explaining
@@ -1275,11 +1316,16 @@ export function Train({
 						? wheels.arrows
 						: previewing
 							? []
-							: hint.length
+							: // `hint` is now ONLY the momentary teaching arrow after an
+								// accepted-but-not-best move. It outranks the filter because it
+								// is shown for a beat and then gone.
+								hint.length
 								? hint
-								: feedback && !feedback.correct
-									? feedback.arrows
-									: []
+								: tableArrows.length
+									? tableArrows
+									: feedback && !feedback.correct
+										? feedback.arrows
+										: []
 				}
 				onMove={onMove}
 				version={boardVersion}
@@ -1961,9 +2007,14 @@ function sanOf(fen: string, uci: string): string {
 	}
 }
 
+/**
+ * `brush` was `'red' | 'blue' | 'green'` — the three named ones — which was
+ * true of every caller until the board started drawing the engine's graded
+ * ramp (`q0`…`q4`) through here as well. Widened rather than duplicated.
+ */
 function arrowFor(
 	uci: string,
-	brush: 'red' | 'blue' | 'green',
+	brush: string,
 ): { orig: string; dest: string; brush: string } {
 	return { orig: uci.slice(0, 2), dest: uci.slice(2, 4), brush };
 }
