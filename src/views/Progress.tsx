@@ -33,6 +33,7 @@ import {
 } from '../domain/performance';
 import { accuracy, freeplayLosses, gameLosses, type AnswerRow, type RunRow } from '../domain/progress';
 import { fromGame, type Reviewable } from '../domain/reviewable';
+import { splitBySpeed } from '../domain/playedGames';
 import { color } from '../ui/theme';
 
 // Single series, so no categorical palette to validate — one hue for magnitude,
@@ -155,17 +156,18 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 	 * control, the other is a bot after a punished mistake, and merged into a
 	 * single figure a change in it could not be attributed to either.
 	 */
+	const live = useMemo(() => splitBySpeed(playedGames), [playedGames]);
 	const fromGames = useMemo(
 		() =>
 			estimate(
 				gameLosses(
-					playedGames,
+					live.counted,
 					// The app's own idea of where the book ends: the longest named
 					// opening that is a prefix of the game.
 					(moves) => nameForPath(moves)?.path.length ?? 0,
 				),
 			),
-		[playedGames],
+		[live],
 	);
 	/** A readable label for a position with no name of its own. */
 	function nameFor(node: TreeNode): string {
@@ -298,13 +300,18 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 				<p style={{ fontSize: 13, color: INK_2, margin: '0 0 10px' }}>
 					Two measurements of two different things, kept apart on purpose. Both skip the
 					opening: recalling a memorised move measures memory, so counting it would show the
-					number climbing every time you revised.
+					number climbing every time you revised. Correspondence games are left out for the
+					same reason — with an analysis board open, the moves are not yours alone.
 				</p>
 
 				<div style={{ display: 'flex', gap: 32, flexWrap: 'wrap', marginBottom: 4 }}>
 					<Estimate
 						label="from your games"
-						note="real opponents, past the named opening"
+						note={
+							live.population.correspondence > 0
+								? `real opponents, past the named opening · ${live.population.correspondence} correspondence ${live.population.correspondence === 1 ? 'game' : 'games'} set aside`
+								: 'real opponents, past the named opening'
+						}
 						e={fromGames}
 						empty="Import your games on the Settings tab."
 					/>

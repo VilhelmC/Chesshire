@@ -35,13 +35,37 @@ import { type Line, stepAt, arrowFor } from '../domain/line';
 import type { MoveChip } from '../components/MoveList';
 import type { BoardOverride } from '../components/LineStepper';
 
-export type LineOverlay = {
+/**
+ * What a line can hang on its own moves.
+ *
+ * Will: "before the explain panel showed the move eval scores in the line, but
+ * now it doesn't anymore?" It did, and moving the line into the shared move
+ * list dropped it — `LineStepper` took a `mark` per ply and nothing replaced it.
+ * `MoveChip` was given a `note` field for exactly this and then never handed
+ * one, which is how a feature disappears without a single test noticing.
+ *
+ * Deliberately a callback rather than an array: the caller knows what its own
+ * numbers mean and the overlay does not need to.
+ */
+/**
+ * A mark is a verdict — good, bad, or worth a look — so it deliberately cannot
+ * be `muted`. `MoveChip` allows muted for the Lab's "no verdict" chips, which is
+ * the opposite of what a mark is for, and `LineStepper` never accepted it.
+ */
+export type LineMark = { text: string; tone?: 'good' | 'bad' | 'warn' };
+
+export type LineExtras = {
+	/** Ask a further question about one ply — the explainer's recursion. */
+	onAsk?: (ply: number) => void;
+	/** A number or a flag beside a move: a material swing, a forcing move. */
+	mark?: (ply: number) => LineMark | undefined;
+};
+
+export type LineOverlay = LineExtras & {
 	line: Line;
 	label: string;
 	/** -1 is before the line starts, so the claim can be seen from both ends. */
 	at: number;
-	/** Ask a further question about one ply — the explainer's recursion. */
-	onAsk?: (ply: number) => void;
 };
 
 export type LineOverlayState = {
@@ -50,7 +74,7 @@ export type LineOverlayState = {
 	chips: MoveChip[] | null;
 	/** What the board should show while the overlay is up. */
 	board: BoardOverride;
-	show: (line: Line, label: string, onAsk?: (ply: number) => void) => void;
+	show: (line: Line, label: string, extras?: LineExtras) => void;
 	close: () => void;
 	setAt: (at: number) => void;
 	step: (delta: number) => void;
@@ -61,8 +85,8 @@ export type LineOverlayState = {
 export function useLineOverlay(): LineOverlayState {
 	const [overlay, setOverlay] = useState<LineOverlay | null>(null);
 
-	const show = useCallback((line: Line, label: string, onAsk?: (ply: number) => void) => {
-		setOverlay({ line, label, at: -1, onAsk });
+	const show = useCallback((line: Line, label: string, extras?: LineExtras) => {
+		setOverlay({ line, label, at: -1, ...extras });
 	}, []);
 
 	const close = useCallback(() => setOverlay(null), []);
@@ -88,13 +112,18 @@ export function useLineOverlay(): LineOverlayState {
 	 */
 	const chips = useMemo<MoveChip[] | null>(() => {
 		if (!overlay) return null;
-		return overlay.line.steps.map((s, i) => ({
-			san: s.san,
-			ply: i,
-			mistake: false,
-			suboptimal: false,
-			white: s.colour === 'w',
-		}));
+		return overlay.line.steps.map((s, i) => {
+			const mark = overlay.mark?.(i);
+			return {
+				san: s.san,
+				ply: i,
+				mistake: false,
+				suboptimal: false,
+				white: s.colour === 'w',
+				note: mark?.text,
+				tone: mark?.tone,
+			};
+		});
 	}, [overlay]);
 
 	const board = useMemo<BoardOverride>(() => {

@@ -80,6 +80,17 @@ export type ImportedGameRow = {
 	/** Cards produced from this game. */
 	mistakes: number;
 	/**
+	 * The time control, as the site names it: bullet/blitz/rapid/classical, and
+	 * `daily` or `correspondence` for the slow ones.
+	 *
+	 * Kept because it decides whether a game is evidence of PLAYING STRENGTH. On
+	 * chess.com daily you may consult an opening book and an analysis board and
+	 * think for days, so its centipawn loss says what your tools can do, not what
+	 * you can. Rows written before this field are `undefined` and are reported as
+	 * unknown rather than assumed to be either.
+	 */
+	speed?: string;
+	/**
 	 * The game's SAN moves.
 	 *
 	 * Needed as the denominator of the transfer measurement: "two mistakes in the

@@ -46,6 +46,7 @@ import { recall, remember } from '../data/viewState';
 import { MateProof } from '../components/MateProof';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
 import { LineStepper } from '../components/LineStepper';
+import type { LineExtras } from '../hooks/useLineOverlay';
 import type { BoardOverride } from '../components/LinePlayer';
 import { build as buildGraph } from '../domain/graph';
 import { shapesFor, describe as readGraph, LAYERS, type Layer } from '../domain/graphShapes';
@@ -327,11 +328,9 @@ export function Lab() {
 	 * grow it into one for a bench screen, the Lab keeps the stepper — the same
 	 * `LineStepper` every other line uses, not a private one.
 	 */
-	const [lineShown, setLineShown] = useState<{
-		line: import('../domain/line').Line;
-		label: string;
-		onAsk?: (ply: number) => void;
-	} | null>(null);
+	const [lineShown, setLineShown] = useState<
+		({ line: import('../domain/line').Line; label: string } & LineExtras) | null
+	>(null);
 	/** Clicking a square focuses the overlay on that piece; a full board is a hairball. */
 	const [focus, setFocus] = useState<number | null>(null);
 	/**
@@ -1057,8 +1056,8 @@ export function Lab() {
 											<>
 												<ExplainPanel
 													{...asking}
-													onShowLine={(line, label, onAsk) =>
-														setLineShown({ line, label, onAsk })
+													onShowLine={(line, label, extras) =>
+														setLineShown({ line, label, ...extras })
 													}
 													onClose={() => {
 														setAsking(null);
@@ -1073,6 +1072,8 @@ export function Lab() {
 														onBoard={setBorrowed}
 														onClose={() => setLineShown(null)}
 														onAsk={(_s, i) => lineShown.onAsk?.(i)}
+														// The material swing per ply, restored with the rest.
+														mark={lineShown.mark}
 														region="lab-line"
 													/>
 												)}

@@ -10,6 +10,7 @@
 // the rating estimate is built from.
 
 import { annotate } from './annotate';
+import { isMateScore } from './playedGames';
 import type { Reviewable } from './reviewable';
 
 export type AnswerRow = {
@@ -139,6 +140,15 @@ export function gameLosses(
 		for (const a of annotate(g.evals, g.ourColour)) {
 			// Ours, measured, and past the point where it was still recall.
 			if (a.side !== 'us' || a.loss === null || a.ply <= book) continue;
+			// A MATE SCORE IS NOT A QUANTITY OF CENTIPAWNS. Differencing one against
+			// an evaluation gave losses of nine and nineteen thousand — the same
+			// error this repo has now caught three times. Ten of the deck's 433
+			// moves touched one; each was being capped to 600 and counted.
+			if (
+				(a.before !== null && isMateScore(a.before)) ||
+				(a.after !== null && isMateScore(a.after))
+			)
+				continue;
 			out.push(a.loss);
 		}
 	}

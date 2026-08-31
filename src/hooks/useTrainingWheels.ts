@@ -25,10 +25,11 @@
 // board to be driven from.
 // ---------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Square } from 'chessops/types';
 import { positionFromFen } from '../domain/chess';
 import {
+	WHEELS,
 	wheelShapes,
 	wheelNotes,
 	matesBothWays,
@@ -38,6 +39,7 @@ import {
 	type Wheel,
 } from '../domain/wheels';
 import type { Shape } from '../components/Board';
+import { recall, remember } from '../data/viewState';
 
 export type TrainingWheelsState = {
 	on: ReadonlySet<Wheel>;
@@ -51,7 +53,38 @@ export type TrainingWheelsState = {
 };
 
 export function useTrainingWheels(fen: string | null, focus?: Square | null): TrainingWheelsState {
-	const [on, setOn] = useState<ReadonlySet<Wheel>>(() => new Set<Wheel>());
+	/*
+	 * THE TOGGLES OUTLIVE THE PAGE.
+	 *
+	 * Will: "the training wheel options are not being persisted." They were not,
+	 * and the reason is the same one that made collapsing the panel clear them a
+	 * fortnight ago: this state was treated as belonging to the widget rather
+	 * than to the reader. It belongs to the reader. Somebody who trains with the
+	 * mate overlay on wants it on tomorrow, and having to switch it back on at
+	 * every reload is the app forgetting how it is used.
+	 *
+	 * Restored through `viewState`, which validates on the way out — a wheel
+	 * ablated away since it was written is dropped rather than restored, because
+	 * a Set holding a name no overlay answers to is a checkbox that cannot be
+	 * unticked.
+	 *
+	 * One store shared by all three hosts, deliberately: the wheels are the same
+	 * wheels in the Lab, in Train and in Mistakes, and remembering them per tab
+	 * would be three answers to one question.
+	 */
+	const [on, setOnState] = useState<ReadonlySet<Wheel>>(
+		() =>
+			new Set(
+				(recall('wheels', (v) => Array.isArray(v) && v.every((x) => typeof x === 'string')) ?? [])
+					.filter((k): k is Wheel => WHEELS.some((w) => w.key === k)),
+			),
+	);
+
+	/** One way in, so nothing can set the wheels without storing them. */
+	const setOn = useCallback((next: Set<Wheel>) => {
+		setOnState(next);
+		remember({ wheels: [...next] });
+	}, []);
 
 	const pos = useMemo(() => {
 		if (!fen) return null;

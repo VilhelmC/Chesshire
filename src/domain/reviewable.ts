@@ -56,6 +56,14 @@ export type Reviewable = {
 	ourColour: 'w' | 'b';
 	/** Where to see the original, for imported games. */
 	url?: string;
+	/**
+	 * The site's name for the time control, when the row kept it.
+	 *
+	 * Here rather than only on the storage row because whether a game was played
+	 * in one sitting decides whether it is evidence of playing strength — see
+	 * `domain/playedGames.ts`.
+	 */
+	speed?: string;
 	result?: 'win' | 'loss' | 'draw';
 };
 
@@ -78,6 +86,8 @@ export type GameLike = {
 	platform: string;
 	url: string;
 	result: 'win' | 'loss' | 'draw';
+	/** bullet/blitz/rapid/classical, or daily/correspondence. Absent on older rows. */
+	speed?: string;
 	moves?: string[];
 	/** WHITE's point of view — the storage convention for imported games. */
 	evals?: (number | null)[];
@@ -137,6 +147,7 @@ export function fromGame(g: GameLike): Reviewable | null {
 		evals,
 		ourColour,
 		url: g.url,
+		speed: g.speed,
 		result: g.result,
 	};
 }

@@ -41,6 +41,7 @@ import {
 	type Because,
 } from '../domain/explain';
 import type { Line } from '../domain/line';
+import type { LineExtras } from '../hooks/useLineOverlay';
 import { color, space, radius, text, mono, TOUCH } from '../ui/theme';
 
 /** One question: a position, a move, and what to weigh it against. */
@@ -117,7 +118,7 @@ export function ExplainPanel({
 	 * The panel used to drive the board itself, through a stepper of its own.
 	 * There is one move list now and a line borrows it.
 	 */
-	onShowLine?: (line: Line, label: string, onAsk?: (ply: number) => void) => void;
+	onShowLine?: (line: Line, label: string, extras?: LineExtras) => void;
 	onClose?: () => void;
 	depth?: number;
 	severity?: Severity;
@@ -324,8 +325,33 @@ export function ExplainPanel({
 							onClick={() =>
 								onShowLine(
 									x.line,
-									`the engine's line from ${x.san}`,
-									(ply) => drill(ply),
+									/*
+									  * THE LINE'S TAIL IS NOT EVIDENCE. A PV can be cut short by a
+									  * transposition-table hit, so an incomplete line says so, and
+									  * the only number on the label is the material the TRACE
+									  * independently supports.
+									  */
+									(x.line.complete
+										? `the engine's line from ${x.san}`
+										: `the engine's line from ${x.san}, as far as it replays`) +
+										(x.trace.net !== 0 ? ` · ${pawns(x.trace.net)} over the line` : ''),
+									{
+										onAsk: (ply) => drill(ply),
+										/*
+										  * THE NUMBER BESIDE EACH MOVE IS MATERIAL, NOT AN EVALUATION,
+										  * and that is the point. Inside a PV the engine's evaluation is
+										  * flat by construction — every move in it is the best one — so a
+										  * column of evals down a line says nothing, while the material
+										  * swing says where the pieces actually went. See `domain/trace.ts`.
+										  */
+										mark: (ply) => {
+											const t = x.trace.steps[ply];
+											if (t?.delta)
+												return { text: pawns(t.delta), tone: t.delta > 0 ? ('good' as const) : ('bad' as const) };
+											// Where the line is being driven. Marked, not described.
+											return t?.forcing ? { text: '!', tone: 'warn' as const } : undefined;
+										},
+									},
 								)
 							}
 							style={{

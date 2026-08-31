@@ -37,6 +37,15 @@ export type ViewState = {
 	 * on the way out through its `ok` predicate, which is the point of `recall`.
 	 */
 	quizCategories?: string[];
+	/**
+	 * Training wheels left switched on.
+	 *
+	 * `string[]` for the same reason as `quizCategories`: an older build may have
+	 * written the name of an overlay that has since been ablated away, and this
+	 * module is the boundary with storage rather than the place that knows which
+	 * wheels exist.
+	 */
+	wheels?: string[];
 };
 
 /**

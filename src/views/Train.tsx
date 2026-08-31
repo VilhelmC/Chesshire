@@ -59,6 +59,7 @@ import {
 import { BOT_LEVELS, levelFor, estimate, type Estimate } from '../domain/rating';
 import { freeplayLosses, gameLosses } from '../domain/progress';
 import { fromGame, type Reviewable } from '../domain/reviewable';
+import { splitBySpeed } from '../domain/playedGames';
 import { db } from '../data/db';
 import { loadProgress } from '../data/progress';
 import { logAnswer, logRun } from '../data/progress';
@@ -319,8 +320,11 @@ export function Train({
 			try {
 				const games = await db.imported.toArray();
 				const played = games.map(fromGame).filter((r): r is Reviewable => r !== null);
+				// Correspondence games are excluded here too, and for the bot it
+				// matters most: sizing the opponent off games played with an analysis
+				// board open would set it 300 points above the reader.
 				const fromGames = estimate(
-					gameLosses(played, (moves) => nameForPath(moves)?.path.length ?? 0),
+					gameLosses(splitBySpeed(played).counted, (moves) => nameForPath(moves)?.path.length ?? 0),
 				);
 				setRating(fromGames.confident ? fromGames : estimate(freeplayLosses(answers)));
 			} catch {

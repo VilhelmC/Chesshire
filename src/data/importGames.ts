@@ -211,6 +211,9 @@ export async function importGames(req: ImportRequest): Promise<ImportResult> {
 			opponent: g.opponent,
 			result: g.result,
 			mistakes: worst.length,
+			// Already fetched from both sites and thrown away until now — lichess
+			// calls it `speed`, chess.com `time_class`. The rating estimate needs it.
+			speed: g.speed,
 			moves: [...g.moves],
 			ourColour: g.ourColour,
 			// Site evaluations when the game was analysed on Lichess, otherwise
