@@ -46,6 +46,14 @@ export type ViewState = {
 	 * wheels exist.
 	 */
 	wheels?: string[];
+	/**
+	 * The wheels are selected but suppressed.
+	 *
+	 * Stored as OFF rather than on, so its absence — every ViewState written
+	 * before this existed — reads as "showing", which is what those readers
+	 * currently have.
+	 */
+	wheelsOff?: boolean;
 };
 
 /**

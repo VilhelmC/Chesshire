@@ -12,6 +12,7 @@
 // so the layout still holds still.
 
 import { useMeasure } from './useViewport';
+import { ACTIVE } from '../ui/theme';
 
 export type ToolbarAction = {
 	id: string;
@@ -122,9 +123,25 @@ export function Toolbar({
 						alignItems: 'center',
 						justifyContent: 'center',
 						gap: 2,
-						border: '1px solid #ddd',
+						/*
+						  * ON LOOKS ON.
+						  *
+						  * Will: "the light blue shade for the toggled buttons is very
+						  * difficult to see." It was `#e3f2fd` on `#fff` — a four-percent
+						  * difference in lightness, carrying the entire answer to "is this
+						  * switched on", and in dark mode it sat on a light island where it
+						  * read as nothing at all.
+						  *
+						  * A state worth showing gets more than a tint. This inverts:
+						  * accent ground, white ink, accent border. The icons take
+						  * `currentColor` now, so they invert with it rather than staying
+						  * dark on a dark ground.
+						  */
+						border: `1px solid ${a.accent ? ACTIVE.border : '#ddd'}`,
 						borderRadius: 6,
-						background: a.accent ? '#e3f2fd' : '#fff',
+						background: a.accent ? ACTIVE.background : '#fff',
+						color: a.accent ? ACTIVE.color : '#333',
+						boxShadow: a.accent ? ACTIVE.boxShadow : 'none',
 						cursor: a.disabled ? 'default' : 'pointer',
 						opacity: a.disabled ? 0.35 : 1,
 						padding: 0,
@@ -134,7 +151,14 @@ export function Toolbar({
 				>
 					<Icon name={a.icon} />
 					{labelled && (
-						<span style={{ fontSize: 9, color: '#52514e', lineHeight: 1 }}>
+						<span
+							style={{
+								fontSize: 9,
+								// Inherits on an active button, so the caption inverts too.
+								color: a.accent ? 'inherit' : '#52514e',
+								lineHeight: 1,
+							}}
+						>
 							{CAPTION[a.icon]}
 						</span>
 					)}
@@ -145,25 +169,25 @@ export function Toolbar({
 }
 
 function Icon({ name }: { name: ToolbarAction['icon'] }) {
-	const s = { stroke: '#333', strokeWidth: 1.8, fill: 'none', strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
+	const s = { stroke: 'currentColor', strokeWidth: 1.8, fill: 'none', strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
 	switch (name) {
 		case 'first':
 			return (
 				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
-					<path d="M18 6 10 12l8 6z" fill="#333" stroke="none" />
+					<path d="M18 6 10 12l8 6z" fill="currentColor" stroke="none" />
 					<line x1="6" y1="5" x2="6" y2="19" />
 				</svg>
 			);
 		case 'back':
 			return (
 				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
-					<path d="M16 5 8 12l8 7z" fill="#333" stroke="none" />
+					<path d="M16 5 8 12l8 7z" fill="currentColor" stroke="none" />
 				</svg>
 			);
 		case 'forward':
 			return (
 				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
-					<path d="M8 5l8 7-8 7z" fill="#333" stroke="none" />
+					<path d="M8 5l8 7-8 7z" fill="currentColor" stroke="none" />
 				</svg>
 			);
 		case 'branch':
@@ -172,9 +196,9 @@ function Icon({ name }: { name: ToolbarAction['icon'] }) {
 				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
 					<path d="M7 20V12c0-2 2-3 4-4l4-2" />
 					<path d="M7 12c0 2 2 3 4 4l4 2" />
-					<circle cx="7" cy="20" r="1.8" fill="#333" stroke="none" />
-					<circle cx="16" cy="5" r="1.8" fill="#333" stroke="none" />
-					<circle cx="16" cy="19" r="1.8" fill="#333" stroke="none" />
+					<circle cx="7" cy="20" r="1.8" fill="currentColor" stroke="none" />
+					<circle cx="16" cy="5" r="1.8" fill="currentColor" stroke="none" />
+					<circle cx="16" cy="19" r="1.8" fill="currentColor" stroke="none" />
 				</svg>
 			);
 		case 'mistake':
@@ -197,7 +221,7 @@ function Icon({ name }: { name: ToolbarAction['icon'] }) {
 			return (
 				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
 					<line x1="6" y1="3" x2="6" y2="21" />
-					<path d="M6 4h11l-2.5 4L17 12H6z" fill="#333" stroke="none" />
+					<path d="M6 4h11l-2.5 4L17 12H6z" fill="currentColor" stroke="none" />
 				</svg>
 			);
 		case 'options':
@@ -214,9 +238,9 @@ function Icon({ name }: { name: ToolbarAction['icon'] }) {
 			// `options` ramp, which is arrows of falling weight.
 			return (
 				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
-					<rect x="4" y="9" width="4" height="11" fill="#333" stroke="none" />
-					<rect x="10" y="13" width="4" height="7" fill="#333" stroke="none" />
-					<rect x="16" y="16" width="4" height="4" fill="#333" stroke="none" />
+					<rect x="4" y="9" width="4" height="11" fill="currentColor" stroke="none" />
+					<rect x="10" y="13" width="4" height="7" fill="currentColor" stroke="none" />
+					<rect x="16" y="16" width="4" height="4" fill="currentColor" stroke="none" />
 				</svg>
 			);
 		case 'share':
@@ -235,7 +259,7 @@ function Icon({ name }: { name: ToolbarAction['icon'] }) {
 			return (
 				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
 					<circle cx="12" cy="12" r="8" />
-					<path d="M10 8.5l5 3.5-5 3.5z" fill="#333" stroke="none" />
+					<path d="M10 8.5l5 3.5-5 3.5z" fill="currentColor" stroke="none" />
 				</svg>
 			);
 	}

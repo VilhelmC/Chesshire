@@ -114,6 +114,33 @@ export const mono = 'ui-monospace, SFMono-Regular, Menlo, monospace';
  */
 export const sans = "'Source Sans 3 Variable', system-ui, -apple-system, sans-serif";
 
+/**
+ * What "switched on" looks like, in one place.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "the light blue shade for the toggled buttons is very difficult to see
+ * - we need better styling."
+ *
+ * There were two answers to this in the app and both were a tint: the toolbar
+ * painted `#e3f2fd` behind a white button, and the move table's filter chips
+ * tinted with `accentSoft` and changed a hairline border. A tint is the weakest
+ * signal available — it survives neither a dark theme, nor a glance, nor a
+ * screen in daylight — and it was carrying the whole of "did that press do
+ * anything".
+ *
+ * SO AN ACTIVE CONTROL INVERTS. Accent ground, white ink, accent border: three
+ * cues moving together, none of which needs a side-by-side comparison with an
+ * inactive one to read. The rule lives here so the toolbar and the chips cannot
+ * drift apart again, which is how there came to be two of them.
+ */
+export const ACTIVE = {
+	background: color.accent,
+	color: '#fff',
+	border: color.accent,
+	/** A little lift, so it reads as pressed in rather than merely coloured. */
+	boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.25)',
+} as const;
+
 /** Colour for a judgement, so the mapping lives in one place. */
 export function verdictColor(kind: 'good' | 'warn' | 'bad' | 'neutral'): string {
 	if (kind === 'good') return color.good;

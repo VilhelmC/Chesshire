@@ -186,11 +186,19 @@ body {
 }
 .wheels-head {
 	display: flex;
-	align-items: baseline;
+	/* `baseline` was right when the row was only text; the master switch is a
+	   40px touch target and baseline-aligning it hangs it off the bottom. */
+	align-items: center;
 	justify-content: space-between;
+	gap: 0.5rem;
 	margin-bottom: 0.4rem;
 	font-size: 0.85rem;
 	color: var(--ink2);
+}
+/* The disclosure keeps the row's width; the switch takes only what it needs. */
+.wheels-head .wheels-toggle {
+	text-align: left;
+	min-width: 0;
 }
 .wheels-head .link {
 	border: 0;

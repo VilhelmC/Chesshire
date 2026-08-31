@@ -28,7 +28,7 @@
 import { useState } from 'react';
 import { Move } from './Move';
 import { evalText, filterMoves, lossText, type MoveRow, type MoveSource } from '../domain/moveTable';
-import { color, space, text, mono, radius } from '../ui/theme';
+import { ACTIVE, color, space, text, mono, radius } from '../ui/theme';
 import { sharePercent } from '../domain/distribution';
 
 const SOURCE_LABEL: Record<MoveSource, string> = {
@@ -144,9 +144,12 @@ export function MoveTable({
 								fontSize: text.note,
 								padding: '2px 8px',
 								borderRadius: radius.small,
-								border: `1px solid ${on.has(s) ? color.accent : color.line}`,
-								background: on.has(s) ? color.accentSoft : 'transparent',
-								color: color.ink,
+								// The same "on" as the toolbar's — see `ACTIVE`. This used to
+								// be a tint and a hairline, which is not enough to answer
+								// "is this one on" at a glance.
+								border: `1px solid ${on.has(s) ? ACTIVE.border : color.line}`,
+								background: on.has(s) ? ACTIVE.background : 'transparent',
+								color: on.has(s) ? ACTIVE.color : color.ink,
 								cursor: 'pointer',
 							}}
 						>

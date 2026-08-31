@@ -668,6 +668,8 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 							<TrainingWheels
 								on={wheels.on}
 								onChange={wheels.setOn}
+								active={wheels.active}
+								onActiveChange={wheels.setActive}
 								notes={wheels.notes}
 								hasFocus={focus !== null}
 								working={wheels.working}

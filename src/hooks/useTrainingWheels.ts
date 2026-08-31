@@ -44,6 +44,16 @@ import { recall, remember } from '../data/viewState';
 export type TrainingWheelsState = {
 	on: ReadonlySet<Wheel>;
 	setOn: (next: Set<Wheel>) => void;
+	/**
+	 * Are the selected wheels being drawn?
+	 *
+	 * Separate from `on` because they answer different questions: `on` is which
+	 * overlays you train with, `active` is whether they are on the board right
+	 * now. Switching them off has to leave the selection alone, or the switch is
+	 * a destructive one and nobody will use it twice.
+	 */
+	active: boolean;
+	setActive: (next: boolean) => void;
 	/** Everything to draw, sync overlays and the mate search together. */
 	arrows: Shape[];
 	/** One line per active wheel, including the ones that found nothing. */
@@ -84,6 +94,16 @@ export function useTrainingWheels(fen: string | null, focus?: Square | null): Tr
 	const setOn = useCallback((next: Set<Wheel>) => {
 		setOnState(next);
 		remember({ wheels: [...next] });
+	}, []);
+
+	/** Whether the selected wheels are drawn at all. Persisted like the selection. */
+	const [active, setActiveState] = useState<boolean>(
+		() => recall('wheelsOff', (v) => typeof v === 'boolean') !== true,
+	);
+
+	const setActive = useCallback((next: boolean) => {
+		setActiveState(next);
+		remember({ wheelsOff: !next });
 	}, []);
 
 	const pos = useMemo(() => {
@@ -149,11 +169,33 @@ export function useTrainingWheels(fen: string | null, focus?: Square | null): Tr
 		};
 	}, [pos, on]);
 
+	/*
+	 * ONE SWITCH FOR ALL OF THEM, and it does not clear the selection.
+	 *
+	 * Will: "we need a way to toggle all the training wheels selected at once —
+	 * because currently the show visual annotation conflicts with the training
+	 * wheel visual annotation."
+	 *
+	 * That conflict is real and it is in the hosts: an overlay's arrows REPLACE
+	 * the hint arrows from "show options" and "show me the move" — see the
+	 * `wheels.arrows.length ? … : …` in Train and Mistakes. So a reader with the
+	 * mate wheel on could not see the engine's weighted options at all, and the
+	 * only way out was to untick every wheel and tick them all again afterwards.
+	 *
+	 * Suppressing rather than clearing is the whole point: `on` is what you are
+	 * learning with and survives, `active` is whether it is on the board this
+	 * minute. The same distinction the disclosure got wrong once already — a
+	 * disclosure is not a switch — except this time a switch is exactly what was
+	 * asked for, so it is one, and it is not the disclosure.
+	 */
 	return {
 		on,
 		setOn,
-		arrows: [...sync, ...(mate?.arrows ?? [])],
-		notes: [...syncNotes, ...(mate?.notes ?? [])],
-		working,
+		active,
+		setActive,
+		// Suppressed at the boundary, so no host can forget to check.
+		arrows: active ? [...sync, ...(mate?.arrows ?? [])] : [],
+		notes: active ? [...syncNotes, ...(mate?.notes ?? [])] : [],
+		working: active ? working : null,
 	};
 }

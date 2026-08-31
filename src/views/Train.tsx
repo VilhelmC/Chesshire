@@ -1576,6 +1576,8 @@ export function Train({
 						<TrainingWheels
 							on={wheels.on}
 							onChange={wheels.setOn}
+							active={wheels.active}
+							onActiveChange={wheels.setActive}
 							notes={wheels.notes}
 							hasFocus={focus !== null}
 							working={wheels.working}

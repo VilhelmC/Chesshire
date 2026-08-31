@@ -12,10 +12,19 @@
 // ---------------------------------------------------------------------------
 import { useState } from 'react';
 import { WHEELS, type Wheel } from '../domain/wheels';
+import { ACTIVE, color, radius, text, TOUCH } from '../ui/theme';
 
 export type TrainingWheelsProps = {
 	on: ReadonlySet<Wheel>;
 	onChange: (next: Set<Wheel>) => void;
+	/**
+	 * Are the selected overlays being drawn?
+	 *
+	 * Optional so a host that has no reason to suppress them need not care; the
+	 * three that draw hint arrows all do.
+	 */
+	active?: boolean;
+	onActiveChange?: (next: boolean) => void;
 	/** The fixed sentences for whatever is currently firing. */
 	notes?: string[];
 	/** Whether a man is selected, so the safe-move row can say it needs one. */
@@ -30,7 +39,15 @@ export type TrainingWheelsProps = {
 	working?: Wheel | null;
 };
 
-export function TrainingWheels({ on, onChange, notes = [], hasFocus = false, working = null }: TrainingWheelsProps) {
+export function TrainingWheels({
+	on,
+	onChange,
+	active = true,
+	onActiveChange,
+	notes = [],
+	hasFocus = false,
+	working = null,
+}: TrainingWheelsProps) {
 	/**
 	 * COLLAPSED BY DEFAULT, AND COLLAPSING CHANGES NOTHING ELSE.
 	 *
@@ -75,11 +92,60 @@ export function TrainingWheels({ on, onChange, notes = [], hasFocus = false, wor
 					  * and which they are.
 					  */}
 					{on.size > 0 ? (
-						<span className="wheel-note"> — {[...on].join(', ')} on</span>
+						<span className="wheel-note">
+							{' '}
+							{/* The labels, not the keys: the header said "deficient" while the
+							checkbox under it said "not worth attacking". */}
+						— {WHEELS.filter((w) => on.has(w.key))
+							.map((w) => w.label)
+							.join(', ')}{' '}
+						{active ? 'on' : 'selected, hidden'}
+						</span>
 					) : (
 						<span className="wheel-note"> — overlays for what is on the board</span>
 					)}
 				</button>
+
+				{/*
+				  * THE MASTER SWITCH, and it is not the disclosure.
+				  *
+				  * Will: "we need a way to toggle all the training wheels selected at
+				  * once — because currently the show visual annotation conflicts with
+				  * the training wheel visual annotation." An overlay's arrows replace
+				  * the ones from "show options", so seeing the engine's weighted moves
+				  * meant unticking every wheel and re-ticking them afterwards.
+				  *
+				  * It SUPPRESSES rather than clears — the selection is still there, and
+				  * the header says so — which is what makes it worth pressing twice.
+				  * Shown only once something is selected: a switch for nothing is a
+				  * control that has to be understood before it can be ignored.
+				  */}
+				{onActiveChange && on.size > 0 && (
+					<button
+						type="button"
+						onClick={() => onActiveChange(!active)}
+						aria-pressed={active}
+						title={
+							active
+								? 'Hide the overlays without losing which are selected — the board goes back to arrows from the buttons'
+								: 'Draw the selected overlays again'
+						}
+						style={{
+							marginLeft: 'auto',
+							fontSize: text.note,
+							padding: '2px 8px',
+							borderRadius: radius.small,
+							border: `1px solid ${active ? ACTIVE.border : color.line}`,
+							background: active ? ACTIVE.background : 'transparent',
+							color: active ? ACTIVE.color : color.ink,
+							cursor: 'pointer',
+							minHeight: TOUCH,
+							whiteSpace: 'nowrap',
+						}}
+					>
+						{active ? 'overlays on' : 'overlays off'}
+					</button>
+				)}
 			</div>
 
 			{showing &&
@@ -87,8 +153,8 @@ export function TrainingWheels({ on, onChange, notes = [], hasFocus = false, wor
 				// The safe-move row is the one that needs a selected man, and saying so
 				// on the row itself is better than drawing nothing and letting the
 				// reader conclude the overlay is broken.
-				const waiting = w.needsFocus && on.has(w.key) && !hasFocus;
-				const busy = working === w.key;
+				const waiting = active && w.needsFocus && on.has(w.key) && !hasFocus;
+				const busy = active && working === w.key;
 				return (
 					<label key={w.key} className={`wheel${waiting || busy ? ' waiting' : ''}`}>
 						<input type="checkbox" checked={on.has(w.key)} onChange={() => toggle(w.key)} />
