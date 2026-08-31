@@ -84,14 +84,50 @@ describe('the filters', () => {
 		expect(filterMoves(rows, new Set())).toHaveLength(3);
 	});
 
-	it('admits a row if ANY of its tags is on — the lists overlap', () => {
-		const on = new Set<MoveSource>(['line']);
+	it('one filter admits exactly its own tag', () => {
+		expect(filterMoves(rows, new Set<MoveSource>(['line'])).map((r) => r.san)).toEqual(['e4']);
+		expect(filterMoves(rows, new Set<MoveSource>(['engine'])).map((r) => r.san)).toEqual([
+			'e4',
+			'd4',
+		]);
+	});
+
+	it('TWO filters admit what both claim, not what either does', () => {
+		// The union would give e4 and d4 here: d4 is the engine's but is not in
+		// the line. Under the intersection the question is "what do the line and
+		// the engine agree on", and the answer is e4.
+		const on = new Set<MoveSource>(['line', 'engine']);
 		expect(filterMoves(rows, on).map((r) => r.san)).toEqual(['e4']);
 	});
 
-	it('shows a move once when two active filters both claim it', () => {
-		const on = new Set<MoveSource>(['line', 'engine']);
-		expect(filterMoves(rows, on).map((r) => r.san)).toEqual(['e4', 'd4']);
+	it('narrows with every filter added, never widens', () => {
+		const grow: MoveSource[] = ['engine', 'line', 'popular'];
+		const on = new Set<MoveSource>();
+		let last = filterMoves(rows, on).length;
+		for (const s of grow) {
+			on.add(s);
+			const now = filterMoves(rows, on).length;
+			expect(now).toBeLessThanOrEqual(last);
+			last = now;
+		}
+	});
+
+	it('admits nothing when the sources share no move, and that is an answer', () => {
+		// Nc3 is popular and nothing else; e4 is in the line and is not popular.
+		// An empty table here is the finding, not a fault — `MoveTable` says so
+		// in words rather than showing a bare "nothing to show".
+		const on = new Set<MoveSource>(['line', 'popular']);
+		expect(filterMoves(rows, on)).toEqual([]);
+	});
+
+	it('keeps a move that carries every tag', () => {
+		const all = mergeMoves({
+			line: [{ uci: 'e2e4', san: 'e4' }],
+			engine: [cand('e2e4', 'e4', 30)],
+			popular: [share('e2e4', 'e4', 90)],
+		});
+		const on = new Set<MoveSource>(['line', 'engine', 'popular']);
+		expect(filterMoves(all, on).map((r) => r.san)).toEqual(['e4']);
 	});
 });
 

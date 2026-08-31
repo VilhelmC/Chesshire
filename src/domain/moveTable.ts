@@ -135,10 +135,36 @@ export function withScores(rows: MoveRow[], scored: { uci: string; cp: number; l
 	});
 }
 
-/** The rows a set of active filters admits. Empty set means everything. */
+/**
+ * The rows a set of active filters admits — every one of them, not any.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "let's make the three show toggle buttons display the intersection
+ * instead of the union."
+ *
+ * The union answers "what has anybody got to say about this position", which is
+ * the question the buttons already answer one at a time. The intersection
+ * answers the one that needed three buttons to ask: WHICH MOVES DO TWO SOURCES
+ * AGREE ON. "In the line and popular" is the move theory and humans both back;
+ * "popular and the engine likes it" is the move you will actually meet that is
+ * also good. Those are readings. "In at least one of three lists" is not.
+ *
+ * It also makes the buttons subtractive, which is what a filter should be:
+ * every one you add narrows. Under the union each one widened, so pressing more
+ * buttons got you closer to "every legal move" — the thing the table exists to
+ * avoid.
+ *
+ * An empty set still means everything: no question asked, nothing filtered out.
+ * With ONE source active the two rules agree exactly, which is why this could
+ * change without anything else moving.
+ *
+ * THE COST IS AN EMPTY TABLE, and it is a real outcome rather than a fault —
+ * two sources can genuinely share no move. The caller says so in words; see
+ * `MoveTable`'s `empty`.
+ */
 export function filterMoves(rows: MoveRow[], on: ReadonlySet<MoveSource>): MoveRow[] {
 	if (!on.size) return rows;
-	return rows.filter((r) => r.sources.some((s) => on.has(s)));
+	return rows.filter((r) => [...on].every((s) => r.sources.includes(s)));
 }
 
 /**

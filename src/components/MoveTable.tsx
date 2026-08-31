@@ -27,7 +27,7 @@
 
 import { useState } from 'react';
 import { Move } from './Move';
-import { evalText, lossText, type MoveRow, type MoveSource } from '../domain/moveTable';
+import { evalText, filterMoves, lossText, type MoveRow, type MoveSource } from '../domain/moveTable';
 import { color, space, text, mono, radius } from '../ui/theme';
 import { sharePercent } from '../domain/distribution';
 
@@ -56,7 +56,14 @@ export type MoveTableProps = {
 	marked?: string;
 	/** Named so the region can be referred to. See `docs/REGIONS.md`. */
 	region?: string;
-	/** Said when the filters admit nothing. */
+	/**
+	 * Said when the filters admit nothing.
+	 *
+	 * Left undefined by default so the table can say something better: with an
+	 * intersection an empty result is a FINDING — these sources share no move —
+	 * and naming the sources is the whole of it. A host with a different story
+	 * can still override.
+	 */
 	empty?: string;
 	/**
 	 * How many rows before the tail is folded away.
@@ -87,7 +94,7 @@ export function MoveTable({
 	onAsk,
 	marked,
 	region = 'move-table',
-	empty = 'Nothing to show with these filters.',
+	empty,
 	limit = 10,
 	askedPopularity = false,
 }: MoveTableProps) {
@@ -96,7 +103,10 @@ export function MoveTable({
 	// the filter happens to admit — otherwise hiding the engine's pick silently
 	// re-bases every gap beneath it.
 	const best = rows.find((r) => r.cp !== null);
-	const admitted = on.size ? rows.filter((r) => r.sources.some((s) => on.has(s))) : rows;
+	// ONE FILTER, and it is the tested one. This had its own inline copy of the
+	// rule while `filterMoves` sat in the domain with tests on it — two answers
+	// to one question, and the shipped one was the untested one.
+	const admitted = filterMoves(rows, on);
 	const shown = all ? admitted : admitted.slice(0, limit);
 	const folded = admitted.length - shown.length;
 
@@ -157,7 +167,21 @@ export function MoveTable({
 			)}
 
 			{!shown.length ? (
-				<div style={{ fontSize: text.note, color: color.ink2 }}>{empty}</div>
+				/*
+				  * AN EMPTY TABLE IS AN ANSWER, so it says which answer.
+				  *
+				  * Under the union this could only happen with no rows at all. Under
+				  * the intersection it happens whenever two sources genuinely share no
+				  * move — which is worth knowing and is exactly what was asked — and a
+				  * bare "nothing to show" would read as the filter being broken. That
+				  * is the same failure as the button that answered silence.
+				  */
+				<div style={{ fontSize: text.note, color: color.ink2 }}>
+					{empty ??
+						(on.size > 1
+							? `No move is ${[...on].map((s2) => SOURCE_LABEL[s2]).join(' and ')} at once.`
+							: 'Nothing to show with these filters.')}
+				</div>
 			) : (
 				<div style={{ overflowX: 'auto' }}>
 					<table style={{ borderCollapse: 'collapse', fontSize: text.body, width: '100%' }}>
