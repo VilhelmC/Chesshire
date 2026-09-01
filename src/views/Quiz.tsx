@@ -331,6 +331,11 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	 * pushed last so it sits on top rather than being replaced.
 	 */
 	const tableArrows = useMemo(() => {
+		// NOT WHILE LOOKING BACK. The table is about the card's position; stepping
+		// back through the run-up puts a different board under it, and moves drawn
+		// there are not legal, let alone recommended. Same rule the board already
+		// applies to `interactive`, and the wheels to their own overlays.
+		if (!atCard) return [];
 		const graded = new Map((candidates ?? []).map((c) => [c.uci, c]));
 		const out = (tableOn.size ? filterMoves(moveRows, tableOn) : []).map((row) => {
 			const c = graded.get(row.uci);
@@ -348,7 +353,7 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 				brush: 'green',
 			});
 		return out;
-	}, [moveRows, tableOn, candidates, reveal, current]);
+	}, [moveRows, tableOn, candidates, reveal, current, atCard]);
 
 	/**
 	 * The move that produced the position being shown.

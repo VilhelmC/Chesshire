@@ -210,6 +210,13 @@ export function Train({
 	const [lossByPly, setLossByPly] = useState<Record<number, number>>({});
 	/** Evaluation after each ply, for the review page. */
 	const evalsRef = useRef<(number | null)[]>([]);
+	/**
+	 * The engine's top few for the position on the board.
+	 *
+	 * OWNED BY THE EFFECT that follows the `engine` tag — see `showOptions`.
+	 * Anything else writing it is a second owner, and a second owner is how the
+	 * tag and the arrows came to disagree.
+	 */
 	const [candidates, setCandidates] = useState<Candidate[] | null>(null);
 	const [botLevel, setBotLevel] = useState<number | 'auto'>('auto');
 	const [rating, setRating] = useState<Estimate>({ elo: null, acpl: null, sample: 0, confident: false });
@@ -263,7 +270,6 @@ export function Train({
 			setMistakePlies(new Set());
 			setLossByPly({});
 			evalsRef.current = [];
-			setCandidates(null);
 			const started = await startRun(cfg);
 			setState(started);
 			remember(started);
@@ -289,7 +295,6 @@ export function Train({
 			setFuture([]);
 			runId.current = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 			sawMistake.current = false;
-			setCandidates(null);
 			// Replaying reuses ply numbers with different moves, so anything keyed
 			// by ply alone is stale from here on.
 			setLossByPly({});
@@ -547,7 +552,6 @@ export function Train({
 	function previewAt(ply: number) {
 		if (busyRef.current || !state) return;
 		setHint([]);
-		setCandidates(null);
 		setPreviewPly((cur) => (cur === ply || ply === state.path.length ? null : ply));
 	}
 
@@ -612,24 +616,15 @@ export function Train({
 	 * Clicking the same square again clears it.
 	 */
 	const [focus, setFocus] = useState<number | null>(null);
-	async function showDistribution() {
+	/** Also just a tag. The explorer lookup follows the position — see below. */
+	function showDistribution() {
 		if (!state) return;
-		if (distribution) {
-			setDistribution(null);
-			setTableOn((cur) => {
-				const next = new Set(cur);
-				next.delete('popular');
-				return next;
-			});
-			return;
-		}
-		try {
-			const data = await fetchExplorer(state.fen);
-			setDistribution(distributionOf(data, colourOfFen(state.fen)));
-			setTableOn((cur) => new Set([...cur, 'popular' as MoveSource]));
-		} catch (e) {
-			setError((e as Error).message);
-		}
+		setTableOn((cur) => {
+			const next = new Set(cur);
+			if (next.has('popular')) next.delete('popular');
+			else next.add('popular');
+			return next;
+		});
 	}
 
 	/**
@@ -653,34 +648,32 @@ export function Train({
 	 * "Show me the move" stays disabled here, and correctly — there is no canon
 	 * move left to show. That is a different fact, and it keeps its own gate.
 	 */
-	async function showOptions() {
-		if (!state || busyRef.current || !canInspect) return;
-		if (tableOn.has('engine')) {
-			setTableOn((cur) => {
-				const next = new Set(cur);
-				next.delete('engine');
-				return next;
-			});
-			setHint([]);
-			return;
-		}
-		busyRef.current = true;
-		setBusy(true);
-		try {
-			const cands = await candidateMoves(state.fen, state.ourColour, 5);
-			setCandidates(cands);
-			setTableOn((cur) => new Set([...cur, 'engine' as MoveSource]));
-			if (yourTurn) {
-				missedThisItem.current = true;
-				assistedThisItem.current = true;
-				setStats((s) => ({ ...s, shown: s.shown + 1 }));
-			}
-		} catch (e) {
-			setError((e as Error).message);
-		} finally {
-			busyRef.current = false;
-			setBusy(false);
-		}
+	/*
+	 * A PRESS SWITCHES THE TAG. THE SEARCH FOLLOWS THE POSITION.
+	 *
+	 * Will: "after each move in train I have to untoggle and retoggle the show
+	 * best moves button for the arrows to display. If the button is toggled they
+	 * should always display even if the board is updated."
+	 *
+	 * The button used to fetch once and set a tag, so the tag outlived the
+	 * answer: `submitMove` clears `candidates` on a correct move while `tableOn`
+	 * keeps `engine`, and the result was a button that read ON with nothing
+	 * behind it. The explorer had the same fault the other way up — its rows were
+	 * never cleared, so they stayed on screen describing the PREVIOUS position,
+	 * which is worse, because it looks like an answer.
+	 *
+	 * So a tag is a STANDING REQUEST now: while it is on, an effect keeps its
+	 * data in step with the position on the board. Toggle state and what is drawn
+	 * cannot disagree, because one is derived from the other.
+	 */
+	function showOptions() {
+		if (!canInspect) return;
+		setTableOn((cur) => {
+			const next = new Set(cur);
+			if (next.has('engine')) next.delete('engine');
+			else next.add('engine');
+			return next;
+		});
 	}
 
 	/** Carry on against the engine from a won position. */
@@ -911,7 +904,10 @@ export function Train({
 			}));
 			if (out.correct) {
 				setHint([]);
-				setCandidates(null);
+				// `setCandidates(null)` used to be here. It is the effect's job now —
+				// this was the second owner of that state, and it is the one that
+				// produced the bug: it cleared the engine's picks while the `engine`
+				// tag stayed on, so the button read ON with nothing behind it.
 				remember(out.state);
 				const nextLosses =
 					out.cpLoss > 10 ? { ...lossByPly, [before.path.length + 1]: out.cpLoss } : lossByPly;
@@ -1034,6 +1030,54 @@ export function Train({
 	 * nothing supports. A row the engine never scored is drawn green: shown, but
 	 * making no claim about how good it is.
 	 */
+	/*
+	 * THE ENGINE'S PICKS, KEPT IN STEP WITH THE BOARD.
+	 *
+	 * Clearing first is the half that matters: without it the previous
+	 * position's five moves stay drawn for as long as the new search takes, on a
+	 * board where they are no longer legal. A blank table for a moment is honest;
+	 * a wrong one is not.
+	 */
+	const engineOn = tableOn.has('engine');
+	const liveFen = state?.fen ?? null;
+	const ourColour = state?.ourColour;
+
+	useEffect(() => {
+		setCandidates(null);
+		if (!engineOn || !liveFen || !ourColour) return;
+		let live = true;
+		void (async () => {
+			try {
+				const cands = await candidateMoves(liveFen, ourColour, 5);
+				if (live) setCandidates(cands);
+			} catch (e) {
+				if (live) setError((e as Error).message);
+			}
+		})();
+		return () => {
+			live = false;
+		};
+	}, [engineOn, liveFen, ourColour]);
+
+	/** What people play here, kept in step the same way. */
+	const popularOn = tableOn.has('popular');
+	useEffect(() => {
+		setDistribution(null);
+		if (!popularOn || !liveFen) return;
+		let live = true;
+		void (async () => {
+			try {
+				const data = await fetchExplorer(liveFen);
+				if (live) setDistribution(distributionOf(data, colourOfFen(liveFen)));
+			} catch (e) {
+				if (live) setError((e as Error).message);
+			}
+		})();
+		return () => {
+			live = false;
+		};
+	}, [popularOn, liveFen]);
+
 	const gradeByUci = useMemo(
 		() => new Map((candidates ?? []).map((c) => [c.uci, c])),
 		[candidates],
@@ -1065,6 +1109,25 @@ export function Train({
 	const yourTurn =
 		!!state && !state.finished && (state.expected.length > 0 || state.phase === 'freeplay');
 
+	/*
+	 * AND THE HELP IS STILL CHARGED FOR, once per position.
+	 *
+	 * The press used to do this, which was right when a press meant one answer.
+	 * Now the tag can stand for a whole run, so leaving it on is being shown the
+	 * engine's answer on every move — and a run where every answer was given
+	 * cannot count towards recall or towards the rating. Keyed on the position so
+	 * it is charged once, not once per re-render.
+	 */
+	const chargedFor = useRef<string | null>(null);
+	useEffect(() => {
+		if (!engineOn || !liveFen || !yourTurn) return;
+		if (chargedFor.current === liveFen) return;
+		chargedFor.current = liveFen;
+		missedThisItem.current = true;
+		assistedThisItem.current = true;
+		setStats((s) => ({ ...s, shown: s.shown + 1 }));
+	}, [engineOn, liveFen, yourTurn]);
+
 	/**
 	 * Is there a POSITION to ask the engine about — as opposed to a MOVE being
 	 * asked of you?
@@ -1089,7 +1152,6 @@ export function Train({
 			setHistory([]);
 			setFuture([]);
 			setFeedback(null);
-			setCandidates(null);
 			setLossByPly({});
 			// 'book': this is the trainer resuming, not the review page handing a
 			// position to the engine.
@@ -1731,7 +1793,15 @@ export function Train({
 				  * shipped. The three buttons are what request a source; before any of
 				  * them is pressed there is no question on the table.
 				  */}
-				{tableOn.size > 0 && moveRows.length > 0 && state && (
+				{/*
+				  * NOT WHILE LOOKING BACK. The table describes the live position, and
+				  * the board already hides its arrows while previewing — so showing
+				  * the rows would put a list of moves beside a board they are not
+				  * legal on. `previewAt` used to achieve this by clearing
+				  * `candidates`, which made it a second owner of state the effect now
+				  * holds; this says the same thing where it belongs.
+				  */}
+				{tableOn.size > 0 && moveRows.length > 0 && state && !previewing && (
 					<>
 						<h3 data-region="train-moves-head">Moves here</h3>
 						<MoveTable
