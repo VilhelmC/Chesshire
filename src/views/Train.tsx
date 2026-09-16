@@ -4,7 +4,7 @@
 // either continues into one of the variations you are training, or plays a real
 // mistake you have to notice and punish. Reset and they may choose differently.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	loadPractice,
 	savePractice,
@@ -33,7 +33,7 @@ import { applyUci, replayLine, parseSquare } from '../domain/chess';
 import { getToken, fetchExplorer } from '../data/explorer';
 import { distributionOf, type Distribution } from '../domain/distribution';
 import { MoveTable } from '../components/MoveTable';
-import { mergeMoves, filterMoves, type MoveSource } from '../domain/moveTable';
+import { mergeMoves, filterMoves, effectiveSources, type MoveSource } from '../domain/moveTable';
 import { ShareMenu, canShareNatively } from '../components/ShareMenu';
 import { LinePlayer, type BoardOverride } from '../components/LinePlayer';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
@@ -61,6 +61,8 @@ import { freeplayLosses, gameLosses } from '../domain/progress';
 import { fromGame, type Reviewable } from '../domain/reviewable';
 import { splitBySpeed } from '../domain/playedGames';
 import { db } from '../data/db';
+// Aliased: this file already has a `remember` — the one that stores the RUN.
+import { recall as recallView, remember as rememberView } from '../data/viewState';
 import { loadProgress } from '../data/progress';
 import { logAnswer, logRun } from '../data/progress';
 import { saveSession, loadSession, clearSession } from '../data/session';
@@ -458,59 +460,7 @@ export function Train({
 		});
 	}
 
-	/**
-	 * Show the moves the line allows — ALL of them — and then get out of the way.
-	 *
-	 * Will: "'show move' displays one arrow and executes the move. That's wrong
-	 * behaviour. Many openings have multiple acceptable line positions. The button
-	 * should show those options (one arrow for each) and then defer to user to
-	 * actually make any move they want."
-	 *
-	 * Two faults, and they are separate. The first is arithmetic: `expected` is an
-	 * ARRAY, and `book`/`free` strictness routinely put several moves in it (see
-	 * `domain/book.ts`'s `acceptable`), so drawing `expected[0]` claimed the line
-	 * had one continuation when it had three. The second is about who is playing:
-	 * the button then called `onMove` itself. Showing you the answer and answering
-	 * for you are different favours, and only the first was asked for — the move is
-	 * the part that builds the memory, so handing it over is the one thing help
-	 * should not do.
-	 *
-	 * It still counts as help. Seeing the moves is seeing the answer, whether or not
-	 * a hand moved the piece.
-	 */
-	function showMe() {
-		if (!state || busyRef.current || !state.expected.length) return;
-		// PRESSING IT AGAIN PUTS IT AWAY. A filter chip that only ever turns on is
-		// a one-way door, and the toolbar button is the same control as the chip.
-		if (tableOn.has('line')) {
-			setTableOn((cur) => {
-				const next = new Set(cur);
-				next.delete('line');
-				return next;
-			});
-			setHint([]);
-			return;
-		}
-		// Every acceptable move, not the first. Labelled when there is more than
-		// one, because three green arrows with no numbers reads as a single line
-		// with a fork in it rather than as three separate answers.
-		// NO ARROWS SET HERE. Switching the tag on is the whole action; the board
-		// follows the filter — see `tableArrows`. This used to push every book move
-		// into `hint`, which is what put thirty-six of them on the board at once
-		// and made the next button press wipe them.
-		// AND SWITCH ITS ROWS ON IN THE ONE TABLE. The button used to own a
-		// rendering; now it owns a filter tag, so "the line's moves" appear beside
-		// their evaluation and their popularity instead of in a list of their own.
-		setTableOn((cur) => new Set([...cur, 'line' as MoveSource]));
-		setStats((s) => ({ ...s, shown: s.shown + 1 }));
-		missedThisItem.current = true;
-		assistedThisItem.current = true;
-		// Deliberately no timeout and no clear. The arrows stay until the user
-		// moves — `onMove` clears them — because the whole point is that they get
-		// to choose, and a hint that vanishes after 550ms is a hint you have to
-		// race.
-	}
-
+	
 	/**
 	 * Step back to before your last move.
 	 *
@@ -580,7 +530,47 @@ export function Train({
 	 * longer each own a rendering — they fetch their source and switch its tag on.
 	 * Empty means everything that has been fetched.
 	 */
-	const [tableOn, setTableOn] = useState<ReadonlySet<MoveSource>>(() => new Set<MoveSource>());
+	/*
+	 * WHICH SOURCES THE TABLE ADMITS — remembered, and all three by default.
+	 *
+	 * Will: "which filters are active in the show table should be persisted.
+	 * Default is all three toggled (so the intersection of engine's top moves,
+	 * book moves, and actually played moves)."
+	 *
+	 * That default is a good first view precisely because it intersects: the
+	 * moves that are theory AND sound AND actually played are the ones with
+	 * nothing against them. When it comes back empty that is worth knowing too,
+	 * and the table says which sources disagreed.
+	 */
+	const [tableOn, setTableOnState] = useState<ReadonlySet<MoveSource>>(
+		() =>
+			new Set(
+				(recallView('tableOn', (v) => Array.isArray(v) && v.every((x) => typeof x === 'string')) ?? [
+					'line',
+					'engine',
+					'popular',
+				]).filter((k): k is MoveSource => k === 'line' || k === 'engine' || k === 'popular'),
+			),
+	);
+	const setTableOn = useCallback(
+		(next: ReadonlySet<MoveSource> | ((cur: ReadonlySet<MoveSource>) => ReadonlySet<MoveSource>)) => {
+			setTableOnState((cur) => {
+				const value = typeof next === 'function' ? next(cur) : next;
+				rememberView({ tableOn: [...value] });
+				return value;
+			});
+		},
+		[],
+	);
+
+	/** …and whether it is on screen at all. A separate fact — see `viewState`. */
+	const [tableShown, setTableShownState] = useState<boolean>(
+		() => recallView('tableShown', (v) => typeof v === 'boolean') === true,
+	);
+	const setTableShown = useCallback((next: boolean) => {
+		setTableShownState(next);
+		rememberView({ tableShown: next });
+	}, []);
 	const [sharing, setSharing] = useState(false);
 	/** A claim being demonstrated on the board rather than described in prose. */
 	const [explain, setExplain] = useState<{ line: Line; label: string } | null>(null);
@@ -616,17 +606,7 @@ export function Train({
 	 * Clicking the same square again clears it.
 	 */
 	const [focus, setFocus] = useState<number | null>(null);
-	/** Also just a tag. The explorer lookup follows the position — see below. */
-	function showDistribution() {
-		if (!state) return;
-		setTableOn((cur) => {
-			const next = new Set(cur);
-			if (next.has('popular')) next.delete('popular');
-			else next.add('popular');
-			return next;
-		});
-	}
-
+	
 	/**
 	 * Every legal move, weighted — and available after the line is over.
 	 *
@@ -648,34 +628,7 @@ export function Train({
 	 * "Show me the move" stays disabled here, and correctly — there is no canon
 	 * move left to show. That is a different fact, and it keeps its own gate.
 	 */
-	/*
-	 * A PRESS SWITCHES THE TAG. THE SEARCH FOLLOWS THE POSITION.
-	 *
-	 * Will: "after each move in train I have to untoggle and retoggle the show
-	 * best moves button for the arrows to display. If the button is toggled they
-	 * should always display even if the board is updated."
-	 *
-	 * The button used to fetch once and set a tag, so the tag outlived the
-	 * answer: `submitMove` clears `candidates` on a correct move while `tableOn`
-	 * keeps `engine`, and the result was a button that read ON with nothing
-	 * behind it. The explorer had the same fault the other way up — its rows were
-	 * never cleared, so they stayed on screen describing the PREVIOUS position,
-	 * which is worse, because it looks like an answer.
-	 *
-	 * So a tag is a STANDING REQUEST now: while it is on, an effect keeps its
-	 * data in step with the position on the board. Toggle state and what is drawn
-	 * cannot disagree, because one is derived from the other.
-	 */
-	function showOptions() {
-		if (!canInspect) return;
-		setTableOn((cur) => {
-			const next = new Set(cur);
-			if (next.has('engine')) next.delete('engine');
-			else next.add('engine');
-			return next;
-		});
-	}
-
+	
 	/** Carry on against the engine from a won position. */
 	async function continuePlaying() {
 		if (!state || busyRef.current) return;
@@ -1047,7 +1000,7 @@ export function Train({
 	 * board where they are no longer legal. A blank table for a moment is honest;
 	 * a wrong one is not.
 	 */
-	const engineOn = tableOn.has('engine');
+	const engineOn = tableShown && tableOn.has('engine');
 	const liveFen = state?.fen ?? null;
 	const ourColour = state?.ourColour;
 
@@ -1069,7 +1022,7 @@ export function Train({
 	}, [engineOn, liveFen, ourColour]);
 
 	/** What people play here, kept in step the same way. */
-	const popularOn = tableOn.has('popular');
+	const popularOn = tableShown && tableOn.has('popular');
 	useEffect(() => {
 		setDistribution(null);
 		if (!popularOn || !liveFen) return;
@@ -1093,8 +1046,10 @@ export function Train({
 	);
 
 	const tableArrows = useMemo<Arrow[]>(() => {
-		if (!tableOn.size) return [];
-		return filterMoves(moveRows, tableOn).map((row) => {
+		// HIDDEN TABLE, NO ARROWS. The chips are what say which source an arrow
+		// came from; drawn without them the board is coloured for no stated reason.
+		if (!tableShown || !tableOn.size) return [];
+		return filterMoves(moveRows, effectiveSources(moveRows, tableOn)).map((row) => {
 			const c = gradeByUci.get(row.uci);
 			return c
 				? {
@@ -1103,7 +1058,7 @@ export function Train({
 					}
 				: arrowFor(row.uci, 'green');
 		});
-	}, [moveRows, tableOn, gradeByUci]);
+	}, [tableShown, moveRows, tableOn, gradeByUci]);
 
 	const shownLastMove: [string, string] | undefined = lineOverlay.board
 		? lineOverlay.board.lastMove
@@ -1127,15 +1082,47 @@ export function Train({
 	 * cannot count towards recall or towards the rating. Keyed on the position so
 	 * it is charged once, not once per re-render.
 	 */
+	/*
+	 * ONE RULE: IF IT IS ON SCREEN WHILE YOU ARE BEING ASKED, IT IS HELP.
+	 *
+	 * Will: "any of the show options (played, book, engine) should mark the
+	 * user's move as assisted, so should any training wheel displayed."
+	 *
+	 * He is right, and what was here was worse than inconsistent — it was three
+	 * different rules that between them let most assistance through:
+	 *
+	 *   book     charged ONCE, on the press. Leave the tag on and every later
+	 *            answer was free.
+	 *   engine   charged per position (correct, and the only one that was).
+	 *   played   never charged at all.
+	 *   wheels   never charged at all — and the mate wheel draws the forced mate,
+	 *            which is more of an answer than any table row.
+	 *
+	 * So: anything DISPLAYED about this position while a move is being asked of
+	 * you is assistance, whatever produced it. Charged once per position, because
+	 * these are standing settings and the question is asked once per position.
+	 *
+	 * The wheels' master switch does the right thing for free: `active` is false
+	 * when they are selected but hidden, and hidden overlays tell you nothing.
+	 *
+	 * A CONSEQUENCE WORTH STATING: train with the wheels permanently on and no
+	 * move is ever counted — not towards recall, not towards the rating. That is
+	 * the honest reading of a run where you were shown the answer every time, and
+	 * it is why the estimate says what it is measured on.
+	 */
+	const assisting =
+		yourTurn &&
+		((tableShown && tableOn.size > 0) || (wheels.active && wheels.on.size > 0));
+
 	const chargedFor = useRef<string | null>(null);
 	useEffect(() => {
-		if (!engineOn || !liveFen || !yourTurn) return;
+		if (!assisting || !liveFen) return;
 		if (chargedFor.current === liveFen) return;
 		chargedFor.current = liveFen;
 		missedThisItem.current = true;
 		assistedThisItem.current = true;
 		setStats((s) => ({ ...s, shown: s.shown + 1 }));
-	}, [engineOn, liveFen, yourTurn]);
+	}, [assisting, liveFen]);
 
 	/**
 	 * Is there a POSITION to ask the engine about — as opposed to a MOVE being
@@ -1257,40 +1244,25 @@ export function Train({
 				disabled: busy || !state?.deviationPoint,
 			},
 			{
-				id: 'reveal',
-				// It no longer plays the move — it draws every move the line allows and
-				// leaves the board to you.
-				title:
-					(state?.expected.length ?? 0) > 1
-						? `Show the ${state!.expected.length} moves the line allows — you still play`
-						: 'Show the move the line allows — you still play',
-				icon: 'reveal',
-				// ACCENT FOLLOWS THE TABLE. The buttons switch a tag on now rather than
-				// owning a rendering, so a button that looks the same whether its rows
-				// are showing or not is lying about what pressing it did.
-				accent: tableOn.has('line'),
-				onClick: showMe,
-				disabled: !yourTurn || busy || state?.phase === 'freeplay',
-			},
-			{
+				/*
+				 * ONE BUTTON WHERE THERE WERE THREE.
+				 *
+				 * Will: "labels are not intuitive and icons too similar… possibly
+				 * these three options are moved to the move table (they are all
+				 * filters of the same table) and there is only one button to show
+				 * the table."
+				 *
+				 * They were three buttons for three filters over one table, which is
+				 * why their icons had to be abstract enough to be confusable. The
+				 * filters live in the table now, labelled in words — book, engine,
+				 * played — and this says only whether the table is up.
+				 */
 				id: 'options',
-				// NOT gated on `yourTurn`. A finished line is still a position, and the
-				// engine has as much to say about it as about any other.
-				title: yourTurn
-					? 'Show every option, weighted by how good it is (stops this move counting)'
-					: 'Show every option, weighted by how good it is',
+				title: tableShown ? 'Hide the moves table' : 'Show the moves here — book, engine and what people play',
 				icon: 'options',
-				accent: tableOn.has('engine'),
-				onClick: showOptions,
+				accent: tableShown,
+				onClick: () => setTableShown(!tableShown),
 				disabled: !canInspect || busy,
-			},
-			{
-				id: 'stats',
-				title: 'What players at your rating actually play here — frequency and score',
-				icon: 'stats',
-				onClick: showDistribution,
-				accent: tableOn.has('popular'),
-				disabled: !state || busy,
 			},
 			{
 				id: 'share',
@@ -1810,7 +1782,7 @@ export function Train({
 				  * `candidates`, which made it a second owner of state the effect now
 				  * holds; this says the same thing where it belongs.
 				  */}
-				{tableOn.size > 0 && moveRows.length > 0 && state && !previewing && (
+				{tableShown && moveRows.length > 0 && state && !previewing && (
 					<>
 						<h3 data-region="train-moves-head">Moves here</h3>
 						<MoveTable
@@ -1943,7 +1915,7 @@ export function Train({
 					</label>
 				)}
 
-				<h3>Where from</h3>
+				<h3>Training repertoire</h3>
 				{practice.roots.length === 0 ? (
 					<p style={{ fontSize: 13, opacity: 0.7, margin: '0 0 8px' }}>
 						Starting from move 1, whole tree. Whatever you play decides the opening.

@@ -54,6 +54,16 @@ export type ViewState = {
 	 * currently have.
 	 */
 	wheelsOff?: boolean;
+	/**
+	 * The move table: whether it is up, and which sources it admits.
+	 *
+	 * Two fields because they are two facts. `tableOn.size > 0` used to mean both
+	 * "the table is showing" and "these filters are active", so turning the last
+	 * chip off made the whole table vanish — which reads as a broken filter
+	 * rather than as an empty one.
+	 */
+	tableShown?: boolean;
+	tableOn?: string[];
 };
 
 /**

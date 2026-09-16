@@ -27,21 +27,46 @@
 
 import { useState } from 'react';
 import { Move } from './Move';
-import { evalText, filterMoves, lossText, type MoveRow, type MoveSource } from '../domain/moveTable';
+import {
+	availableSources,
+	effectiveSources,
+	evalText,
+	filterMoves,
+	lossText,
+	nothingAsked,
+	type MoveRow,
+	type MoveSource,
+} from '../domain/moveTable';
 import { ACTIVE, color, space, text, mono, radius } from '../ui/theme';
 import { sharePercent } from '../domain/distribution';
 
+/*
+ * THE WORD IS THE SAME EVERYWHERE IT APPEARS.
+ *
+ * Will: "labels are not intuitive and icons too similar… change 'show' to
+ * 'book' since it displays the book moves."
+ *
+ * "book" is the app's own word — the tagline is "drills what happens when the
+ * book runs out", the strictness options say "book move", the run has a book
+ * phase — and "the line" was a second name for it. The deeper fault was that
+ * the toolbar button and the table chip were one control under two names, which
+ * is why one of them always read as unintuitive.
+ *
+ * `engine` over `stockfish`: the explainer already says "the engine's line", and
+ * naming the implementation would be a second name again. `played` over "stats"
+ * or "frequent" — it says whose fact it is, which is what the other two do.
+ */
 const SOURCE_LABEL: Record<MoveSource, string> = {
-	line: 'the line',
-	popular: 'played here',
+	line: 'book',
+	popular: 'played',
 	engine: 'engine',
 };
 
 /** What each tag means, said once, so the chips do not have to be guessed at. */
 const SOURCE_TITLE: Record<MoveSource, string> = {
-	line: 'A move the opening line allows',
-	popular: 'Played here in real games — the explorer',
-	engine: "Among Stockfish's own top moves",
+	line: 'Theory: a move your repertoire allows here',
+	popular: 'Played here in real games — the Lichess explorer',
+	engine: "Among Stockfish's own top moves for this position",
 };
 
 export type MoveTableProps = {
@@ -103,16 +128,18 @@ export function MoveTable({
 	// the filter happens to admit — otherwise hiding the engine's pick silently
 	// re-bases every gap beneath it.
 	const best = rows.find((r) => r.cp !== null);
+	const available = availableSources(rows);
 	// ONE FILTER, and it is the tested one. This had its own inline copy of the
 	// rule while `filterMoves` sat in the domain with tests on it — two answers
 	// to one question, and the shipped one was the untested one.
-	const admitted = filterMoves(rows, on);
+	// A SOURCE THAT IS NOT HERE DOES NOT GET A VETO — see `effectiveSources`.
+	// The board filters by the same rule, which is why it is in the domain.
+	const effective = effectiveSources(rows, on);
+	const absent = nothingAsked(rows, on);
+	const admitted = absent ? [] : filterMoves(rows, effective);
 	const shown = all ? admitted : admitted.slice(0, limit);
 	const folded = admitted.length - shown.length;
 
-	// A source with no rows at all is a chip nobody can usefully press.
-	const available = new Set<MoveSource>();
-	for (const r of rows) for (const s of r.sources) available.add(s);
 	// A column nobody has data for is a column of blanks with a heading, which
 	// reads as missing data rather than as a question not asked.
 	const anyPopularity = rows.some((r) => r.share !== null);
@@ -181,9 +208,11 @@ export function MoveTable({
 				  */
 				<div style={{ fontSize: text.note, color: color.ink2 }}>
 					{empty ??
-						(on.size > 1
-							? `No move is ${[...on].map((s2) => SOURCE_LABEL[s2]).join(' and ')} at once.`
-							: 'Nothing to show with these filters.')}
+						(absent
+							? `Nothing here is ${[...on].map((s2) => SOURCE_LABEL[s2]).join(' or ')}.`
+							: effective.size > 1
+								? `No move is ${[...effective].map((s2) => SOURCE_LABEL[s2]).join(' and ')} at once.`
+								: 'Nothing to show with these filters.')}
 				</div>
 			) : (
 				<div style={{ overflowX: 'auto' }}>

@@ -174,32 +174,37 @@ export default function App() {
 				</TabButton>
 			</nav>
 
-			{tab === 'train' && (
-				<Train
-					handoff={handoff}
-					onHandoffUsed={() => setHandoff(null)}
-					onNeedsToken={() => setTab('settings')}
-				/>
-			)}
-			{tab === 'quiz' && <Quiz key={dataVersion} onOpenSettings={() => setTab('settings')} />}
+			{/* NAMED SO THE SECTIONS CAN BE SEPARATED. Every tab is one long
+				column of headed sections, and nothing but whitespace divided them —
+				see `.tab-body * + h3` in index.css. */}
+			<main className="tab-body">
+				{tab === 'train' && (
+					<Train
+						handoff={handoff}
+						onHandoffUsed={() => setHandoff(null)}
+						onNeedsToken={() => setTab('settings')}
+					/>
+				)}
+				{tab === 'quiz' && <Quiz key={dataVersion} onOpenSettings={() => setTab('settings')} />}
 
-			{tab === 'review' && (
-				<Review
-					key={dataVersion}
-					onPlayFrom={(h) => {
-						setHandoff(h);
-						setTab('train');
-					}}
-				/>
-			)}
+				{tab === 'review' && (
+					<Review
+						key={dataVersion}
+						onPlayFrom={(h) => {
+							setHandoff(h);
+							setTab('train');
+						}}
+					/>
+				)}
 
-			{/* Progress keeps its way in, but as a shortcut to a tab that exists
-				rather than as the only door to a hidden screen. */}
-			{tab === 'progress' && <Progress onOpenReview={() => setTab('review')} />}
+				{/* Progress keeps its way in, but as a shortcut to a tab that exists
+					rather than as the only door to a hidden screen. */}
+				{tab === 'progress' && <Progress onOpenReview={() => setTab('review')} />}
 
-			{tab === 'lab' && <Lab />}
+				{tab === 'lab' && <Lab />}
 
-			{tab === 'settings' && <Settings onImported={() => setDataVersion((v) => v + 1)} />}
+				{tab === 'settings' && <Settings onImported={() => setDataVersion((v) => v + 1)} />}
+			</main>
 
 			<Footer />
 

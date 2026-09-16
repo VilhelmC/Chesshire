@@ -31,7 +31,7 @@ import { useCommentary } from '../hooks/useCommentary';
 import { Commentary } from '../components/CommentaryPanel';
 import { MoveList, MoveListLegend } from '../components/MoveList';
 import { MoveTable } from '../components/MoveTable';
-import { mergeMoves, filterMoves, type MoveSource } from '../domain/moveTable';
+import { mergeMoves, filterMoves, effectiveSources, type MoveSource } from '../domain/moveTable';
 import { distributionOf, type Distribution } from '../domain/distribution';
 import { fetchExplorer } from '../data/explorer';
 import { colourOfFen } from '../domain/notation';
@@ -216,10 +216,9 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		try {
 			setCandidates(await candidateMoves(current.fen, current.ourColour, 5));
 			tag('engine', true);
-			// Using help means the answer no longer counts, exactly as in the trainer
-			// — but it does not mean the answer has been SHOWN. Weighted options are a
-			// hint; the solution is still a separate thing to ask for.
-			setHelped(true);
+			// `setHelped` is not called here: the effect above owns it, for every
+			// source alike. Showing options is still a HINT rather than the answer —
+			// `reveal` remains a separate fact, and the button for it stays.
 		} catch (e) {
 			setFeedback({ ok: false, text: (e as Error).message });
 		} finally {
@@ -331,6 +330,24 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	 * claim nothing supports. The card's answer keeps its plain green, and is
 	 * pushed last so it sits on top rather than being replaced.
 	 */
+	/*
+	 * THE SAME RULE AS TRAIN'S: if it is on screen while the card is being
+	 * answered, it is help.
+	 *
+	 * Will: "I think this has been applied incorrectly in mistakes as well." It
+	 * was. `showOptions` and reveal set `helped`; the explorer never did, and the
+	 * training wheels never did in any view — and the mate wheel draws the forced
+	 * mate, which is more of an answer than a table of evaluations.
+	 *
+	 * An effect rather than a line inside each button, so a source that gets added
+	 * later cannot forget to say it helped.
+	 */
+	useEffect(() => {
+		if (!current) return;
+		const showing = (tableOn.size > 0 && candidates !== null) || (wheels.active && wheels.on.size > 0);
+		if (showing) setHelped(true);
+	}, [current, tableOn, candidates, wheels.active, wheels.on]);
+
 	const tableArrows = useMemo(() => {
 		// NOT WHILE LOOKING BACK. The table is about the card's position; stepping
 		// back through the run-up puts a different board under it, and moves drawn
@@ -338,7 +355,7 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		// applies to `interactive`, and the wheels to their own overlays.
 		if (!atCard) return [];
 		const graded = new Map((candidates ?? []).map((c) => [c.uci, c]));
-		const out = (tableOn.size ? filterMoves(moveRows, tableOn) : []).map((row) => {
+		const out = (tableOn.size ? filterMoves(moveRows, effectiveSources(moveRows, tableOn)) : []).map((row) => {
 			const c = graded.get(row.uci);
 			return {
 				orig: row.uci.slice(0, 2),

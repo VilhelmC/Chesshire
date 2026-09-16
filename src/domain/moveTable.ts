@@ -136,6 +136,48 @@ export function withScores(rows: MoveRow[], scored: { uci: string; cp: number; l
 }
 
 /**
+ * The sources that are actually represented in these rows.
+ *
+ * A chip with no rows behind it is not a filter anyone can use, and — the part
+ * that caught me out — it must not be allowed to VETO either. The default is
+ * all three tags on, so out of book the intersection was empty however well the
+ * engine and the explorer agreed: there is no book in a position with no book.
+ * And the book chip is not drawn when it has no rows, so nothing on screen said
+ * why the table was empty.
+ */
+export function availableSources(rows: readonly MoveRow[]): Set<MoveSource> {
+	const out = new Set<MoveSource>();
+	for (const r of rows) for (const s of r.sources) out.add(s);
+	return out;
+}
+
+/**
+ * The filters that will actually be applied: the active ones that are here.
+ *
+ * In the domain rather than in the table, because the BOARD filters by the same
+ * rule — the arrows are derived from the admitted rows — and the last time this
+ * rule lived in two places the two disagreed. One definition, two readers.
+ */
+export function effectiveSources(
+	rows: readonly MoveRow[],
+	on: ReadonlySet<MoveSource>,
+): Set<MoveSource> {
+	const available = availableSources(rows);
+	return new Set([...on].filter((s) => available.has(s)));
+}
+
+/**
+ * Asked for something, and none of it is here.
+ *
+ * Distinct from "no filters", which means everything, and from "these sources
+ * share no move", which is a disagreement. This one is an absence, and it gets
+ * its own sentence.
+ */
+export function nothingAsked(rows: readonly MoveRow[], on: ReadonlySet<MoveSource>): boolean {
+	return on.size > 0 && effectiveSources(rows, on).size === 0;
+}
+
+/**
  * The rows a set of active filters admits — every one of them, not any.
  *
  * ---------------------------------------------------------------------------

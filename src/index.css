@@ -256,3 +256,20 @@ body {
 .wheels-toggle strong {
 	color: var(--ink);
 }
+
+/*
+ * A RULE BETWEEN SECTIONS.
+ *
+ * Will: "add horizontal dividers between preference sections for better
+ * readability — page is one long column now… that goes for all tabs."
+ *
+ * `* + h3` rather than every h3: a heading that OPENS a container starts it and
+ * needs no line above it, which is why this leaves the first heading of a panel
+ * alone — Progress's bordered sections already have an edge of their own, and a
+ * second one immediately inside would read as a mistake.
+ */
+.tab-body * + h3 {
+	border-top: 1px solid var(--line);
+	padding-top: 1.1rem;
+	margin-top: 1.6rem;
+}
