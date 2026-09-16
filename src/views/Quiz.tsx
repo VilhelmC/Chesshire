@@ -294,7 +294,8 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	// stepping back through the run-up left the wheels describing a position that
 	// was no longer on screen. The borrowed line is excluded on purpose — while it
 	// is up the explainer owns the arrows.
-	const wheels = useTrainingWheels(boardFen ?? current?.fen ?? null, focus);
+	// Same settled flag as Train's, for the same reason — see `useTrainingWheels`.
+	const wheels = useTrainingWheels(boardFen ?? current?.fen ?? null, focus, !busy);
 	// Follows the board, borrowed line included — see Train.
 	const commentaryFen = lineOverlay.board?.fen ?? boardFen ?? current?.fen ?? null;
 	const commentary = useCommentary(

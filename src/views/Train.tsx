@@ -972,7 +972,16 @@ export function Train({
 	// `explaining` is deliberately excluded: while a line is being walked the
 	// explainer owns the arrows anyway, and recomputing the wheels for each ply of
 	// somebody else's line is work nobody asked for.
-	const wheels = useTrainingWheels(shown?.fen ?? preview?.fen ?? state?.fen ?? null, focus);
+	// `!busy` IS THE SETTLED FLAG. It is true from the drop until the reply has
+	// landed, which is exactly the window in which `preview` is showing a position
+	// that is about to be replaced — and exactly the window chessground needs for
+	// its animation. See `useTrainingWheels`: the mate search costs 250–660ms of
+	// blocked main thread, and it was running inside that window, twice.
+	const wheels = useTrainingWheels(
+		shown?.fen ?? preview?.fen ?? state?.fen ?? null,
+		focus,
+		!busy,
+	);
 	// COMMENTARY FOLLOWS THE BOARD, including into a borrowed line: the panel
 	// and the position under it must never be about different things. The move
 	// is passed too, because a page is written about the moves LEAVING a

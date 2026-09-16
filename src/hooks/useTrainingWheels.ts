@@ -62,7 +62,44 @@ export type TrainingWheelsState = {
 	working: Wheel | null;
 };
 
-export function useTrainingWheels(fen: string | null, focus?: Square | null): TrainingWheelsState {
+/**
+ * @param settled  False while the board is mid-move. Defaults to true, so a
+ *                 host with no such notion — the Lab, on a static puzzle ply —
+ *                 need not care.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY A HOST HAS TO SAY.
+ *
+ * Will: "moving a piece doesn't move it — first a waiting period before the
+ * piece is actually moved. We have to look at the sequencing of calculations
+ * triggered by a submitted move and make sure the animation has priority."
+ *
+ * Measured, because the guess was wrong twice. The four synchronous overlays
+ * cost 4–8ms together and are not the problem. THE MATE WHEEL IS: a df-pn
+ * search, asked for both sides, **250–660ms of blocked main thread per
+ * position** on real positions from this app.
+ *
+ * And it ran TWICE PER MOVE. Train puts the move on the board optimistically —
+ * `preview` — before the engine is asked for a reply, so the fen changes once
+ * on the drop and again when the reply lands. Each change started a search. So
+ * dropping a piece bought half a second to a second and a third of frozen main
+ * thread, beginning at the exact moment chessground wanted its animation
+ * frames. The animation is driven by requestAnimationFrame; a blocked thread
+ * starves it, and a starved animation is a piece that does not move.
+ *
+ * `setTimeout(…, 0)` was already there to let the checkbox paint, and it is not
+ * enough: a zero-delay macrotask still runs before the browser has painted, and
+ * nothing stops it landing in the middle of an animation.
+ *
+ * So the search waits for the position to SETTLE, and then for a frame. The
+ * transient preview is never searched at all — it is about to be replaced, and
+ * searching it was pure waste on the critical path.
+ */
+export function useTrainingWheels(
+	fen: string | null,
+	focus?: Square | null,
+	settled = true,
+): TrainingWheelsState {
 	/*
 	 * THE TOGGLES OUTLIVE THE PAGE.
 	 *
@@ -118,8 +155,19 @@ export function useTrainingWheels(fen: string | null, focus?: Square | null): Tr
 	// Four of the five wheels are pure board computations — the most expensive is
 	// a few milliseconds — so they memoise on the position and the focused man and
 	// need no engine, no cache and no loading state.
-	const sync = useMemo(() => (pos && on.size ? wheelShapes(pos, on, focus) : []), [pos, on, focus]);
-	const syncNotes = useMemo(() => (pos && on.size ? wheelNotes(pos, on, focus) : []), [pos, on, focus]);
+	//
+	// GATED ON `active`, not merely hidden by it. The master switch used to
+	// suppress the OUTPUT at the return below while every overlay still ran —
+	// which is a switch that saves the reader from looking at the work but not
+	// from waiting for it.
+	const sync = useMemo(
+		() => (pos && active && on.size ? wheelShapes(pos, on, focus) : []),
+		[pos, active, on, focus],
+	);
+	const syncNotes = useMemo(
+		() => (pos && active && on.size ? wheelNotes(pos, on, focus) : []),
+		[pos, active, on, focus],
+	);
 
 	/**
 	 * MATE IS THE EXCEPTION and gets its own effect.
@@ -137,37 +185,60 @@ export function useTrainingWheels(fen: string | null, focus?: Square | null): Tr
 	const [working, setWorking] = useState<Wheel | null>(null);
 
 	useEffect(() => {
-		if (!pos || !on.has('mate')) {
-			setMate(null);
+		// The result belongs to a position. The moment the position changes it is
+		// wrong, so it goes — before anything is recomputed, and whether or not a
+		// new search is about to start.
+		setMate(null);
+		if (!pos || !active || !on.has('mate')) {
 			setWorking(null);
 			return;
 		}
+		// NOT WHILE THE BOARD IS MOVING. This is the whole fix: the search does not
+		// begin on the optimistic preview, only on the position the move settles
+		// into, so there is one search per move instead of two and none of it lands
+		// while a piece is in flight.
+		if (!settled) {
+			setWorking(null);
+			return;
+		}
+
 		let cancelled = false;
 		setWorking('mate');
-		// A macrotask, so the checkbox and the working state paint before the
-		// search takes the thread. Not concurrency — the minimum needed for the UI
-		// to be honest about what it is doing.
-		const id = setTimeout(() => {
-			let found: ReturnType<typeof matesBothWays> = { deliver: null, threat: null };
-			try {
-				found = matesBothWays(pos);
-			} catch {
-				found = { deliver: null, threat: null };
-			}
-			if (cancelled) return;
-			// Set EITHER WAY. A ticked wheel that says nothing when it finds nothing
-			// is indistinguishable from one that is broken.
-			setMate({
-				arrows: matesArrows(found),
-				notes: mateNotes(found, pos.turn, nullMove(pos) !== null),
-			});
-			setWorking(null);
-		}, 0);
+
+		// A FRAME FIRST, THEN THE THREAD.
+		//
+		// `requestAnimationFrame` puts us after the browser's next paint rather
+		// than merely after the current task, which is what `setTimeout(…, 0)`
+		// bought and why it was not enough. The nested timeout yields once more so
+		// the frame we waited for is actually presented before a search that can
+		// hold the thread for half a second begins.
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const frame = requestAnimationFrame(() => {
+			timer = setTimeout(() => {
+				if (cancelled) return;
+				let found: ReturnType<typeof matesBothWays> = { deliver: null, threat: null };
+				try {
+					found = matesBothWays(pos);
+				} catch {
+					found = { deliver: null, threat: null };
+				}
+				if (cancelled) return;
+				// Set EITHER WAY. A ticked wheel that says nothing when it finds
+				// nothing is indistinguishable from one that is broken.
+				setMate({
+					arrows: matesArrows(found),
+					notes: mateNotes(found, pos.turn, nullMove(pos) !== null),
+				});
+				setWorking(null);
+			}, 0);
+		});
+
 		return () => {
 			cancelled = true;
-			clearTimeout(id);
+			cancelAnimationFrame(frame);
+			if (timer !== undefined) clearTimeout(timer);
 		};
-	}, [pos, on]);
+	}, [pos, active, on, settled]);
 
 	/*
 	 * ONE SWITCH FOR ALL OF THEM, and it does not clear the selection.
