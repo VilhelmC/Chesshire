@@ -1258,8 +1258,23 @@ export function Train({
 				 * played — and this says only whether the table is up.
 				 */
 				id: 'options',
-				title: tableShown ? 'Hide the moves table' : 'Show the moves here — book, engine and what people play',
-				icon: 'options',
+				/*
+				 * THE EYE, AND "SHOW MOVES", as it was before.
+				 *
+				 * Will: "the toggle moves button should have the eye icon and be
+				 * called 'show moves' like before. It shows the arrows on the board
+				 * and toggles the table, but the arrows are obviously the most
+				 * important thing."
+				 *
+				 * Right — the table is where the filters live, but what the button
+				 * DOES, from the board's point of view, is draw the moves on it. The
+				 * icon should name the effect you are looking at, not the panel that
+				 * happens to carry the controls.
+				 */
+				title: tableShown
+					? 'Hide the moves — arrows and table'
+					: 'Show the moves on the board — book, engine and what people play',
+				icon: 'reveal',
 				accent: tableShown,
 				onClick: () => setTableShown(!tableShown),
 				disabled: !canInspect || busy,
@@ -1782,13 +1797,20 @@ export function Train({
 				  * `candidates`, which made it a second owner of state the effect now
 				  * holds; this says the same thing where it belongs.
 				  */}
-				{tableShown && moveRows.length > 0 && state && !previewing && (
+				{/* NOT GATED ON HAVING ROWS. Turn every source off and there are no
+					rows — and the table carrying the chips would unmount, taking the
+					only way back with it. Same fault as the vanishing chip, one level
+					up. An empty table says it is empty; it does not disappear. */}
+				{tableShown && state && !previewing && (
 					<>
 						<h3 data-region="train-moves-head">Moves here</h3>
 						<MoveTable
 							rows={moveRows}
 							mover={colourOfFen(state.fen)}
 							on={tableOn}
+							// All three, always — a chip is how you switch a source back on,
+							// so it cannot be allowed to vanish with the source's rows.
+							offers={['line', 'engine', 'popular']}
 							onToggle={(src) =>
 								setTableOn((cur) => {
 									const next = new Set(cur);

@@ -42,7 +42,7 @@ const CAPTION: Record<ToolbarAction['icon'], string> = {
 	forward: 'forward',
 	branch: 'retry',
 	mistake: 'mistake',
-	reveal: 'show',
+	reveal: 'show moves',
 	playon: 'play on',
 	options: 'options',
 	stats: 'played',

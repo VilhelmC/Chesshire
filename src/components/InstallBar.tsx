@@ -95,8 +95,13 @@ function Action({
 			style={{
 				padding: '6px 12px',
 				borderRadius: 6,
-				border: '1px solid #ccc',
-				background: quiet ? 'transparent' : '#fff',
+				// TOKENS, NOT HEX. This was `#fff` with no colour of its own, so in
+				// dark mode it painted a white button and let the strip's light text
+				// sit on top of it — Will: "the install button is white text on white
+				// background." A leftover from before the theme existed.
+				border: `1px solid ${color.line}`,
+				background: quiet ? 'transparent' : color.surface,
+				color: color.ink,
 				cursor: 'pointer',
 				fontSize: 14,
 				// Touch targets below about 40px are missed often enough to be

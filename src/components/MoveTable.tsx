@@ -109,6 +109,21 @@ export type MoveTableProps = {
 	 * this says what came back.
 	 */
 	askedPopularity?: boolean;
+	/**
+	 * Which sources this host can offer at all.
+	 *
+	 * SEPARATE FROM WHICH ONES HAVE ROWS, and the distinction turned out to
+	 * matter. A chip used to be drawn only when its source had rows, which was
+	 * right while a chip was purely a filter. It stopped being right the moment
+	 * the tags became standing requests: turning `engine` off stops the search,
+	 * the engine rows go, and the chip that was the only way back goes with them.
+	 * Will: "when untoggled they disappear and cannot be retoggled."
+	 *
+	 * So the host says what it can offer and the chips stay put. Defaults to the
+	 * sources present in the rows, which is right for a host that only displays
+	 * what it was handed — the explainer's single-source table.
+	 */
+	offers?: readonly MoveSource[];
 };
 
 export function MoveTable({
@@ -122,6 +137,7 @@ export function MoveTable({
 	empty,
 	limit = 10,
 	askedPopularity = false,
+	offers,
 }: MoveTableProps) {
 	const [all, setAll] = useState(false);
 	// The best row for the loss column is the best row OVERALL, not the best one
@@ -129,6 +145,9 @@ export function MoveTable({
 	// re-bases every gap beneath it.
 	const best = rows.find((r) => r.cp !== null);
 	const available = availableSources(rows);
+	// What gets a chip: what the host can ask for, or — when it does not say —
+	// whatever happens to be here.
+	const offered = offers ? new Set(offers) : available;
 	// ONE FILTER, and it is the tested one. This had its own inline copy of the
 	// rule while `filterMoves` sat in the domain with tests on it — two answers
 	// to one question, and the shipped one was the untested one.
@@ -154,14 +173,14 @@ export function MoveTable({
 			  */}
 			<div
 				style={{
-					display: available.size > 1 ? 'flex' : 'none',
+					display: offered.size > 1 ? 'flex' : 'none',
 					gap: space.tight,
 					flexWrap: 'wrap',
 					marginBottom: space.tight,
 				}}
 			>
 				{(['line', 'engine', 'popular'] as MoveSource[])
-					.filter((s) => available.has(s))
+					.filter((s) => offered.has(s))
 					.map((s) => (
 						<button
 							key={s}
@@ -181,6 +200,9 @@ export function MoveTable({
 							}}
 						>
 							{SOURCE_LABEL[s]}
+							{/* On, asked for, and nothing came back — which is different
+								from narrowing, and should not look the same. */}
+							{on.has(s) && !available.has(s) && <span style={{ opacity: 0.7 }}> · none</span>}
 						</button>
 					))}
 				{on.size > 0 && (
