@@ -73,7 +73,14 @@ export function gradeStep(grade: number): number {
  * Exported rather than duplicated in the view: a legend whose colours drift from
  * the marks it explains is worse than no legend.
  */
-export const GRADE_COLOURS = ['#0b6b3a', '#1d8a52', '#4aa877', '#86bfa2', '#b9d6c8'];
+/**
+ * The swatch beside a move in a list, and the arrow drawn for it on the board,
+ * are the same ramp — see `QUALITY_BRUSHES` in `components/Board.tsx` for why
+ * it is batlow and why it stops at 0.45. Two copies of five hex values is not
+ * ideal; one of them being a DIFFERENT five would be worse, and that is what a
+ * reader would otherwise have to reconcile.
+ */
+export const GRADE_COLOURS = ['#011959', '#103f60', '#1c5a62', '#3e6e55', '#6c7c3c'];
 
 export function colourForGrade(grade: number): string {
 	return GRADE_COLOURS[gradeStep(grade)];

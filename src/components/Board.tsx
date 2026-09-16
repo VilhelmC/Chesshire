@@ -414,13 +414,60 @@ const STOCK_BRUSHES = {
 	yellow: { key: 'y', color: '#e68f00', opacity: 1, lineWidth: 10 },
 };
 
+/*
+ * THE QUALITY RAMP — batlow, truncated, at full opacity.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT WAS WRONG WITH THE OLD ONE, MEASURED.
+ *
+ * It was a single-hue green ramp that also faded out: `#b9d6c8` at 0.4 opacity
+ * for the weakest move. Composited over this board's light square (`#f0d9b5`)
+ * that is an effective contrast of **1.05:1** — not "faint", invisible. The
+ * second-weakest managed 1.24:1. Two of the five arrows could not be seen at
+ * all, which is a strange thing for a drawing to do.
+ *
+ * Three channels were encoding one quantity — hue, opacity and width — and the
+ * opacity was quietly cancelling the other two out.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT THIS IS.
+ *
+ * Fabio Crameri's `batlow`, sampled at five points over 0..0.45 of its range.
+ * Perceptually uniform, so equal steps in move quality look like equal steps;
+ * colour-vision-safe and greyscale-safe by construction.
+ *
+ * TRUNCATED AT 0.45 BECAUSE THE BOARD IS TAN. Batlow's upper half runs through
+ * yellow to a pale pink (`#faccfa`), which on `#f0d9b5` is the old problem
+ * again. The lower half — deep blue through teal to olive — is the part that
+ * stays dark enough to read. Measured against both squares at full opacity:
+ *
+ *      q0 #011959   11.91 : 1 light   7.49 : 1 dark
+ *      q1 #103f60    8.04            5.06
+ *      q2 #1c5a62    5.69            3.58
+ *      q3 #3e6e55    4.29            2.70
+ *      q4 #6c7c3c    3.34            2.10
+ *
+ * The weakest arrow is now three times more legible than the STRONGEST one was
+ * at the faded end of the old ramp.
+ *
+ * OPACITY IS GONE AS A CHANNEL, deliberately. It was the thing destroying
+ * legibility, and the ordering is already carried twice over: batlow's lightness
+ * ramp and the line width. The stock brushes are opaque too, so this also stops
+ * the quality arrows looking like a different kind of object from the rest.
+ *
+ * AND IT IS NO LONGER GREEN, which turns out to be a gain rather than a cost.
+ * Plain green is what this app draws THE ANSWER in — the book move, the
+ * solution. A green ramp beside a green answer asked the reader to tell two
+ * greens apart by saturation. Now the answer is green and the engine's ranking
+ * is not, and neither is violet, which is the chrome.
+ */
 const QUALITY_BRUSHES = {
 	...STOCK_BRUSHES,
-	q0: { key: 'q0', color: '#0b6b3a', opacity: 0.95, lineWidth: 14 },
-	q1: { key: 'q1', color: '#1d8a52', opacity: 0.8, lineWidth: 11 },
-	q2: { key: 'q2', color: '#4aa877', opacity: 0.65, lineWidth: 9 },
-	q3: { key: 'q3', color: '#86bfa2', opacity: 0.5, lineWidth: 7 },
-	q4: { key: 'q4', color: '#b9d6c8', opacity: 0.4, lineWidth: 5 },
+	q0: { key: 'q0', color: '#011959', opacity: 1, lineWidth: 14 },
+	q1: { key: 'q1', color: '#103f60', opacity: 1, lineWidth: 11.5 },
+	q2: { key: 'q2', color: '#1c5a62', opacity: 1, lineWidth: 9 },
+	q3: { key: 'q3', color: '#3e6e55', opacity: 1, lineWidth: 7 },
+	q4: { key: 'q4', color: '#6c7c3c', opacity: 1, lineWidth: 5.5 },
 	/**
 	 * The move that was just played, drawn in grey rather than anywhere on the
 	 * quality ramp.
