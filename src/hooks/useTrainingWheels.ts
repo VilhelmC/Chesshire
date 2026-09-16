@@ -205,38 +205,54 @@ export function useTrainingWheels(
 		let cancelled = false;
 		setWorking('mate');
 
-		// A FRAME FIRST, THEN THE THREAD.
+		// A FRAME FIRST, THEN THE THREAD — BUT NOT ONLY A FRAME.
 		//
 		// `requestAnimationFrame` puts us after the browser's next paint rather
 		// than merely after the current task, which is what `setTimeout(…, 0)`
 		// bought and why it was not enough. The nested timeout yields once more so
-		// the frame we waited for is actually presented before a search that can
-		// hold the thread for half a second begins.
-		let timer: ReturnType<typeof setTimeout> | undefined;
+		// the frame is actually presented before a search that can hold the thread
+		// for half a second begins.
+		//
+		// AND A FALLBACK, because rAF is not a promise. A background tab does not
+		// paint, so the callback never runs — and the first version of this fix
+		// left the wheel showing "searching…" forever in exactly that case, which
+		// I only found by looking at it in a throttled tab. A frame is the RIGHT
+		// signal for "the animation has had its turn"; it is the wrong thing to
+		// make completion depend on. Whichever arrives first wins.
+		let started = false;
+		let nested: ReturnType<typeof setTimeout> | undefined;
+
+		const run = () => {
+			if (started || cancelled) return;
+			started = true;
+			let found: ReturnType<typeof matesBothWays> = { deliver: null, threat: null };
+			try {
+				found = matesBothWays(pos);
+			} catch {
+				found = { deliver: null, threat: null };
+			}
+			if (cancelled) return;
+			// Set EITHER WAY. A ticked wheel that says nothing when it finds nothing
+			// is indistinguishable from one that is broken.
+			setMate({
+				arrows: matesArrows(found),
+				notes: mateNotes(found, pos.turn, nullMove(pos) !== null),
+			});
+			setWorking(null);
+		};
+
 		const frame = requestAnimationFrame(() => {
-			timer = setTimeout(() => {
-				if (cancelled) return;
-				let found: ReturnType<typeof matesBothWays> = { deliver: null, threat: null };
-				try {
-					found = matesBothWays(pos);
-				} catch {
-					found = { deliver: null, threat: null };
-				}
-				if (cancelled) return;
-				// Set EITHER WAY. A ticked wheel that says nothing when it finds
-				// nothing is indistinguishable from one that is broken.
-				setMate({
-					arrows: matesArrows(found),
-					notes: mateNotes(found, pos.turn, nullMove(pos) !== null),
-				});
-				setWorking(null);
-			}, 0);
+			nested = setTimeout(run, 0);
 		});
+		// Long enough that a visible tab always paints first, short enough that a
+		// tab which never will is not left saying "searching…".
+		const fallback = setTimeout(run, 400);
 
 		return () => {
 			cancelled = true;
 			cancelAnimationFrame(frame);
-			if (timer !== undefined) clearTimeout(timer);
+			if (nested !== undefined) clearTimeout(nested);
+			clearTimeout(fallback);
 		};
 	}, [pos, active, on, settled]);
 
