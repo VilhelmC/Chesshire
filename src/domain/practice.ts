@@ -24,7 +24,30 @@ export type PinnedRoot = {
 	path: string[];
 	/** Whatever the explorer calls it, or what the user typed. */
 	name: string;
+	/**
+	 * Is this one being trained right now?
+	 *
+	 * ---------------------------------------------------------------------------
+	 * Will: "we should be able to save training repertoires. They should appear in
+	 * a list below the search field, with toggle buttons to make them active /
+	 * inactive" — and, asked whether several active means one-of or all-of:
+	 * "multiple toggled means union."
+	 *
+	 * The list used to BE the active set, so the only way to stop training a line
+	 * was to delete it and the only way back was to find it again. Saving and
+	 * choosing are two different acts; this separates them. The list is the
+	 * library, the flag is today's session.
+	 *
+	 * Optional so a stored config written before this reads as active, which is
+	 * what those readers currently have.
+	 */
+	active?: boolean;
 };
+
+/** The saved repertoires being trained right now. Union, per Will. */
+export function activeRoots(cfg: PracticeConfig): PinnedRoot[] {
+	return cfg.roots.filter((r) => r.active !== false);
+}
 
 export type PracticeConfig = {
 	colour: 'w' | 'b';
@@ -123,6 +146,9 @@ export function normalise(raw: Partial<PracticeConfig>): PracticeConfig {
 		.map((r) => ({
 			path: r.path.filter((x) => typeof x === 'string'),
 			name: r.name || 'Pinned position',
+			// Absent means active: every root stored before the flag existed was,
+			// by definition, one the reader was training.
+			active: r.active !== false,
 		}))
 		.filter((r) => r.path.length > 0);
 
@@ -138,12 +164,15 @@ export function normalise(raw: Partial<PracticeConfig>): PracticeConfig {
 
 /** A short description of the current setting, for the run header. */
 export function describePractice(cfg: PracticeConfig): string {
+	// The saved list can be longer than what is switched on, and the header is
+	// about what you are TRAINING, not what you have kept.
+	const on = activeRoots(cfg);
 	const where =
-		cfg.roots.length === 0
+		on.length === 0
 			? 'the whole opening'
-			: cfg.roots.length === 1
-				? cfg.roots[0].name
-				: `${cfg.roots.length} openings`;
+			: on.length === 1
+				? on[0].name
+				: `${on.length} openings`;
 	const how =
 		cfg.strictness === 'repertoire'
 			? 'one answer per position'

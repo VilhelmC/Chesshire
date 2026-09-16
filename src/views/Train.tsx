@@ -43,7 +43,7 @@ import { useLineOverlay } from '../hooks/useLineOverlay';
 import { useCommentary } from '../hooks/useCommentary';
 import { Commentary } from '../components/CommentaryPanel';
 import { lineFromUci, type Line } from '../domain/line';
-import { color } from '../ui/theme';
+import { ACTIVE, color, radius, space, text, TOUCH } from '../ui/theme';
 import { markTraining } from '../data/autoImport';
 import { Empty, Button } from '../ui/primitives';
 import type { ToolbarAction } from '../components/Toolbar';
@@ -1940,7 +1940,8 @@ export function Train({
 				<h3>Training repertoire</h3>
 				{practice.roots.length === 0 ? (
 					<p style={{ fontSize: 13, opacity: 0.7, margin: '0 0 8px' }}>
-						Starting from move 1, whole tree. Whatever you play decides the opening.
+						No repertoires saved. Search below to add one — you can keep several and
+						switch each on or off; the ones switched on are trained together.
 					</p>
 				) : (
 					<>
@@ -1950,14 +1951,57 @@ export function Train({
 									key={`${r.name}-${i}`}
 									style={{
 										display: 'flex',
-										alignItems: 'baseline',
-										gap: 6,
-										padding: '3px 0',
-										borderBottom: '1px solid #eee',
+										alignItems: 'center',
+										gap: space.snug,
+										padding: '6px 0',
+										borderBottom: `1px solid ${color.line}`,
+										// A saved-but-inactive repertoire is still yours; it just
+										// is not today's. Dimmed, not hidden.
+										opacity: r.active === false ? 0.55 : 1,
 									}}
 								>
-									<div style={{ flex: 1 }}>
-										<div style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</div>
+									{/*
+									  * SAVED AND ACTIVE ARE TWO DIFFERENT THINGS.
+									  *
+									  * Will: "we should be able to save training repertoires…
+									  * with toggle buttons to make them active / inactive", and
+									  * "multiple toggled means union".
+									  *
+									  * The list used to BE the active set, so the only way to
+									  * stop training a line was to delete it, and the only way
+									  * back was to find it in the search field again. The list is
+									  * the library now and the switch is this session.
+									  */}
+									<button
+										onClick={() =>
+											updatePractice({
+												roots: practice.roots.map((x, j) =>
+													j === i ? { ...x, active: x.active === false } : x,
+												),
+											})
+										}
+										aria-pressed={r.active !== false}
+										title={
+											r.active !== false
+												? 'Training this one — switch it off without losing it'
+												: 'Saved but not being trained — switch it back on'
+										}
+										style={{
+											fontSize: text.note,
+											padding: '2px 10px',
+											borderRadius: radius.pill,
+											border: `1px solid ${r.active !== false ? ACTIVE.border : color.line}`,
+											background: r.active !== false ? ACTIVE.background : 'transparent',
+											color: r.active !== false ? ACTIVE.color : color.ink2,
+											cursor: 'pointer',
+											minHeight: TOUCH,
+											whiteSpace: 'nowrap',
+										}}
+									>
+										{r.active !== false ? 'training' : 'off'}
+									</button>
+									<div style={{ flex: 1, minWidth: 0 }}>
+										<div style={{ fontSize: text.body, fontWeight: 600 }}>{r.name}</div>
 										<div style={{ opacity: 0.6, fontSize: 11 }}>
 											<MoveLine sans={r.path} size={11} />
 										</div>
@@ -1968,8 +2012,8 @@ export function Train({
 												roots: practice.roots.filter((_, j) => j !== i),
 											})
 										}
-										title="Remove from the filter"
-										style={{ fontSize: 11 }}
+										title="Forget this repertoire"
+										style={{ fontSize: text.note, minHeight: TOUCH }}
 									>
 										×
 									</button>

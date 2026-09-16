@@ -53,21 +53,49 @@
  * thinks.
  */
 
+/*
+ * THE PALETTE, AND THE THREE DECISIONS IN IT.
+ *
+ * ---------------------------------------------------------------------------
+ * 1. CARDS ARE LIGHTER THAN THE PAGE, not darker.
+ *
+ * `--page` was pure white and `--surface` a shade below it, so every panel read
+ * as a depression pressed into the sheet. Inverting that — a warm paper page
+ * with surfaces brighter than it — is most of why this looks less like a
+ * spreadsheet, and it costs nothing but two hex values.
+ *
+ * 2. WARM, BECAUSE THE BOARD IS WARM. The one thing on screen that cannot be
+ * restyled is a tan-and-cream chessboard. Neutral greys sat beside it looking
+ * like a different application; the greys have a little of the board's warmth
+ * in them now so the page and the board read as one surface.
+ *
+ * 3. THE ACCENT IS VIOLET, AND THAT IS A CONSTRAINT RATHER THAN A TASTE.
+ *
+ * The board's move-quality ramp is going to be a perceptually uniform colormap
+ * — batlow — which runs dark blue through teal and green to yellow and tan.
+ * Anything in that range, used as UI chrome, is a colour the reader has to
+ * decide the meaning of: is this blue a button or a good move? Violet is the
+ * one family the ramp never visits, so chrome and board annotation can never be
+ * confused. The old `#1565c0` sat squarely inside it.
+ */
 :root {
-	--ink: #1a1a19;
-	--ink2: #52514e;
-	--ink3: #8a8884;
-	--page: #ffffff;
-	--surface: #faf9f7;
-	--line: #e6e5e2;
-	--accent: #1565c0;
-	--accent-soft: #e8f1fb;
-	--good: #0f7d32;
-	--warn: #b07500;
-	--bad: #c62828;
-	--good-soft: #e9f5ec;
-	--warn-soft: #fdf4e3;
-	--bad-soft: #fbeaea;
+	--ink: #1c1b18;
+	--ink2: #56534c;
+	--ink3: #8d8982;
+	/* Warm paper, with the cards lifted off it. */
+	--page: #f6f4ef;
+	--surface: #fffefb;
+	--line: #e3dfd6;
+	--accent: #5b4bd6;
+	--accent-soft: #edeafc;
+	/* White reads on the accent in light mode; see `--on-accent` in dark. */
+	--on-accent: #ffffff;
+	--good: #17794a;
+	--warn: #a96a00;
+	--bad: #c4362f;
+	--good-soft: #e6f4ec;
+	--warn-soft: #fbf1e0;
+	--bad-soft: #fceceb;
 	color-scheme: light;
 }
 
@@ -80,39 +108,48 @@
  */
 @media (prefers-color-scheme: dark) {
 	:root:not([data-theme='light']) {
-		--ink: #e8e6e1;
-		--ink2: #a8a49c;
-		--ink3: #77736c;
-		--page: #16161a;
-		--surface: #1e1e23;
-		--line: #32323a;
-		--accent: #6aa9f0;
-		--accent-soft: #1b2b40;
-		--good: #55c47a;
-		--warn: #e0a63c;
-		--bad: #f0736e;
-		--good-soft: #16301f;
-		--warn-soft: #322613;
-		--bad-soft: #37201f;
+		--ink: #ece9e2;
+		--ink2: #a9a49a;
+		--ink3: #7a756b;
+		--page: #14131a;
+		--surface: #1e1c26;
+		--line: #322f3c;
+		--accent: #a394ff;
+		--accent-soft: #241f3d;
+		/*
+		 * NOT WHITE. A light accent with white on it is the contrast failure the
+		 * old palette already had — `#6aa9f0` under white text measures about
+		 * 2.4:1 — and it only got worse once an active control started painting
+		 * itself accent-on-solid. Dark ink on a light accent is the way round that
+		 * works when the accent has to be light enough to read against the page.
+		 */
+		--on-accent: #1a1726;
+		--good: #5cc98a;
+		--warn: #e3ab4a;
+		--bad: #f2817a;
+		--good-soft: #142a1e;
+		--warn-soft: #2f2614;
+		--bad-soft: #34201f;
 		color-scheme: dark;
 	}
 }
 
 :root[data-theme='dark'] {
-	--ink: #e8e6e1;
-	--ink2: #a8a49c;
-	--ink3: #77736c;
-	--page: #16161a;
-	--surface: #1e1e23;
-	--line: #32323a;
-	--accent: #6aa9f0;
-	--accent-soft: #1b2b40;
-	--good: #55c47a;
-	--warn: #e0a63c;
-	--bad: #f0736e;
-	--good-soft: #16301f;
-	--warn-soft: #322613;
-	--bad-soft: #37201f;
+	--ink: #ece9e2;
+	--ink2: #a9a49a;
+	--ink3: #7a756b;
+	--page: #14131a;
+	--surface: #1e1c26;
+	--line: #322f3c;
+	--accent: #a394ff;
+	--accent-soft: #241f3d;
+	--on-accent: #1a1726;
+	--good: #5cc98a;
+	--warn: #e3ab4a;
+	--bad: #f2817a;
+	--good-soft: #142a1e;
+	--warn-soft: #2f2614;
+	--bad-soft: #34201f;
 	color-scheme: dark;
 }
 
@@ -122,6 +159,15 @@
  */
 html,
 body {
+	/*
+	 * NATIVE CONTROLS FOLLOW THE PALETTE TOO.
+	 *
+	 * Checkboxes, radios and range sliders are drawn by the browser, and without
+	 * this they stay the platform's blue — so a page whose every other accent is
+	 * violet had a row of blue radio buttons down the middle of it. One line, and
+	 * it covers every input the app will ever add.
+	 */
+	accent-color: var(--accent);
 	background: var(--page);
 	color: var(--ink);
 }

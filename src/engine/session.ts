@@ -27,6 +27,7 @@ import {
 	SOUND_CP,
 	type BookMove,
 } from '../domain/book';
+import { activeRoots } from '../domain/practice';
 import type { PracticeConfig } from '../domain/practice';
 import { nameForPath } from '../domain/openings';
 import type { Motif } from '../domain/types';
@@ -310,7 +311,9 @@ export async function startRun(cfg: SessionConfig): Promise<RunState> {
 
 	// One root per run, chosen at random when several are pinned — that is how
 	// several openings interleave instead of being blocked one at a time.
-	const roots = cfg.practice.roots;
+	// ONLY THE ACTIVE ONES. The list is a library now — saving a repertoire and
+	// training it are separate acts — so a run draws from the ones switched on.
+	const roots = activeRoots(cfg.practice);
 	const chosen = roots.length ? roots[Math.floor((cfg.rng ?? Math.random)() * roots.length)] : null;
 
 	// Played for you only if asked. The moves that reach an opening are part of
@@ -447,7 +450,7 @@ async function withExpected(state: RunState, cfg: SessionConfig): Promise<RunSta
 	// Still on the way to a pinned opening: the accepted moves are the ones that
 	// keep heading there. With two roots diverging here, both are accepted —
 	// forcing one would quietly drop the other from the session.
-	const towards = movesTowardRoots(state.path, cfg.practice.roots);
+	const towards = movesTowardRoots(state.path, activeRoots(cfg.practice));
 	if (towards.length) {
 		const moves = towards
 			.map((san) => {
@@ -578,7 +581,7 @@ export async function submitMove(
 				//
 				// Caught by a test that already existed: "still confines you to the
 				// pinned line while walking into it".
-				const towardsRoot = movesTowardRoots(state.path, cfg.practice.roots).length > 0;
+				const towardsRoot = movesTowardRoots(state.path, activeRoots(cfg.practice)).length > 0;
 				const bestLine = towardsRoot ? undefined : state.expected[0];
 				let lineCp: number | null = null;
 				if (bestLine) {
@@ -749,7 +752,7 @@ async function describeBookMistake(
 
 	// Leaving the pinned filter is a different kind of wrong from a bad move: the
 	// move may be fine, it is just not what this session is about.
-	const roots = cfg.practice.roots;
+	const roots = activeRoots(cfg.practice);
 	if (roots.length && !liveRoots([...state.path, san], roots).length) {
 		const names = roots.map((r) => r.name).join(' or ');
 		return `${move} leaves ${names}, which is what you pinned. Play ${want}.`;
@@ -844,7 +847,7 @@ async function opponentMove(
 
 	// Still on the way to a pinned opening: they play one of the moves that lead
 	// there, chosen at random when several roots are still live.
-	const towards = movesTowardRoots(state.path, cfg.practice.roots);
+	const towards = movesTowardRoots(state.path, activeRoots(cfg.practice));
 	if (towards.length) {
 		const san = towards[Math.floor(rng() * towards.length)];
 		const applied = trySan(state.fen, san);

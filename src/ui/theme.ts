@@ -38,6 +38,14 @@ export const color = {
 	/** The single accent. Interactive, current, selected — nothing else. */
 	accent: 'var(--accent)',
 	accentSoft: 'var(--accent-soft)',
+	/**
+	 * What reads ON the accent.
+	 *
+	 * Not `#fff`: the dark theme's accent has to be light enough to stand off a
+	 * near-black page, and white on a light violet is about 2.4:1. A token,
+	 * because only the theme knows which way round it goes.
+	 */
+	onAccent: 'var(--on-accent)',
 
 	// Judgement. These three only ever describe a result, never a surface.
 	good: 'var(--good)',
@@ -135,7 +143,7 @@ export const sans = "'Source Sans 3 Variable', system-ui, -apple-system, sans-se
  */
 export const ACTIVE = {
 	background: color.accent,
-	color: '#fff',
+	color: color.onAccent,
 	border: color.accent,
 	/** A little lift, so it reads as pressed in rather than merely coloured. */
 	boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.25)',
