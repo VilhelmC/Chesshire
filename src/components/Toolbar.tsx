@@ -12,7 +12,7 @@
 // so the layout still holds still.
 
 import { useMeasure } from './useViewport';
-import { ACTIVE } from '../ui/theme';
+import { ACTIVE, color, radius } from '../ui/theme';
 
 export type ToolbarAction = {
 	id: string;
@@ -25,6 +25,7 @@ export type ToolbarAction = {
 		| 'branch'
 		| 'mistake'
 		| 'reveal'
+		| 'answer'
 		| 'playon'
 		| 'options'
 		| 'stats'
@@ -40,9 +41,18 @@ const CAPTION: Record<ToolbarAction['icon'], string> = {
 	first: 'restart',
 	back: 'back',
 	forward: 'forward',
-	branch: 'retry',
+	/*
+	 * NOT "retry".
+	 *
+	 * Will: "Train: 'Retry' button is bad naming." It is: nothing is retried.
+	 * The position is put back and the OPPONENT is made to choose again, which
+	 * is the opposite of a retry — you are not repeating your own move, you are
+	 * being handed a different problem from the same starting point.
+	 */
+	branch: 'new reply',
 	mistake: 'mistake',
 	reveal: 'show moves',
+	answer: 'answer',
 	playon: 'play on',
 	options: 'options',
 	stats: 'played',
@@ -137,10 +147,10 @@ export function Toolbar({
 						  * `currentColor` now, so they invert with it rather than staying
 						  * dark on a dark ground.
 						  */
-						border: `1px solid ${a.accent ? ACTIVE.border : '#ddd'}`,
-						borderRadius: 6,
-						background: a.accent ? ACTIVE.background : '#fff',
-						color: a.accent ? ACTIVE.color : '#333',
+						border: `1px solid ${a.accent ? ACTIVE.border : color.line}`,
+						borderRadius: radius.small,
+						background: a.accent ? ACTIVE.background : color.surface,
+						color: a.accent ? ACTIVE.color : color.ink,
 						boxShadow: a.accent ? ACTIVE.boxShadow : 'none',
 						cursor: a.disabled ? 'default' : 'pointer',
 						opacity: a.disabled ? 0.35 : 1,
@@ -155,7 +165,7 @@ export function Toolbar({
 							style={{
 								fontSize: 9,
 								// Inherits on an active button, so the caption inverts too.
-								color: a.accent ? 'inherit' : '#52514e',
+								color: a.accent ? 'inherit' : color.ink2,
 								lineHeight: 1,
 							}}
 						>
@@ -214,6 +224,27 @@ function Icon({ name }: { name: ToolbarAction['icon'] }) {
 				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
 					<path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z" />
 					<circle cx="12" cy="12" r="2.5" />
+				</svg>
+			);
+		case 'answer':
+			/*
+			 * A KEY, not a second eye.
+			 *
+			 * Mistakes had one button meaning "show the moves on the board" and
+			 * another meaning "tell me the answer", and both were drawn with the
+			 * eye — because the eye had been the answer button first and "show the
+			 * moves" inherited it when the filters were unified. Two controls with
+			 * one icon is the same fault as one control with two names.
+			 *
+			 * A key unlocks a specific thing; an eye looks at everything. That is
+			 * the actual difference between them.
+			 */
+			return (
+				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
+					<circle cx="8" cy="9" r="3.4" />
+					<path d="M10.6 11.4 19 19.8" />
+					<path d="M16.4 17.2 14.6 19" />
+					<path d="M19 19.8 17.2 21.6" />
 				</svg>
 			);
 		case 'resign':

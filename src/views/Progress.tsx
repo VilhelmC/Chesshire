@@ -31,17 +31,64 @@ import {
 	MIN_MOVES_PER_BAND as MIN_BAND,
 	type MeasurableGame,
 } from '../domain/performance';
-import { accuracy, freeplayLosses, gameLosses, type AnswerRow, type RunRow } from '../domain/progress';
+import {
+	accuracy,
+	freeplayLosses,
+	gameLosses,
+	gameLossRows,
+	type AnswerRow,
+	type RunRow,
+} from '../domain/progress';
 import { fromGame, type Reviewable } from '../domain/reviewable';
 import { splitBySpeed } from '../domain/playedGames';
-import { color } from '../ui/theme';
+import { color, radius, space, text as type } from '../ui/theme';
+import { Button, Segmented } from '../ui/primitives';
 
 // Single series, so no categorical palette to validate — one hue for magnitude,
 // status colours for state, and every status carries a label rather than relying
 // on colour alone.
 const INK = color.ink;
 const INK_2 = color.ink2;
-const SERIES = '#2a78d6';
+/*
+ * The accent, not a blue of its own.
+ *
+ * `#2a78d6` was chosen back when the app's chrome was blue; the chrome is
+ * violet now and this was the largest remaining piece of the old palette still
+ * on screen. A single-series chart has no reason to pick its own hue — "the one
+ * colour this app uses for the thing you are looking at" IS the accent.
+ */
+const SERIES = color.accent;
+
+/**
+ * Which measurement the chart is plotting.
+ *
+ * ---------------------------------------------------------------------------
+ * THE NAMES CHANGED, AND THAT WAS THE LARGER HALF OF THE FIX.
+ *
+ * Will: "'from free play' is not intuitive since free play arguably is games.
+ * New name for clarity — something like Chesshire free play. And 'from your
+ * games' could be Imported games."
+ *
+ * He is right that the old pair did not distinguish anything: "your games" and
+ * "free play" are both games, both yours, and the difference between them —
+ * one was played here against the bot, the other was played elsewhere against
+ * people — was the one thing neither label said. The new pair says WHERE each
+ * came from, which is the whole distinction.
+ */
+export type RatingSource = 'games' | 'freeplay';
+
+const SOURCES: { id: RatingSource; label: string; title: string }[] = [
+	{
+		id: 'games',
+		label: 'Imported games',
+		title: 'Real opponents, from games imported on the Settings tab',
+	},
+	{
+		id: 'freeplay',
+		label: 'Chesshire free play',
+		title: 'Played on against the bot here, after a punished mistake',
+	},
+];
 const CRITICAL = color.bad;
 const GOOD = color.good;
 const GRID = color.line;
@@ -51,6 +98,7 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 	const [runs, setRuns] = useState<RunRow[]>([]);
 	const [loaded, setLoaded] = useState(false);
 	const [pinned, setPinned] = useState<string | null>(null);
+	const [source, setSource] = useState<RatingSource>('games');
 	const [played, setPlayed] = useState<PlayedGame[]>([]);
 	/** The same games, kept whole, for the accuracy measurement. */
 	const [rawGames, setRawGames] = useState<MeasurableGame[]>([]);
@@ -142,7 +190,7 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 		(a) => a.phase === 'freeplay' && !a.assisted && a.cpLoss >= 0,
 	);
 	const rating = estimate(freeplayLosses(answers));
-	const series = ratingSeries(
+	const freeSeries = ratingSeries(
 		scored.map((a) => ({ runId: a.runId, ts: a.ts, cpLoss: a.cpLoss })),
 	);
 
@@ -157,16 +205,22 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 	 * single figure a change in it could not be attributed to either.
 	 */
 	const live = useMemo(() => splitBySpeed(playedGames), [playedGames]);
-	const fromGames = useMemo(
-		() =>
-			estimate(
-				gameLosses(
-					live.counted,
-					// The app's own idea of where the book ends: the longest named
-					// opening that is a prefix of the game.
-					(moves) => nameForPath(moves)?.path.length ?? 0,
-				),
-			),
+	/** The app's own idea of where the book ends, shared by both readers below. */
+	const bookDepth = (moves: string[]) => nameForPath(moves)?.path.length ?? 0;
+	const fromGames = useMemo(() => estimate(gameLosses(live.counted, bookDepth)), [live]);
+	/*
+	 * THE SAME TREND, OVER GAMES INSTEAD OF RUNS.
+	 *
+	 * Will: "the graph in Progress only shows the 'from free play' estimate.
+	 * User should be able to choose 'from your games' instead."
+	 *
+	 * One chart, two sources, and NO second chart component: `ratingSeries` was
+	 * always general over (id, when, how much) and only ever saw one source
+	 * because the game losses were thrown into a flat array before anything
+	 * could keep their dates. `gameLossRows` keeps them.
+	 */
+	const gameSeries = useMemo(
+		() => ratingSeries(gameLossRows(live.counted, bookDepth)),
 		[live],
 	);
 	/** A readable label for a position with no name of its own. */
@@ -217,12 +271,13 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 			{pinned && (
 				<div
 					style={{
-						fontSize: 13,
-						background: '#e3f2fd',
-						border: '1px solid #90caf9',
-						borderRadius: 6,
-						padding: '6px 8px',
-						marginBottom: 12,
+						fontSize: type.note,
+						color: color.ink,
+						background: color.accentSoft,
+						border: `1px solid ${color.accent}`,
+						borderRadius: radius.small,
+						padding: `${space.snug}px ${space.gap}px`,
+						marginBottom: space.card,
 					}}
 				>
 					Pinned <strong>{pinned}</strong> — the Train tab will start there from now on.
@@ -272,24 +327,15 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 
 			{/* A shortcut into the Review tab, not the only way in. Going to look
 				at a game because a number here said so is a real path, but it is
-				not the only reason anyone opens a game. */}
+				not the only reason anyone opens a game.
+
+				It was `background: '#fff'` with `color: INK`. INK follows the theme
+				and the white did not, so in dark mode this was near-white text on
+				white — the exact report. Through the shared Button it cannot
+				happen: both halves of the pairing come from the same palette. */}
 			{onOpenReview && (
-				<div style={{ marginBottom: 16 }}>
-					<button
-						onClick={onOpenReview}
-						style={{
-							border: `1px solid ${GRID}`,
-							background: '#fff',
-							borderRadius: 6,
-							padding: '8px 12px',
-							minHeight: 40,
-							fontSize: 14,
-							cursor: 'pointer',
-							color: INK,
-						}}
-					>
-						Review your games and runs →
-					</button>
+				<div style={{ marginBottom: space.section }}>
+					<Button onClick={onOpenReview}>Review your games and runs →</Button>
 				</div>
 			)}
 
@@ -306,7 +352,7 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 
 				<div style={{ display: 'flex', gap: 32, flexWrap: 'wrap', marginBottom: 4 }}>
 					<Estimate
-						label="from your games"
+						label="Imported games"
 						note={
 							live.population.correspondence > 0
 								? `real opponents, past the named opening · ${live.population.correspondence} correspondence ${live.population.correspondence === 1 ? 'game' : 'games'} set aside`
@@ -316,22 +362,46 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 						empty="Import your games on the Settings tab."
 					/>
 					<Estimate
-						label="from free play"
+						label="Chesshire free play"
 						note="played on against the bot after a mistake"
 						e={rating}
 						empty="Punish a mistake, then use play on."
 					/>
 				</div>
 
-				{series.length >= 2 ? (
-					<RatingChart series={series} />
-				) : (
-					rating.elo !== null && (
-						<p style={{ fontSize: 13, color: INK_2, marginTop: 8 }}>
-							One run so far — the free-play trend needs at least two.
-						</p>
-					)
-				)}
+				{(() => {
+					const plotted = source === 'games' ? gameSeries : freeSeries;
+					const unit = source === 'games' ? 'game' : 'run';
+					const other = source === 'games' ? freeSeries : gameSeries;
+					return (
+						<>
+							{/* Only offered when there is a second thing to switch TO. A
+								control whose alternative is empty is a control that punishes
+								you for trying it. */}
+							{(plotted.length >= 2 || other.length >= 2) && (
+								<div style={{ marginTop: space.gap }}>
+									<Segmented
+										label="Which rating to plot"
+										options={SOURCES}
+										value={source}
+										onChange={setSource}
+									/>
+								</div>
+							)}
+							{plotted.length >= 2 ? (
+								<RatingChart series={plotted} unit={unit} />
+							) : (
+								<p style={{ fontSize: type.body, color: INK_2, marginTop: space.snug }}>
+									{plotted.length === 1
+										? `One ${unit} so far — a trend needs at least two.`
+										: source === 'games'
+											? 'No analysed games yet. Import some on the Settings tab.'
+											: 'No free play yet. Punish a mistake, then use play on.'}
+								</p>
+							)}
+						</>
+					);
+				})()}
 			</section>
 
 			{weak.length > 0 && (
@@ -351,9 +421,9 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 									{Math.round((accuracyOf(n.own) ?? 0) * 100)}%
 								</span>{' '}
 								<span style={{ color: INK_2 }}>of {n.own.attempts}</span>{' '}
-								<button onClick={() => pin(n)} style={{ fontSize: 11 }}>
+								<Button kind="quiet" onClick={() => pin(n)}>
 									practise from here
-								</button>
+								</Button>
 							</li>
 						))}
 					</ol>
@@ -542,15 +612,17 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 				<ProgressTree root={root} unplaced={unplaced} onPin={pin} />
 			</section>
 
-			<button
-				onClick={async () => {
-					await clearProgress();
-					await reload();
-				}}
-				style={{ marginTop: 24, fontSize: 13 }}
-			>
-				Reset progress
-			</button>
+			<div style={{ marginTop: space.page }}>
+				<Button
+					kind="danger"
+					onClick={async () => {
+						await clearProgress();
+						await reload();
+					}}
+				>
+					Reset progress
+				</Button>
+			</div>
 		</div>
 	);
 }
@@ -595,7 +667,7 @@ function Estimate({
  * it is the noisy one, and drawing both at equal weight would invite reading
  * run-to-run swings as real movement.
  */
-function RatingChart({ series }: { series: RatingPoint[] }) {
+function RatingChart({ series, unit }: { series: RatingPoint[]; unit: string }) {
 	/*
 	 * THE WIDTH IS MEASURED, NOT ASSUMED.
 	 *
@@ -655,7 +727,7 @@ function RatingChart({ series }: { series: RatingPoint[] }) {
 				{series.map((p, i) => (
 					<circle key={p.runId} cx={x(i)} cy={y(p.cumulative)} r={4} fill={SERIES}>
 						<title>
-							{new Date(p.ts).toLocaleDateString()} — run {p.elo}, overall {p.cumulative} (
+							{new Date(p.ts).toLocaleDateString()} — {unit} {p.elo}, overall {p.cumulative} (
 							{p.moves} moves)
 						</title>
 					</circle>
@@ -691,7 +763,7 @@ function RatingChart({ series }: { series: RatingPoint[] }) {
 							marginRight: 4,
 						}}
 					/>
-					per run
+					per {unit}
 				</span>
 			</figcaption>
 		</figure>

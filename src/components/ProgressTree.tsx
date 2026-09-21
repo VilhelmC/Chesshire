@@ -227,7 +227,7 @@ function Row({
 								padding: '1px 5px',
 								border: `1px solid ${GRID}`,
 								borderRadius: 4,
-								background: '#fff',
+								background: color.surface,
 								cursor: 'pointer',
 								color: INK_2,
 							}}

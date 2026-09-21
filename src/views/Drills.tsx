@@ -21,6 +21,7 @@ import { resetCloudCircuit } from '../data/cloudEval';
 import { CancelledError } from '../engine/punishment';
 import { Move, MoveLine } from '../components/Move';
 import { colourAtPly, withGlyph } from '../domain/notation';
+import { color } from '../ui/theme';
 
 type Row = { dev: Deviation; result: PunishmentResult };
 
@@ -200,17 +201,17 @@ export function Drills() {
 			</div>
 
 			{!getToken() && (
-				<p style={{ fontSize: 13, color: '#c62828' }}>
+				<p style={{ fontSize: 13, color: color.bad }}>
 					Save a Lichess token on the Checks tab first — the deviation list comes from the
 					explorer.
 				</p>
 			)}
-			{error && <p style={{ color: '#c62828' }}>{error}</p>}
+			{error && <p style={{ color: color.bad }}>{error}</p>}
 
 			{sweep && (
 				<div
 					style={{
-						border: '1px solid #ddd',
+						border: `1px solid ${color.line}`,
 						borderRadius: 8,
 						padding: 12,
 						margin: '8px 0 16px',
@@ -220,7 +221,7 @@ export function Drills() {
 					{blunderMass !== null && (
 						<div style={{ fontSize: 15, marginBottom: 6 }}>
 							Punishable positions account for{' '}
-							<strong style={{ color: blunderMass >= 0.15 ? '#2e7d32' : '#c62828' }}>
+							<strong style={{ color: blunderMass >= 0.15 ? color.good : color.bad }}>
 								{(blunderMass * 100).toFixed(1)}%
 							</strong>{' '}
 							of your games as this colour. The five-ply tree managed 4.1%; anything under
@@ -244,7 +245,7 @@ export function Drills() {
 					<div style={{ flex: '1 1 560px', minWidth: 460 }}>
 						<table style={{ borderCollapse: 'collapse', fontSize: 13, width: '100%' }}>
 							<thead>
-								<tr style={{ textAlign: 'left', borderBottom: '1px solid #ccc' }}>
+								<tr style={{ textAlign: 'left', borderBottom: `1px solid ${color.line}` }}>
 									<th>Position</th>
 									<th>Move</th>
 									<th style={{ textAlign: 'right' }}>Δ cp</th>
@@ -260,9 +261,9 @@ export function Drills() {
 										key={r.dev.id}
 										onClick={() => setSelected(r)}
 										style={{
-											borderBottom: '1px solid #f0f0f0',
+											borderBottom: `1px solid ${color.line}`,
 											cursor: 'pointer',
-											background: selected?.dev.id === r.dev.id ? '#e3f2fd' : undefined,
+											background: selected?.dev.id === r.dev.id ? color.accentSoft : undefined,
 										}}
 									>
 										<td style={{ opacity: 0.7 }}>{r.dev.path.join(' ') || '(start)'}</td>
@@ -285,10 +286,10 @@ export function Drills() {
 											style={{
 												color:
 													r.result.verified === true
-														? '#2e7d32'
+														? color.good
 														: r.result.verified === false
-															? '#c62828'
-															: '#999',
+															? color.bad
+															: color.ink2,
 												fontWeight: 600,
 											}}
 										>
@@ -356,7 +357,7 @@ export function Drills() {
 										<div
 											style={{
 												marginTop: 6,
-												color: selected.result.verified === false ? '#c62828' : '#2e7d32',
+												color: selected.result.verified === false ? color.bad : color.good,
 											}}
 										>
 											{selected.result.verifyNote}
@@ -409,13 +410,13 @@ export function Drills() {
 
 function Verdict({ r }: { r: PunishmentResult }) {
 	const map: Record<string, { text: string; colour: string }> = {
-		blunder: { text: r.solution ? 'drillable' : 'too branchy', colour: r.solution ? '#2e7d32' : '#ef6c00' },
-		inaccuracy: { text: 'pressure only', colour: '#ef6c00' },
-		playable: { text: 'sound move', colour: '#666' },
-		refutes_us: { text: 'hole in our line', colour: '#c62828' },
-		book: { text: 'book', colour: '#666' },
+		blunder: { text: r.solution ? 'drillable' : 'too branchy', colour: r.solution ? color.good : color.warn },
+		inaccuracy: { text: 'pressure only', colour: color.warn },
+		playable: { text: 'sound move', colour: color.ink2 },
+		refutes_us: { text: 'hole in our line', colour: color.bad },
+		book: { text: 'book', colour: color.ink2 },
 	};
-	const v = map[r.classification] ?? { text: r.classification, colour: '#666' };
+	const v = map[r.classification] ?? { text: r.classification, colour: color.ink2 };
 	return <span style={{ color: v.colour, fontWeight: 600 }}>{v.text}</span>;
 }
 

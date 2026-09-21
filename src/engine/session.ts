@@ -762,13 +762,15 @@ async function describeBookMistake(
 	// was refused is known without asking the explorer again.
 	const here = state.bookHere.find((m) => m.uci === uci);
 	if (here && (here.cpLoss ?? 0) <= SOUND_CP) {
-		// A sound move that the current strictness does not accept. Under
-		// 'repertoire' that is most of the book, and calling it a mistake would
-		// teach a beginner to distrust perfectly good moves.
+		// A sound move that the current strictness does not accept. On the upper
+		// rungs that is most of the book, and calling it a mistake would teach a
+		// beginner to distrust perfectly good moves.
 		const named = here.name ? ` — the ${here.name}` : '';
 		const why =
-			cfg.practice.strictness === 'repertoire'
-				? 'sound, but you are drilling one answer per position'
+			cfg.practice.strictness === 'bestBook'
+				? 'sound, but you are drilling the strongest book move here'
+				: cfg.practice.strictness === 'bestEngine'
+					? 'sound, but you are looking for the best move here'
 				: here.verdict === 'sound'
 					? `sound, but only played ${(here.freq * 100).toFixed(1)}% here`
 					: 'sound, but outside what you are practising';

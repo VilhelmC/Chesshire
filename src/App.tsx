@@ -243,7 +243,7 @@ function TabButton({
 				borderLeftStyle: 'none',
 				borderBottomStyle: 'solid',
 				borderBottomWidth: 2,
-				borderBottomColor: active ? '#1565c0' : 'transparent',
+				borderBottomColor: active ? color.accent : 'transparent',
 				background: 'none',
 				padding: compact ? '10px 6px' : '10px 12px',
 				fontSize: compact ? 14 : 15,
@@ -252,7 +252,10 @@ function TabButton({
 				touchAction: 'manipulation',
 				fontWeight: active ? 600 : 400,
 				cursor: 'pointer',
-				color: active ? '#1565c0' : '#444',
+				// `#1565c0` and `#444` were the last of the old blue chrome, and they
+				// were the most visible of it: five of them across the top of every
+				// screen, disagreeing with the violet accent immediately below.
+				color: active ? color.accent : color.ink2,
 			}}
 		>
 			{children}

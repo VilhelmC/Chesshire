@@ -40,7 +40,7 @@ export function ThemeControl() {
 							border: 'none',
 							borderRight: o.id === 'dark' ? 'none' : `1px solid ${color.line}`,
 							background: active ? color.accent : color.page,
-							color: active ? '#fff' : color.ink2,
+							color: active ? color.onAccent : color.ink2,
 							fontSize: text.body,
 							fontWeight: active ? 600 : 400,
 							padding: '0 14px',

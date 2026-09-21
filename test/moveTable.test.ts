@@ -158,3 +158,40 @@ describe('loss, when the subtraction is not a subtraction', () => {
 		expect(lossText(unknown, mate)).toBe('');
 	});
 });
+
+// ---------------------------------------------------------------------------
+// THE MOVE YOU ASKED FOR BY NAME.
+//
+// The filter answers "which moves do these sources agree on". A revealed
+// answer is not an answer to that question — it IS the question — so a filter
+// that removed it would let "show me the move" produce a table without the
+// move in it.
+// ---------------------------------------------------------------------------
+describe('a kept move', () => {
+	const rows = mergeMoves({
+		engine: [cand('e2e4', 'e4', 30), cand('d2d4', 'd4', 20)],
+		popular: [share('e2e4', 'e4', 90)],
+		line: [{ uci: 'a2a3', san: 'a3' }],
+	});
+
+	it('survives a filter that admits nothing else of its kind', () => {
+		const on = new Set<MoveSource>(['engine', 'popular']);
+		expect(filterMoves(rows, on).map((r) => r.san)).toEqual(['e4']);
+		expect(filterMoves(rows, on, 'a2a3').map((r) => r.san).sort()).toEqual(['a3', 'e4']);
+	});
+
+	it('is not duplicated when the filter would have admitted it anyway', () => {
+		const on = new Set<MoveSource>(['engine']);
+		expect(filterMoves(rows, on, 'e2e4').filter((r) => r.san === 'e4')).toHaveLength(1);
+	});
+
+	it('changes nothing when no filter is active — everything already shows', () => {
+		const none = new Set<MoveSource>();
+		expect(filterMoves(rows, none, 'a2a3')).toEqual(filterMoves(rows, none));
+	});
+
+	it('is ignored when it names a move that is not here', () => {
+		const on = new Set<MoveSource>(['engine', 'popular']);
+		expect(filterMoves(rows, on, 'h2h4').map((r) => r.san)).toEqual(['e4']);
+	});
+});

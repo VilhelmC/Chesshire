@@ -58,9 +58,15 @@ function mv(
 	freq: number,
 	verdict: BookMove['verdict'],
 	name: string | null = null,
+	// Most synthetic moves do not need a score, so the verdict implies one. But
+	// the ladder's top rung sorts BOOK MOVES BY SCORE, and a book where every
+	// played move is tied at zero cannot tell "strongest" from "any of them" —
+	// so a move that needs a real number can say so.
+	cpOverride?: number,
 ): BookMove {
 	const { uci } = applySan(fen, san);
-	const cpLoss = verdict === 'blunder' ? 300 : verdict === 'inaccuracy' ? 90 : 0;
+	const cpLoss =
+		cpOverride ?? (verdict === 'blunder' ? 300 : verdict === 'inaccuracy' ? 90 : 0);
 	return { uci, san, freq, games: Math.round(freq * 1000), cpLoss, name, verdict };
 }
 
@@ -105,7 +111,10 @@ function italianBook() {
 	register(['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Nge7']);
 	register(['e4', 'c5']);
 	return bookFrom({
-		'': (f) => [mv(f, 'e4', 0.55, 'main'), mv(f, 'd4', 0.3, 'book')],
+		// d4 is sound theory — inside SOUND_CP — but 50cp behind e4, so the rungs
+		// that ask for the STRONGEST book move exclude it while the rungs that ask
+		// for a sound one keep it. Without a gap the two rungs are untestable.
+		'': (f) => [mv(f, 'e4', 0.55, 'main'), mv(f, 'd4', 0.3, 'book', null, 50)],
 		e4: (f) => [mv(f, 'e5', 0.4, 'main'), mv(f, 'c5', 0.35, 'book', 'Sicilian Defence')],
 		'e4 e5': (f) => [mv(f, 'Nf3', 0.7, 'main'), mv(f, 'Nc3', 0.15, 'book')],
 		'e4 e5 Nf3': (f) => [mv(f, 'Nc6', 0.75, 'main')],
@@ -142,8 +151,8 @@ describe('a run without any hardcoded lines', () => {
 		expect(s.opening?.name).toBe('Test Opening');
 	});
 
-	it('accepts any sound book move under "book"', async () => {
-		const c = cfg({ practice: { ...DEFAULT_PRACTICE, deviationChance: 0, strictness: 'book' } });
+	it('accepts any sound book move under "free"', async () => {
+		const c = cfg({ practice: { ...DEFAULT_PRACTICE, deviationChance: 0, strictness: 'free' } });
 		let s = await startRun(c);
 		for (const san of ['e4', 'Nf3', 'Bc4']) {
 			s = (await submitMove(s, c, applySan(s.fen, san).uci)).state;
@@ -152,22 +161,27 @@ describe('a run without any hardcoded lines', () => {
 		expect(s.path[0]).toBe('e4');
 	});
 
-	it('accepts exactly one move under "repertoire"', async () => {
+	it('narrows to the strongest book move under "bestBook"', async () => {
 		const c = cfg({
-			practice: { ...DEFAULT_PRACTICE, deviationChance: 0, strictness: 'repertoire' },
+			practice: { ...DEFAULT_PRACTICE, deviationChance: 0, strictness: 'bestBook' },
 		});
 		const s = await startRun(c);
 		expect(s.expected.map((e) => e.san)).toEqual(['e4']);
 
 		const wrong = await submitMove(s, c, applySan(s.fen, 'd4').uci);
-		// The run does NOT advance — one move is the repertoire, and it is still
-		// waiting for it.
+		// The run does NOT advance — e4 is the strongest book move here, and it is
+		// still waiting for it.
 		expect(wrong.correct).toBe(false);
 		// But d4 is sound, and it must not be called a blunder. The engine rates it
 		// level with e4, so it now comes back as a NOVELTY: off the repertoire, not
 		// an error, and no mistake card. Will: "when user picks a move that is not
 		// in the line options, but is higher rated than the line moves by Stockfish
 		// it should not count as error."
+		//
+		// Note the two scores are different questions: the BOOK has d4 50cp behind,
+		// which is why the rung refuses it, while the engine called this particular
+		// position level, which is why it is not an error. The rung is a choice of
+		// exercise; the engine is the judge of harm.
 		expect(wrong.novelty).toBeDefined();
 		expect(wrong.message).toMatch(/not canon/i);
 		// And it names what the repertoire actually is, which is the point of saying
@@ -184,19 +198,26 @@ describe('a run without any hardcoded lines', () => {
 		for (const san of path) fen = applySan(fen, san).fen;
 
 		const moves = italianMovesAt(fen);
-		expect(type_.acceptable(moves, 'book').map((m) => m.san)).toContain('h6');
 		expect(type_.acceptable(moves, 'free').map((m) => m.san)).toContain('h6');
 	});
 
-	it('still narrows to the main line under "repertoire"', async () => {
-		// The mode that exists precisely to drill one line keeps doing that;
+	it('still narrows under "bestBook" where the book has a favourite', async () => {
+		// The rung that exists precisely to drill one move keeps doing that;
 		// following it IS the exercise there.
 		const path = ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4'];
 		let fen = INITIAL_FEN;
 		for (const san of path) fen = applySan(fen, san).fen;
 
+		// Every played move at this node is tied at zero in the synthetic book, so
+		// 'bestBook' accepts the whole tied group and drops only what is off it —
+		// the barely-played h6 and the blundering Nge7. A real book has real
+		// scores; a tie is not a failure to narrow, it is an honest tie.
 		const moves = italianMovesAt(fen);
-		expect(type_.acceptable(moves, 'repertoire').length).toBe(1);
+		expect(type_.acceptable(moves, 'bestBook').map((m) => m.san).sort()).toEqual([
+			'Bc5',
+			'Be7',
+			'Nf6',
+		]);
 	});
 
 	it('never accepts a move that loses material, at any strictness', async () => {
@@ -204,7 +225,7 @@ describe('a run without any hardcoded lines', () => {
 		let fen = INITIAL_FEN;
 		for (const san of path) fen = applySan(fen, san).fen;
 		const moves = italianMovesAt(fen);
-		for (const s of ['repertoire', 'book', 'free'] as const) {
+		for (const s of ['bestBook', 'bookSound', 'free', 'bestEngine'] as const) {
 			expect(type_.acceptable(moves, s).map((m) => m.san)).not.toContain('Nge7');
 		}
 	});
@@ -401,7 +422,7 @@ describe('a novelty — off the line, and the engine does not mind', () => {
 	}
 
 	const strict = () =>
-		cfg({ practice: { ...DEFAULT_PRACTICE, deviationChance: 0, strictness: 'repertoire' } });
+		cfg({ practice: { ...DEFAULT_PRACTICE, deviationChance: 0, strictness: 'bestBook' } });
 
 	it('is not an error when the engine likes it more', async () => {
 		const c = strict();

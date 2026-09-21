@@ -13,6 +13,7 @@ import type { ExplorerResponse } from '../domain/types';
 import { Move } from '../components/Move';
 import { DataPanel } from '../components/DataPanel';
 import { colourOfFen } from '../domain/notation';
+import { color } from '../ui/theme';
 
 type Check = { state: 'idle' | 'running' | 'ok' | 'fail'; note: string };
 
@@ -167,7 +168,7 @@ export function Build() {
 
 				<SignIn />
 
-				<section style={{ borderTop: '1px solid #ddd', paddingTop: 16, marginTop: 8 }}>
+				<section style={{ borderTop: `1px solid ${color.line}`, paddingTop: 16, marginTop: 8 }}>
 					<h3 style={{ margin: '0 0 4px' }}>Endpoint probe</h3>
 					<p style={{ fontSize: 13, opacity: 0.75, marginTop: 0 }}>
 						The explorer returned <code>401</code> from nginx — a proxy-level rejection. That
@@ -233,17 +234,17 @@ function CheckRow({
 }) {
 	const colour =
 		check.state === 'ok'
-			? '#2e7d32'
+			? color.good
 			: check.state === 'fail'
-				? '#c62828'
+				? color.bad
 				: check.state === 'running'
-					? '#ef6c00'
-					: '#888';
+					? color.warn
+					: color.ink2;
 	const glyph =
 		check.state === 'ok' ? '✓' : check.state === 'fail' ? '✗' : check.state === 'running' ? '…' : '·';
 
 	return (
-		<div style={{ borderTop: '1px solid #ddd', padding: '12px 0' }}>
+		<div style={{ borderTop: `1px solid ${color.line}`, padding: '12px 0' }}>
 			<div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
 				<span style={{ color: colour, fontWeight: 700, width: 16 }}>{glyph}</span>
 				<strong>{label}</strong>
@@ -262,18 +263,18 @@ function ProbeTable({ results }: { results: ProbeResult[] }) {
 	return (
 		<div style={{ marginTop: 12 }}>
 			{winner ? (
-				<p style={{ color: '#2e7d32', fontWeight: 600 }}>
+				<p style={{ color: color.good, fontWeight: 600 }}>
 					✓ Working: {winner.label}
 					{winner.withToken ? ' (token required)' : ' (anonymous OK)'}
 				</p>
 			) : (
-				<p style={{ color: '#c62828', fontWeight: 600 }}>
+				<p style={{ color: color.bad, fontWeight: 600 }}>
 					✗ Nothing worked — copy this table back to me.
 				</p>
 			)}
 			<table style={{ borderCollapse: 'collapse', fontSize: 13, width: '100%' }}>
 				<thead>
-					<tr style={{ textAlign: 'left', borderBottom: '1px solid #ccc' }}>
+					<tr style={{ textAlign: 'left', borderBottom: `1px solid ${color.line}` }}>
 						<th>Candidate</th>
 						<th>Token</th>
 						<th>Status</th>
@@ -282,10 +283,10 @@ function ProbeTable({ results }: { results: ProbeResult[] }) {
 				</thead>
 				<tbody>
 					{results.map((r, i) => (
-						<tr key={i} style={{ borderBottom: '1px solid #f0f0f0' }}>
+						<tr key={i} style={{ borderBottom: `1px solid ${color.line}` }}>
 							<td>{r.label}</td>
 							<td>{r.withToken ? 'yes' : 'no'}</td>
-							<td style={{ color: r.ok ? '#2e7d32' : '#c62828', fontWeight: 600 }}>
+							<td style={{ color: r.ok ? color.good : color.bad, fontWeight: 600 }}>
 								{r.status}
 							</td>
 							<td style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
@@ -305,7 +306,7 @@ function ExplorerTable({ data, colour }: { data: ExplorerResponse; colour: 'w' |
 	return (
 		<table style={{ borderCollapse: 'collapse', fontSize: 14, width: '100%' }}>
 			<thead>
-				<tr style={{ textAlign: 'left', borderBottom: '1px solid #ccc' }}>
+				<tr style={{ textAlign: 'left', borderBottom: `1px solid ${color.line}` }}>
 					<th>Move</th>
 					<th style={{ textAlign: 'right' }}>Games</th>
 					<th style={{ textAlign: 'right' }}>Freq</th>
@@ -318,7 +319,7 @@ function ExplorerTable({ data, colour }: { data: ExplorerResponse; colour: 'w' |
 					const freq = total ? games / total : 0;
 					const blackScore = games ? (m.black + m.draws / 2) / games : 0;
 					return (
-						<tr key={m.uci} style={{ borderBottom: '1px solid #f0f0f0' }}>
+						<tr key={m.uci} style={{ borderBottom: `1px solid ${color.line}` }}>
 							<td>
 								<Move san={m.san} colour={colour} bold />{' '}
 								<span style={{ opacity: 0.5, fontSize: 12 }}>{m.uci}</span>

@@ -19,32 +19,86 @@
 // The strictness of "may play" is the user's to set, because it is genuinely a
 // choice about what is being trained rather than a fact about chess:
 //
-//   'repertoire' — one answer per position. Memorisation.
-//   'book'       — any sound, reasonably common move. Exploration.
-//   'free'       — anything not actually bad. Only real errors are corrected.
+// The rungs are `STRICTNESS` below, from narrowest to widest, plus one that is
+// off the ladder entirely ('bestEngine' — the engine's best move whether or not
+// anyone plays it). Leaving the book is reported at EVERY rung; the rung only
+// decides what is accepted.
 // ---------------------------------------------------------------------------
 
 import type { ExplorerMove, ExplorerResponse } from './types';
 
-export type Strictness = 'repertoire' | 'book' | 'free';
+/*
+ * ---------------------------------------------------------------------------
+ * WHAT WAS HERE, AND WHY IT HAD TO CHANGE.
+ *
+ * Will: "the strictness options should be revised. Current 'One answer' option
+ * is useless — why would we care about which move is most popular."
+ *
+ * He is right, and it was worse than useless: of the three options, TWO OF THEM
+ * ACCEPTED THE SAME SET. `'book'` and `'free'` both fell through to `sound`,
+ * because an earlier and correct fix stopped frequency deciding right from wrong
+ * and nothing re-separated the rungs afterwards. So the setting offered three
+ * choices, one of which drilled the most popular move and two of which were
+ * identical.
+ *
+ * ---------------------------------------------------------------------------
+ * THE LADDER, strictest first. Each rung is a real narrowing of the one below.
+ *
+ *   bestBook   played, and as good as the best played move
+ *   bookSound  played, and sound
+ *   free       sound, played or not          (what 'book' and 'free' both were)
+ *
+ * And one that is NOT on the ladder:
+ *
+ *   bestEngine the best move here, book or not
+ *
+ * ---------------------------------------------------------------------------
+ * WHY `bestEngine` IS SEPARATE, which was Will's own question: "does that make
+ * sense or does it break the repertoire training functionality?"
+ *
+ * As a rung it would break it. You would never be marked wrong for leaving your
+ * own lines, so the repertoire numbers would stop meaning anything. But his
+ * instinct already carried the fix — "this should alert player they chose the
+ * best move but deviated from training repertoire". That is not acceptance, it
+ * is REPORTING, and once the two are separated the conflict disappears:
+ * `describeChoice` says a move was off the beaten track whatever the setting,
+ * so the deviation is always named, and `bestEngine` becomes an honest
+ * find-the-best-move drill rather than a repertoire drill pretending to be one.
+ */
+export type Strictness = 'bestBook' | 'bookSound' | 'free' | 'bestEngine';
 
 export const STRICTNESS: { id: Strictness; label: string; note: string }[] = [
 	{
-		id: 'repertoire',
-		label: 'One answer',
-		note: 'The most popular sound move, and only that. Strict memorisation.',
+		id: 'bestBook',
+		label: 'Best book move',
+		note: 'The strongest move anybody actually plays here. Ties count — anything within a third of a pawn of it is the same move as far as this is concerned.',
 	},
 	{
-		id: 'book',
-		label: 'Any book move',
-		note: 'Any sound move played often enough to be real theory. You discover the tree by playing it.',
+		id: 'bookSound',
+		label: 'Engine-approved book',
+		note: 'A move real games play here, that the engine also has no objection to. Theory, minus the dubious parts of it.',
 	},
 	{
 		id: 'free',
 		label: 'Anything sound',
-		note: 'Only moves that actually cost something are wrong. Popularity is ignored.',
+		note: 'Only moves that actually cost something are wrong. Popularity is ignored, so a good rarity is accepted and told you it is rare.',
+	},
+	{
+		id: 'bestEngine',
+		label: 'Best move, book or not',
+		note: 'Find the strongest move regardless of theory. Not a repertoire drill — leaving your lines is allowed here, and said out loud when it happens.',
 	},
 ];
+
+/**
+ * Close enough to the best move to count as the best move.
+ *
+ * The same number `explain.ts` calls `equal` and prints as "As good as Nxd4".
+ * Kept here rather than imported to avoid a cycle, and pinned to that one by a
+ * test, because two definitions of "equally good" is how a reader ends up being
+ * told a move is fine and marked wrong for it in the same breath.
+ */
+export const EQUAL_CP = 30;
 
 /** How common a move must be to count as theory, by default. */
 export const DEFAULT_MIN_FREQ = 0.03;
@@ -121,7 +175,10 @@ export function classifyBook(
 		return { m, games, freq, cpLoss };
 	});
 
-	// The most-played move that is not unsound is the reference for 'repertoire'.
+	// The most-played sound move is the one labelled 'main'. That is a fact about
+	// the book — it is what the display calls the main line — and nothing in
+	// `acceptable` reads it any more: the rungs sort by SCORE, not by popularity,
+	// which is the whole point of the revision.
 	const popularSound = [...rows]
 		.filter((r) => (r.cpLoss ?? 0) <= SOUND_CP)
 		.sort((a, b) => b.freq - a.freq)[0];
@@ -157,35 +214,66 @@ export function classifyBook(
  */
 export function acceptable(moves: BookMove[], strictness: Strictness): BookMove[] {
 	const sound = moves.filter((m) => (m.cpLoss ?? 0) <= SOUND_CP);
+	// "Played here" is already decided by `classifyBook`, which marks a move
+	// `main` or `book` when it clears the frequency bar and `sound` when it is
+	// good but rare. Re-deriving it from `freq` would be a second definition.
+	const played = moves.filter((m) => m.verdict === 'main' || m.verdict === 'book');
 
-	if (strictness === 'free') {
-		return sound.length ? sound : [];
+	/*
+	 * THE BEST OF A SET, WITH TIES.
+	 *
+	 * Will: "for 'best' we consider moves within some negligible tolerance
+	 * equally good". `EQUAL_CP`, which is the number the explainer already uses
+	 * when it says one move is as good as another.
+	 *
+	 * AN UNMEASURED MOVE COUNTS AS BEST. `cpLoss` is null until something has
+	 * paid for a search, and a position nobody has scored yet would otherwise
+	 * have every move rejected — the reader marked wrong for playing the right
+	 * move because the engine had not answered. Accepting too much is the safe
+	 * direction; rejecting a correct answer is not.
+	 */
+	const best = (set: BookMove[]): BookMove[] => {
+		if (!set.length) return [];
+		const floor = Math.min(...set.map((m) => m.cpLoss ?? 0));
+		return set.filter((m) => (m.cpLoss ?? 0) <= floor + EQUAL_CP);
+	};
+
+	switch (strictness) {
+		case 'bestEngine':
+			// Every move here, not just the played ones — that is the whole point
+			// of this mode, and why it is not a rung on the ladder.
+			return best(moves);
+
+		case 'bestBook':
+			// Fall back to the whole sound set rather than to nothing: a position
+			// the explorer has no games for is the opening ending, not a failure.
+			return best(played).length ? best(played) : sound;
+
+		case 'bookSound':
+			return played.filter((m) => (m.cpLoss ?? 0) <= SOUND_CP).length
+				? played.filter((m) => (m.cpLoss ?? 0) <= SOUND_CP)
+				: sound;
+
+		case 'free':
+			// ---------------------------------------------------------------------
+			// SOUNDNESS DECIDES RIGHT AND WRONG HERE, and frequency decides nothing.
+			//
+			// This rung used to be the only behaviour, shared with 'book'. The
+			// reasoning for it stands and is worth keeping: requiring a move to
+			// clear a frequency bar means a SOUND move can be marked wrong for
+			// being unpopular, which trains you to reproduce common moves rather
+			// than good ones. At the extreme it rejected the engine's own choice.
+			//
+			// What changed is that the tighter rungs now ask for "played" ON TOP OF
+			// sound, rather than INSTEAD OF it — an explicit narrowing the reader
+			// chose, not a hidden rule.
+			//
+			// Frequency still governs the OPPONENT (`opponentBook`), and that
+			// asymmetry is the correct one: predicting them is a question about
+			// what people play, judging yourself is a question about what is good.
+			// ---------------------------------------------------------------------
+			return sound;
 	}
-
-	if (strictness === 'repertoire') {
-		// The one line, deliberately. This is the mode for drilling a specific
-		// repertoire, so following the main line IS the exercise.
-		const main = moves.find((m) => m.verdict === 'main');
-		return main ? [main] : sound.slice(0, 1);
-	}
-
-	// ---------------------------------------------------------------------
-	// 'book' NO LONGER MEANS "frequently played".
-	//
-	// It used to require a move to clear a frequency bar, which meant a SOUND
-	// move could be marked wrong for being unpopular — training you to
-	// reproduce common moves rather than good ones. That inverts what the app
-	// is for. At the extreme it rejected the engine's own top choice.
-	//
-	// Soundness decides right and wrong. Frequency decides what is worth
-	// SAYING about a move — "that is theory" versus "that is fine, and almost
-	// nobody plays it" — and `describeChoice` below is where that lives.
-	//
-	// Frequency still governs the OPPONENT (`opponentBook`), and that
-	// asymmetry is the correct one: predicting them is a question about what
-	// people play, judging yourself is a question about what is good.
-	// ---------------------------------------------------------------------
-	return sound;
 }
 
 /**

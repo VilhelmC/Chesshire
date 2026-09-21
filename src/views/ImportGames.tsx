@@ -114,8 +114,11 @@ export function ImportGames({ onImported }: { onImported: () => void }) {
 			{(missingMoves.length > 0 || repairNote) && (
 				<div
 					style={{
-						border: '1px solid #eda100',
-						background: '#eda10010',
+						border: `1px solid ${color.warn}`,
+						// `${color.warn}10` cannot work: these are `var(--…)` strings, and
+						// a var() reference cannot be concatenated into a new colour. That
+						// is what the `*Soft` tokens exist for.
+						background: color.warnSoft,
 						borderRadius: 8,
 						padding: 10,
 						margin: '0 0 12px',
@@ -221,7 +224,7 @@ export function ImportGames({ onImported }: { onImported: () => void }) {
 					<table style={{ borderCollapse: 'collapse', fontSize: 12, marginTop: 8 }}>
 						<tbody>
 							{history.slice(0, 30).map((g) => (
-								<tr key={g.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+								<tr key={g.id} style={{ borderBottom: `1px solid ${color.line}` }}>
 									<td style={{ padding: '2px 8px 2px 0' }}>
 										{new Date(g.playedAt).toISOString().slice(0, 10)}
 									</td>
@@ -319,7 +322,7 @@ function ProgressBlock({ p }: { p: ImportProgress }) {
 				<div
 					style={{
 						height: 6,
-						background: '#eee',
+						background: color.line,
 						borderRadius: 3,
 						marginTop: 6,
 						maxWidth: 400,
@@ -329,7 +332,7 @@ function ProgressBlock({ p }: { p: ImportProgress }) {
 						style={{
 							height: 6,
 							width: `${Math.round((p.done / p.total) * 100)}%`,
-							background: '#1565c0',
+							background: color.accent,
 							borderRadius: 3,
 						}}
 					/>
@@ -353,12 +356,12 @@ function ProgressBlock({ p }: { p: ImportProgress }) {
 function SourceLine({ s }: { s: SourceStatus }) {
 	const colour =
 		s.state === 'ok'
-			? '#2e7d32'
+			? color.good
 			: s.state === 'fail'
-				? '#c62828'
+				? color.bad
 				: s.state === 'skipped'
-					? '#888'
-					: '#ef6c00';
+					? color.ink2
+					: color.warn;
 	const glyph = s.state === 'ok' ? '✓' : s.state === 'fail' ? '✗' : s.state === 'skipped' ? '·' : '…';
 	return (
 		<div style={{ fontSize: 13, color: colour, marginTop: 2 }}>

@@ -11,7 +11,8 @@
 
 import { useEffect, useState } from 'react';
 import { beginSignIn, signedInAs, hasToken, signOut } from '../data/lichessAuth';
-import { color } from '../ui/theme';
+import { color, radius, space } from '../ui/theme';
+import { Button } from '../ui/primitives';
 
 const INK_2 = color.ink2;
 
@@ -39,10 +40,10 @@ export function SignIn({ onChange }: { onChange?: () => void }) {
 	return (
 		<section
 			style={{
-				border: '1px solid #ddd',
-				borderRadius: 8,
-				padding: 12,
-				marginBottom: 16,
+				border: `1px solid ${color.line}`,
+				borderRadius: radius.panel,
+				padding: space.card,
+				marginBottom: space.section,
 			}}
 		>
 			{user ? (
@@ -87,22 +88,9 @@ export function SignIn({ onChange }: { onChange?: () => void }) {
 						</>
 					}
 					action={
-						<button
-							onClick={() => void start(setBusy)}
-							disabled={busy}
-							style={{
-								padding: '8px 14px',
-								fontSize: 15,
-								borderRadius: 6,
-								border: '1px solid #1565c0',
-								background: '#1565c0',
-								color: '#fff',
-								cursor: 'pointer',
-								minHeight: 40,
-							}}
-						>
+						<Button kind="primary" onClick={() => void start(setBusy)} disabled={busy}>
 							{busy ? 'Redirecting…' : 'Sign in with Lichess'}
-						</button>
+						</Button>
 					}
 				/>
 			)}

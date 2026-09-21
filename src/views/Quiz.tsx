@@ -5,7 +5,7 @@
 // move. Getting it wrong puts the card straight back in the queue rather than
 // moving on, which is what "repeat until correct" means.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BoardPanel } from '../components/BoardPanel';
 import type { ToolbarAction } from '../components/Toolbar';
 import { analysePosition, toColourPov } from '../data/cloudEval';
@@ -22,7 +22,7 @@ import {
 	type MistakeCard,
 } from '../domain/mistakes';
 import { applyUci, sameMove, replayLine, parseSquare } from '../domain/chess';
-import { Empty, Button, Panel } from '../ui/primitives';
+import { Chip, Empty, Button, Panel } from '../ui/primitives';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
 import { TrainingWheels } from '../components/TrainingWheels';
 import { useTrainingWheels } from '../hooks/useTrainingWheels';
@@ -40,7 +40,7 @@ import { withGlyph } from '../domain/notation';
 import { nameForPath } from '../domain/openings';
 import { registerDebug, describePosition } from '../data/debug';
 import { useViewport } from '../components/useViewport';
-import { color } from '../ui/theme';
+import { color, space, text } from '../ui/theme';
 import { recall, remember } from '../data/viewState';
 
 const INK_2 = color.ink2;
@@ -79,7 +79,54 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	 * colour swatch. Will: "UI should be basically the same for mistakes as for
 	 * train". It is the same table now, and the buttons switch tags on it.
 	 */
-	const [tableOn, setTableOn] = useState<ReadonlySet<MoveSource>>(() => new Set<MoveSource>());
+	const [tableOn, setTableOnState] = useState<ReadonlySet<MoveSource>>(
+		() =>
+			new Set(
+				(recall('tableOn', (v) => Array.isArray(v) && v.every((x) => typeof x === 'string')) ?? [
+					'engine',
+					'popular',
+				]).filter((k): k is MoveSource => k === 'line' || k === 'engine' || k === 'popular'),
+			),
+	);
+	const setTableOn = useCallback(
+		(next: ReadonlySet<MoveSource> | ((cur: ReadonlySet<MoveSource>) => ReadonlySet<MoveSource>)) => {
+			setTableOnState((cur) => {
+				const value = typeof next === 'function' ? next(cur) : next;
+				remember({ tableOn: [...value] });
+				return value;
+			});
+		},
+		[],
+	);
+	/**
+	 * …and whether the table is on screen at all.
+	 *
+	 * -----------------------------------------------------------------------
+	 * THE SAME TWO FACTS TRAIN KEEPS, AND THE SAME STORAGE KEYS.
+	 *
+	 * Will: "in Train tab we swapped show and options and played to one button
+	 * design — but that change has not been applied to Mistakes. All buttons and
+	 * the buttons bar should be unified."
+	 *
+	 * Mistakes still had the old arrangement: an `options` button that owned the
+	 * engine rows and a `stats` button that owned the explorer rows, each a
+	 * one-shot fetch that a second press threw away. So the same two sources
+	 * behaved differently depending on which tab you were in — and the tab that
+	 * had been fixed was not the one where the abstract icons were hardest to
+	 * tell apart.
+	 *
+	 * They share the stored keys deliberately. "Show me the moves, filtered like
+	 * this" is one preference about how you want to be taught, not two, and
+	 * having it reset when you crossed a tab boundary was itself a small lie
+	 * about the two screens being different things.
+	 */
+	const [tableShown, setTableShownState] = useState<boolean>(
+		() => recall('tableShown', (v) => typeof v === 'boolean') === true,
+	);
+	const setTableShown = useCallback((next: boolean) => {
+		setTableShownState(next);
+		remember({ tableShown: next });
+	}, []);
 	const [busy, setBusy] = useState(false);
 	const vp = useViewport();
 	/**
@@ -195,7 +242,7 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 
 	/** One place to switch a tag on the shared table. */
 	function tag(src: MoveSource, on: boolean) {
-		setTableOn((cur) => {
+		setTableOn((cur: ReadonlySet<MoveSource>) => {
 			const next = new Set(cur);
 			if (on) next.add(src);
 			else next.delete(src);
@@ -203,51 +250,64 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		});
 	}
 
-	/** Every legal move, weighted by quality — the trainer's own help, unchanged. */
-	async function showOptions() {
-		if (!current || busy) return;
-		// A second press puts the rows away, exactly as in Train: the button
-		// switches a tag on the one table rather than owning a rendering.
-		if (tableOn.has('engine')) {
-			tag('engine', false);
-			return;
-		}
-		setBusy(true);
-		try {
-			setCandidates(await candidateMoves(current.fen, current.ourColour, 5));
-			tag('engine', true);
-			// `setHelped` is not called here: the effect above owns it, for every
-			// source alike. Showing options is still a HINT rather than the answer —
-			// `reveal` remains a separate fact, and the button for it stays.
-		} catch (e) {
-			setFeedback({ ok: false, text: (e as Error).message });
-		} finally {
-			setBusy(false);
-		}
-	}
-
-	/**
-	 * What people actually played from this position.
+	/*
+	 * THE TWO SOURCES ARE STANDING REQUESTS, NOT BUTTON PRESSES.
 	 *
-	 * Train has had this since the explorer went in; a mistake is a position out
-	 * of a real game and the same question applies to it. Costs one request, and
-	 * only when asked.
+	 * They were `showOptions()` and `showDistribution()`: fetch once, stash the
+	 * result, and let a second press throw it away. That works exactly as long as
+	 * the position never changes underneath them — and in Mistakes it changes on
+	 * every card. The effect owns the state instead, so "engine is on" is a fact
+	 * about what you want to see rather than a record of a button you pressed,
+	 * and moving to the next card refills it without being asked.
+	 *
+	 * Clearing first is the half that matters: the previous card's five moves
+	 * must not stay drawn on a board where they are not legal. A blank table for
+	 * a moment is honest; a wrong one is not. Train learned this the hard way —
+	 * see the same pair of effects there.
 	 */
-	async function showDistribution() {
-		if (!current) return;
-		if (distribution) {
-			setDistribution(null);
-			tag('popular', false);
-			return;
-		}
-		try {
-			const data = await fetchExplorer(current.fen);
-			setDistribution(distributionOf(data, colourOfFen(current.fen)));
-			tag('popular', true);
-		} catch (e) {
-			setFeedback({ ok: false, text: (e as Error).message });
-		}
-	}
+	const cardFen = current?.fen ?? null;
+	const cardColour = current?.ourColour;
+	const engineOn = tableShown && tableOn.has('engine');
+	useEffect(() => {
+		setCandidates(null);
+		if (!engineOn || !cardFen || !cardColour) return;
+		let live = true;
+		// The search is the one thing here that takes long enough to need saying
+		// so; `busy` is what puts the board's working indicator up.
+		setBusy(true);
+		void (async () => {
+			try {
+				const cands = await candidateMoves(cardFen, cardColour, 5);
+				if (live) setCandidates(cands);
+			} catch (e) {
+				if (live) setFeedback({ ok: false, text: (e as Error).message });
+			} finally {
+				if (live) setBusy(false);
+			}
+		})();
+		return () => {
+			live = false;
+			setBusy(false);
+		};
+	}, [engineOn, cardFen, cardColour]);
+
+	const popularOn = tableShown && tableOn.has('popular');
+	useEffect(() => {
+		setDistribution(null);
+		if (!popularOn || !cardFen) return;
+		let live = true;
+		void (async () => {
+			try {
+				const data = await fetchExplorer(cardFen);
+				if (live) setDistribution(distributionOf(data, colourOfFen(cardFen)));
+			} catch (e) {
+				if (live) setFeedback({ ok: false, text: (e as Error).message });
+			}
+		})();
+		return () => {
+			live = false;
+		};
+	}, [popularOn, cardFen]);
 
 	/**
 	 * The moves that led to this position, replayed.
@@ -344,9 +404,10 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	 */
 	useEffect(() => {
 		if (!current) return;
-		const showing = (tableOn.size > 0 && candidates !== null) || (wheels.active && wheels.on.size > 0);
+		const showing =
+			(tableShown && tableOn.size > 0) || (wheels.active && wheels.on.size > 0);
 		if (showing) setHelped(true);
-	}, [current, tableOn, candidates, wheels.active, wheels.on]);
+	}, [current, tableShown, tableOn, wheels.active, wheels.on]);
 
 	const tableArrows = useMemo(() => {
 		// NOT WHILE LOOKING BACK. The table is about the card's position; stepping
@@ -355,7 +416,12 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		// applies to `interactive`, and the wheels to their own overlays.
 		if (!atCard) return [];
 		const graded = new Map((candidates ?? []).map((c) => [c.uci, c]));
-		const out = (tableOn.size ? filterMoves(moveRows, effectiveSources(moveRows, tableOn)) : []).map((row) => {
+		// HIDDEN TABLE, NO ARROWS — the chips are what say which source an arrow
+		// came from, and drawn without them the board is coloured for no stated
+		// reason. The same rule Train applies.
+		if (!tableShown) return [];
+		const keep = reveal && current ? current.expectedUci : undefined;
+		const out = filterMoves(moveRows, effectiveSources(moveRows, tableOn), keep).map((row) => {
 			const c = graded.get(row.uci);
 			return {
 				orig: row.uci.slice(0, 2),
@@ -371,7 +437,7 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 				brush: 'green',
 			});
 		return out;
-	}, [moveRows, tableOn, candidates, reveal, current, atCard]);
+	}, [moveRows, tableOn, tableShown, candidates, reveal, current, atCard]);
 
 	/**
 	 * The move that produced the position being shown.
@@ -452,36 +518,36 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 				disabled: !lastPly || atCard,
 			},
 			{
+				/*
+				 * ONE BUTTON WHERE THERE WERE TWO, exactly as in Train.
+				 *
+				 * `options` owned the engine rows and `stats` owned the explorer
+				 * rows, with two abstract icons — a ramp of arrows and a bar chart —
+				 * that Will could not tell apart, which is the same complaint that
+				 * collapsed Train's three into one. The sources are chips inside the
+				 * table now, labelled in words, and this says only whether the table
+				 * and its arrows are up.
+				 */
 				id: 'options',
-				title: 'Show every legal move, weighted by how good it is (stops this card counting)',
-				icon: 'options',
-				// ACCENT FOLLOWS THE TABLE, as in Train: the button switches a tag on
-				// rather than owning a rendering, and one that looked the same either
-				// way would be lying about what pressing it did. It is also no longer
-				// disabled once pressed — pressing again puts the rows away.
-				accent: tableOn.has('engine'),
-				onClick: showOptions,
-				disabled: !current || busy,
-			},
-			{
-				id: 'stats',
-				title: 'What players actually play here — frequency and score',
-				icon: 'stats',
-				accent: tableOn.has('popular'),
-				onClick: showDistribution,
-				disabled: !current || busy,
+				title: tableShown
+					? 'Hide the moves — arrows and table'
+					: 'Show the moves on the board — the engine, and what people play (stops this card counting)',
+				icon: 'reveal',
+				accent: tableShown,
+				onClick: () => setTableShown(!tableShown),
+				disabled: !current,
 			},
 			{
 				id: 'reveal',
 				title: 'Show me the move (stops this card counting)',
-				icon: 'reveal',
+				// NOT the eye: the eye is "show the moves" across the whole app now,
+				// and this is the answer to one question rather than a view of the
+				// position. See `Toolbar`'s `answer`.
+				icon: 'answer',
 				accent: reveal,
 				onClick: () => {
 					setReveal(true);
 					setHelped(true);
-					// The answer joins the one table, tagged "the line", instead of
-					// being a second way of naming a move.
-					tag('line', true);
 				},
 				disabled: !current || reveal,
 			},
@@ -501,10 +567,12 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		setFeedback(null);
 		setReveal(false);
 		setHelped(false);
+		// The rows belonged to the last card's position; the EFFECTS refill them
+		// for the new one. `setTableOn(new Set())` used to be here too, which
+		// silently switched the filters off on every card — so a preference that
+		// now persists across reloads would have been wiped one card later.
 		setCandidates(null);
-		// Everything the table was showing belonged to the last card's position.
 		setDistribution(null);
-		setTableOn(new Set());
 		setAsking(null);
 		lineOverlay.close();
 		// Back to the position being asked about. Carrying a preview across cards
@@ -651,8 +719,8 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 								<div
 									style={{
 										fontSize: 13,
-										background: '#ffebee',
-										border: '1px solid #ef9a9a',
+										background: color.badSoft,
+										border: `1px solid ${color.bad}`,
 										borderRadius: 6,
 										padding: '6px 8px',
 										marginBottom: 6,
@@ -697,7 +765,7 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 									style={{
 										marginTop: 8,
 										fontSize: 14,
-										color: feedback.ok ? '#2e7d32' : '#c62828',
+										color: feedback.ok ? color.good : color.bad,
 									}}
 								>
 									{feedback.text}
@@ -736,12 +804,21 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 							  * people play, and the card's own answer once revealed. Every
 							  * row has a `?`, which is the doorway §1 asked for.
 							  */}
-							{tableOn.size > 0 && moveRows.length > 0 && (
+							{tableShown && (
 								<div style={{ marginTop: 10 }}>
 									<MoveTable
 										rows={moveRows}
 										mover={current.ourColour}
 										on={tableOn}
+										// The host says what it can offer, so a chip you switch
+										// off is still there to switch back on. Mistakes has no
+										// repertoire, so it offers two sources rather than
+										// Train's three.
+										offers={['engine', 'popular']}
+										// The revealed answer is not a filter result; it is the
+										// thing you asked for by name. See `filterMoves`.
+										keep={reveal ? current.expectedUci : undefined}
+										marked={reveal ? current.expectedUci : undefined}
 										onToggle={(src) => tag(src, !tableOn.has(src))}
 										onAsk={(uci) =>
 											setAsking({
@@ -784,7 +861,7 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 													marginLeft: 'auto',
 													border: 'none',
 													background: 'none',
-													color: '#1565c0',
+													color: color.accent,
 													cursor: 'pointer',
 													fontSize: 13,
 												}}
@@ -867,37 +944,27 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 						const n = counts[cat.id] ?? { total: 0, due: 0 };
 						const on = categories.includes(cat.id);
 						return (
-							<button
+							<Chip
 								key={cat.id}
+								on={on}
 								onClick={() => toggleCategory(cat.id)}
 								disabled={n.total === 0}
 								title={`${cat.note} ${n.due} due of ${n.total}.`}
-								style={{
-									fontSize: 12,
-									padding: '4px 8px',
-									borderRadius: 14,
-									border: `1px solid ${on ? '#1565c0' : '#ddd'}`,
-									background: on ? '#e3f2fd' : '#fff',
-									color: n.total === 0 ? '#b5b4b0' : '#1a1a19',
-									cursor: n.total === 0 ? 'default' : 'pointer',
-									touchAction: 'manipulation',
-								}}
 							>
 								{cat.label}{' '}
-								<span style={{ color: INK_2 }}>
+								<span style={{ opacity: 0.7 }}>
 									{n.due}/{n.total}
 								</span>
-							</button>
+							</Chip>
 						);
 					})}
 				</div>
 				{categories.length > 0 && (
-					<button
-						onClick={() => chooseCategories([])}
-						style={{ fontSize: 11, marginBottom: 8 }}
-					>
-						Show all categories
-					</button>
+					<div style={{ marginBottom: 8 }}>
+						<Button kind="quiet" onClick={() => chooseCategories([])}>
+							Show all categories
+						</Button>
+					</div>
 				)}
 				<div style={{ fontSize: 14 }}>
 					<strong>{stats.due}</strong> due · {stats.learning} in the deck · {stats.retired}{' '}
@@ -910,24 +977,68 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 				</p>
 
 				<h3>Hardest</h3>
-				<ol style={{ fontSize: 13, paddingLeft: 20 }}>
+				{/*
+				  * WHAT THE POSITION WAS, AND A WAY INTO IT.
+				  *
+				  * Will: "the annotation is useless. Just says a move and variation,
+				  * but that tells user nothing about what the position was. Also user
+				  * needs to be able to click to display the problem on the board."
+				  *
+				  * Right on both counts, and they are the same fault. The row led with
+				  * the ANSWER — a bare `d5` — which is meaningless without the position
+				  * and is also the one thing a list of your weak spots should not be
+				  * shouting at you. What identifies a card is where it happened and
+				  * what you were answering, so that is what it leads with now, and the
+				  * answer is not shown at all: the row is a door to the card, and the
+				  * card is where you get to try it.
+				  */}
+				<ul style={{ listStyle: 'none', padding: 0, margin: 0, fontSize: text.note }}>
 					{[...inCategories(cards, categories)]
 						.sort((a, b) => b.lapses - a.lapses)
 						.slice(0, 8)
-						.map((c) => (
-							<li key={c.id} style={{ marginBottom: 2 }}>
-								<Move san={c.expectedSan} colour={c.ourColour} bold size={13} />{' '}
-								<span style={{ color: INK_2 }}>
-									(played{' '}
-									<Move san={c.playedSan} colour={c.ourColour} size={12} />) — missed{' '}
-									{c.lapses}×{c.retired && ' · retired'}
-								</span>
-								{lineLabelFor(c) && (
-									<div style={{ fontSize: 11, color: INK_2 }}>{lineLabelFor(c)}</div>
-								)}
-							</li>
-						))}
-				</ol>
+						.map((c) => {
+							const last = lastMoveOf(c);
+							return (
+								<li key={c.id} style={{ borderBottom: `1px solid ${color.line}` }}>
+									<button
+										onClick={() =>
+											next([c, ...queue.filter((q) => q.id !== c.id)])
+										}
+										title="Put this position on the board"
+										style={{
+											display: 'block',
+											width: '100%',
+											textAlign: 'left',
+											background:
+												current?.id === c.id ? color.accentSoft : 'transparent',
+											border: 'none',
+											borderLeft: `3px solid ${
+												current?.id === c.id ? color.accent : 'transparent'
+											}`,
+											padding: `${space.snug}px ${space.snug}px`,
+											font: 'inherit',
+											color: color.ink,
+											cursor: 'pointer',
+											touchAction: 'manipulation',
+										}}
+									>
+										<div style={{ color: color.ink }}>{namesFor(c)}</div>
+										<div style={{ color: color.ink2, marginTop: 2 }}>
+											{last ? (
+												<>
+													after <Move san={last.san} colour={last.colour} size={12} />{' '}
+													·{' '}
+												</>
+											) : null}
+											you played <Move san={c.playedSan} colour={c.ourColour} size={12} />
+											{' · '}
+											missed {c.lapses}×{c.retired && ' · retired'}
+										</div>
+									</button>
+								</li>
+							);
+						})}
+				</ul>
 
 				{/* The debug handle now lives in the screen corner on every tab
 					(components/DebugCorner.tsx) — a bug is not always on this one. */}
@@ -1031,7 +1142,21 @@ export function moveNumberFor(c: MistakeCard): { no: number; white: boolean } {
 	return { no: Math.floor(ply / 2) + 1, white: ply % 2 === 0 };
 }
 
-function namesFor(c: MistakeCard): string {
+/**
+ * The move that PRODUCED this position — their last one.
+ *
+ * `path` holds the moves before the mistake, so its last entry is the move you
+ * were answering. On a card from move 24 of a real game that single fact is the
+ * difference between "a position" and "this position".
+ */
+export function lastMoveOf(c: MistakeCard): { san: string; colour: 'w' | 'b' } | null {
+	const path = c.path ?? [];
+	if (!path.length) return null;
+	const ply = path.length - 1;
+	return { san: path[ply], colour: ply % 2 === 0 ? 'w' : 'b' };
+}
+
+export function namesFor(c: MistakeCard): string {
 	const parts: string[] = [];
 
 	const line = lineLabelFor(c);

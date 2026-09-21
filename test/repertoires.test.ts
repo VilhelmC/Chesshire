@@ -6,7 +6,14 @@
 // switched-off repertoire could quietly keep being trained.
 
 import { describe, it, expect } from 'vitest';
-import { activeRoots, describePractice, DEFAULT_PRACTICE, type PracticeConfig } from '../src/domain/practice';
+import {
+	activeRoots,
+	describePractice,
+	normalise,
+	DEFAULT_PRACTICE,
+	type PracticeConfig,
+} from '../src/domain/practice';
+import { STRICTNESS } from '../src/domain/book';
 
 const cfg = (roots: PracticeConfig['roots']): PracticeConfig => ({ ...DEFAULT_PRACTICE, roots });
 const root = (name: string, active?: boolean) => ({ path: ['e4'], name, ...(active === undefined ? {} : { active }) });
@@ -48,5 +55,37 @@ describe('what the header says', () => {
 
 	it('counts several', () => {
 		expect(describePractice(cfg([root('a', true), root('b', true)]))).toContain('2 openings');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// The strictness ladder replaced three ids with four, and a browser that has
+// been used before is holding one of the old ones. Dropping it would silently
+// move the reader to a different exercise from the one they chose, so the old
+// ids map forward — and the migrated answer is written back, so what is stored
+// stops contradicting what is running.
+// ---------------------------------------------------------------------------
+describe('carrying an older setting forward', () => {
+	it('maps the retired ids onto the rungs that replaced them', () => {
+		// 'repertoire' drilled the most POPULAR sound move; 'bestBook' drills the
+		// strongest one — the same shape of exercise, aimed at a better target.
+		expect(normalise({ strictness: 'repertoire' } as never).strictness).toBe('bestBook');
+		// 'book' and 'free' accepted an identical set, which is why the ladder
+		// exists at all, so both land where they already were.
+		expect(normalise({ strictness: 'book' } as never).strictness).toBe('free');
+		expect(normalise({ strictness: 'free' } as never).strictness).toBe('free');
+	});
+
+	it('falls back to the default rather than crashing on nonsense', () => {
+		expect(normalise({ strictness: 'gibberish' } as never).strictness).toBe(
+			DEFAULT_PRACTICE.strictness,
+		);
+		expect(normalise({}).strictness).toBe(DEFAULT_PRACTICE.strictness);
+	});
+
+	it('keeps every rung it is given', () => {
+		for (const s of STRICTNESS) {
+			expect(normalise({ strictness: s.id }).strictness).toBe(s.id);
+		}
 	});
 });

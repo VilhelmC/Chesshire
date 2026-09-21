@@ -133,7 +133,32 @@ export function gameLosses(
 	games: readonly Reviewable[],
 	bookDepth: (moves: string[]) => number,
 ): number[] {
-	const out: number[] = [];
+	return gameLossRows(games, bookDepth).map((r) => r.cpLoss);
+}
+
+/**
+ * The same losses, still attached to the game they came from.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "the graph in progress only shows the 'from free play' estimate. User
+ * should be able to choose 'from your games' instead."
+ *
+ * `ratingSeries` already knows how to turn (something, when, how much) into a
+ * trend, and it was only ever fed free-play answers because that was the only
+ * source that kept a `runId` and a timestamp beside each loss. A game has both
+ * — its own id and its own date — so the plot needs no second implementation,
+ * only the rows.
+ *
+ * This is the definition and `gameLosses` is now a projection of it, rather
+ * than the two filters being written out twice and drifting. The mate-score
+ * exclusion below is the kind of rule that MUST have exactly one home: this
+ * repo has now caught the same arithmetic three times.
+ */
+export function gameLossRows(
+	games: readonly Reviewable[],
+	bookDepth: (moves: string[]) => number,
+): { runId: string; ts: number; cpLoss: number }[] {
+	const out: { runId: string; ts: number; cpLoss: number }[] = [];
 	for (const g of games) {
 		if (!g.evals.length) continue;
 		const book = bookDepth(g.moves);
@@ -149,7 +174,7 @@ export function gameLosses(
 				(a.after !== null && isMateScore(a.after))
 			)
 				continue;
-			out.push(a.loss);
+			out.push({ runId: g.id, ts: g.ts, cpLoss: a.loss });
 		}
 	}
 	return out;

@@ -40,12 +40,14 @@ import type { AnswerRow } from '../domain/progress';
 import { reviewables, summarise, type Reviewable, type ReviewSource } from '../domain/reviewable';
 import { db, type ImportedGameRow } from '../data/db';
 import { color, space, radius, text, TOUCH } from '../ui/theme';
-import { Empty, Note } from '../ui/primitives';
+import { Button, Empty, Note, Segmented } from '../ui/primitives';
 
 const INK = color.ink;
 const INK_2 = color.ink2;
 const GRID = color.line;
-const SERIES = '#2a78d6';
+// The accent, for the same reason as Progress's: the chrome stopped being blue
+// and a single-series chart has no business choosing its own hue.
+const SERIES = color.accent;
 
 export function Review({
 	onPlayFrom,
@@ -204,37 +206,44 @@ export function Review({
 					</div>
 
 					<div style={{ display: 'flex', gap: 6, marginTop: 10, alignItems: 'center' }}>
-						<button onClick={() => setPly(0)} disabled={ply === 0}>
+						<Button title="Back to the start" onClick={() => setPly(0)} disabled={ply === 0}>
 							⏮
-						</button>
-						<button onClick={() => setPly((p) => Math.max(0, p - 1))} disabled={ply === 0}>
+						</Button>
+						<Button
+							title="Previous move"
+							onClick={() => setPly((p) => Math.max(0, p - 1))}
+							disabled={ply === 0}
+						>
 							◀
-						</button>
-						<button
+						</Button>
+						<Button
+							title="Next move"
 							onClick={() => setPly((p) => Math.min(positions.length - 1, p + 1))}
 							disabled={ply >= positions.length - 1}
 						>
 							▶
-						</button>
-						<button
+						</Button>
+						<Button
+							title="To the end"
 							onClick={() => setPly(positions.length - 1)}
 							disabled={ply >= positions.length - 1}
 						>
 							⏭
-						</button>
+						</Button>
 						<span style={{ fontSize: 13, color: INK_2, marginLeft: 6 }}>
 							ply {ply} / {positions.length - 1}
 						</span>
 						{onPlayFrom && (
-							<button
-								onClick={() =>
-									onPlayFrom({ moves: run.moves ?? [], ply, ourColour })
-								}
-								style={{ marginLeft: 8 }}
-								title="Take this position into the trainer and play it out against the engine"
-							>
-								Play on from here
-							</button>
+							<span style={{ marginLeft: space.snug }}>
+								<Button
+									onClick={() =>
+										onPlayFrom({ moves: run.moves ?? [], ply, ourColour })
+									}
+									title="Take this position into the trainer and play it out against the engine"
+								>
+									Play on from here
+								</Button>
+							</span>
 						)}
 					</div>
 
@@ -336,16 +345,26 @@ function GameList({
 
 	return (
 		<div>
-			<div style={{ display: 'flex', gap: space.tight, marginBottom: space.card, flexWrap: 'wrap' }}>
-				<Pill on={filter === 'all'} onClick={() => onFilter('all')}>
-					Everything ({items.length})
-				</Pill>
-				<Pill on={filter === 'game'} onClick={() => onFilter('game')}>
-					Your games ({games})
-				</Pill>
-				<Pill on={filter === 'run'} onClick={() => onFilter('run')}>
-					Training runs ({runs})
-				</Pill>
+			{/*
+			  * The shared one-of-N control, not a fourth private copy of it.
+			  *
+			  * `Pill` was tinting — accent text on `accentSoft` — which is the
+			  * signal that was replaced everywhere ELSE months ago because it
+			  * cannot be read at a glance. Two rules for "this one is selected"
+			  * living on adjacent tabs is how a reader ends up unsure whether
+			  * they pressed anything.
+			  */}
+			<div style={{ marginBottom: space.card }}>
+				<Segmented
+					label="Which of your games and runs to list"
+					value={filter}
+					onChange={onFilter}
+					options={[
+						{ id: 'all' as const, label: `Everything (${items.length})` },
+						{ id: 'game' as const, label: `Your games (${games})` },
+						{ id: 'run' as const, label: `Training runs (${runs})` },
+					]}
+				/>
 			</div>
 
 			{!shown.length ? (
@@ -442,34 +461,6 @@ function GameList({
 				</div>
 			)}
 		</div>
-	);
-}
-
-function Pill({
-	on,
-	onClick,
-	children,
-}: {
-	on: boolean;
-	onClick: () => void;
-	children: React.ReactNode;
-}) {
-	return (
-		<button
-			onClick={onClick}
-			style={{
-				border: `1px solid ${on ? color.accent : GRID}`,
-				background: on ? color.accentSoft : 'transparent',
-				color: on ? color.accent : INK_2,
-				borderRadius: radius.pill,
-				padding: '6px 12px',
-				fontSize: text.note,
-				minHeight: 32,
-				cursor: 'pointer',
-			}}
-		>
-			{children}
-		</button>
 	);
 }
 
@@ -718,7 +709,7 @@ function EvalGraph({
 					? SERIES
 					: marked
 						? QUALITY_COLOUR[n!.quality as Quality]
-						: '#fff';
+						: color.surface;
 				return (
 					<circle
 						key={pt.p}

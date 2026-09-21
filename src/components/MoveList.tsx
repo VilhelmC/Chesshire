@@ -18,6 +18,7 @@
 
 import { Move } from './Move';
 import { withGlyph } from '../domain/notation';
+import { ACTIVE, color, text } from '../ui/theme';
 import { useMeasure } from './useViewport';
 
 export type MoveChip = {
@@ -51,10 +52,10 @@ export type MoveChip = {
 };
 
 const TONE: Record<NonNullable<MoveChip['tone']>, string> = {
-	good: '#1d7a3e',
-	bad: '#b02525',
-	warn: '#8a6100',
-	muted: '#6b6b68',
+	good: color.good,
+	bad: color.bad,
+	warn: color.warn,
+	muted: color.ink2,
 };
 
 /**
@@ -71,9 +72,9 @@ const TONE: Record<NonNullable<MoveChip['tone']>, string> = {
  * category.
  */
 const TONE_BG: Partial<Record<NonNullable<MoveChip['tone']>, string>> = {
-	good: '#e7f4ec',
-	bad: '#fbe9e9',
-	warn: '#fbf1de',
+	good: color.goodSoft,
+	bad: color.badSoft,
+	warn: color.warnSoft,
 };
 
 /** One move number and the (up to) two moves played on it. */
@@ -326,28 +327,41 @@ function Cell({
 				borderTopStyle: 'solid',
 				borderRightStyle: 'solid',
 				borderLeftStyle: 'solid',
-				borderTopColor: current ? '#1565c0' : 'transparent',
-				borderRightColor: current ? '#1565c0' : 'transparent',
-				borderLeftColor: current ? '#1565c0' : 'transparent',
+				borderTopColor: current ? color.accent : 'transparent',
+				borderRightColor: current ? color.accent : 'transparent',
+				borderLeftColor: current ? color.accent : 'transparent',
 				borderBottomStyle: 'solid',
 				borderBottomWidth: chip.mistake || chip.suboptimal ? 2 : 1,
 				borderBottomColor: chip.mistake
-					? '#d03b3b'
+					? color.bad
 					: chip.suboptimal
-						? '#eda100'
+						? color.warn
 						: current
-							? '#1565c0'
+							? color.accent
 							: 'transparent',
 				borderRadius: 4,
+				/*
+				 * THE CURRENT MOVE INVERTS, like every other active control.
+				 *
+				 * It was `#e3f2fd` — the same four-percent pale blue wash the toolbar
+				 * buttons were using before `ACTIVE` replaced them, and left behind
+				 * here because this file was not part of that pass. A tint cannot
+				 * carry "you are here" across a dense monospace grid, and this one
+				 * could not survive dark mode at all.
+				 *
+				 * The white/black cells keep a hairline difference so the two columns
+				 * stay tellable apart, but they are drawn from the palette now rather
+				 * than from two greys that only existed on a white page.
+				 */
 				background: current
-					? '#e3f2fd'
-					: (chip.tone && TONE_BG[chip.tone]) || (chip.white ? '#fbfbfa' : '#ecebe7'),
+					? ACTIVE.background
+					: (chip.tone && TONE_BG[chip.tone]) || (chip.white ? color.surface : color.page),
 				fontFamily: 'ui-monospace, monospace',
 				fontSize: 13,
 				fontWeight: current ? 700 : 400,
 				padding: '2px 5px',
 				cursor: onJump ? 'pointer' : 'default',
-				color: chip.tone ? TONE[chip.tone] : '#1a1a19',
+				color: current ? ACTIVE.color : chip.tone ? TONE[chip.tone] : color.ink,
 				// The cell may now be narrower than its text; clip rather than spill.
 				minWidth: 0,
 				overflow: 'hidden',
@@ -388,7 +402,12 @@ function Cell({
 							onAsk(chip.ply);
 						}
 					}}
-					style={{ marginLeft: 4, color: '#1565c0', cursor: 'pointer', fontSize: 12 }}
+					style={{
+						marginLeft: 4,
+						color: current ? ACTIVE.color : color.accent,
+						cursor: 'pointer',
+						fontSize: text.note,
+					}}
 				>
 					?
 				</span>
@@ -405,7 +424,7 @@ export function MoveListLegend() {
 					style={{
 						borderBottomStyle: 'solid',
 						borderBottomWidth: 2,
-						borderBottomColor: '#d03b3b',
+						borderBottomColor: color.bad,
 						paddingBottom: 1,
 					}}
 				>
@@ -417,7 +436,7 @@ export function MoveListLegend() {
 					style={{
 						borderBottomStyle: 'solid',
 						borderBottomWidth: 2,
-						borderBottomColor: '#eda100',
+						borderBottomColor: color.warn,
 						paddingBottom: 1,
 					}}
 				>

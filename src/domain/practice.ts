@@ -17,7 +17,7 @@
 // interleave within a single opening.
 
 import type { Strictness } from './book';
-import { DEFAULT_MIN_FREQ } from './book';
+import { DEFAULT_MIN_FREQ, STRICTNESS } from './book';
 
 export type PinnedRoot = {
 	/** SAN moves from the initial position. */
@@ -72,7 +72,7 @@ export const DEFAULT_PRACTICE: PracticeConfig = {
 	colour: 'w',
 	// 'book' rather than 'repertoire' is the honest default for someone who does
 	// not yet have a repertoire: you cannot memorise a line you have not met.
-	strictness: 'book',
+	strictness: 'free',
 	minFreq: DEFAULT_MIN_FREQ,
 	roots: [],
 	playFromStart: false,
@@ -88,10 +88,13 @@ export function loadPractice(): PracticeConfig {
 		const parsed = JSON.parse(raw) as Partial<PracticeConfig>;
 		const cfg = normalise(parsed);
 		// Write the migrated shape back once, so what is stored matches what is
-		// used. Leaving the old single `root` key in place works — normalise runs
-		// on every load — but a stored blob that no longer resembles the type is
-		// exactly the kind of thing that misleads the next person to read it.
-		if (!Array.isArray(parsed.roots)) savePractice(cfg);
+		// used. Leaving the old keys in place works — normalise runs on every load
+		// — but a stored blob that no longer resembles the type is exactly the kind
+		// of thing that misleads the next person to read it. It also misleads the
+		// next DEBUGGER: a browser still holding `"strictness":"book"` after the
+		// ladder shipped reads like the migration failed, when it ran correctly on
+		// every load and simply never wrote its answer down.
+		if (!Array.isArray(parsed.roots) || parsed.strictness !== cfg.strictness) savePractice(cfg);
 		return cfg;
 	} catch {
 		return { ...DEFAULT_PRACTICE };
@@ -120,9 +123,27 @@ export function savePractice(cfg: PracticeConfig): void {
  * to survive being absent or nonsense.
  */
 export function normalise(raw: Partial<PracticeConfig>): PracticeConfig {
-	const strictness: Strictness =
-		raw.strictness === 'repertoire' || raw.strictness === 'free' || raw.strictness === 'book'
-			? raw.strictness
+	/*
+	 * THE OLD IDS ARE CARRIED FORWARD, NOT DROPPED.
+	 *
+	 * `'repertoire'` drilled the most popular sound move; its nearest honest
+	 * successor is `'bestBook'`, which drills the STRONGEST played move — the
+	 * same shape of exercise, aimed at a better target. `'book'` and `'free'`
+	 * accepted an identical set, so both land on `'free'`, which is what they
+	 * were both doing.
+	 *
+	 * Dropping instead of mapping would silently reset everyone to the default,
+	 * which is a different exercise from the one they chose.
+	 */
+	const LEGACY: Record<string, Strictness> = {
+		repertoire: 'bestBook',
+		book: 'free',
+	};
+	const asked = raw.strictness as string | undefined;
+	const strictness: Strictness = STRICTNESS.some((s2) => s2.id === asked)
+		? (asked as Strictness)
+		: asked && LEGACY[asked]
+			? LEGACY[asked]
 			: DEFAULT_PRACTICE.strictness;
 
 	const minFreq =
@@ -173,12 +194,9 @@ export function describePractice(cfg: PracticeConfig): string {
 			: on.length === 1
 				? on[0].name
 				: `${on.length} openings`;
-	const how =
-		cfg.strictness === 'repertoire'
-			? 'one answer per position'
-			: cfg.strictness === 'free'
-				? 'anything sound'
-				: `any move played over ${(cfg.minFreq * 100).toFixed(0)}%`;
+	// One sentence per rung, from the list itself rather than a second copy of it.
+	const how = (STRICTNESS.find((s2) => s2.id === cfg.strictness)?.label ?? 'anything sound')
+		.toLowerCase();
 	const from = cfg.roots.length && cfg.playFromStart ? ' · from move 1' : '';
 	return `${cfg.colour === 'w' ? 'White' : 'Black'} · ${where}${from} · ${how}`;
 }

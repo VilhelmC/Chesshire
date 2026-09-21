@@ -43,9 +43,9 @@ import { useLineOverlay } from '../hooks/useLineOverlay';
 import { useCommentary } from '../hooks/useCommentary';
 import { Commentary } from '../components/CommentaryPanel';
 import { lineFromUci, type Line } from '../domain/line';
-import { ACTIVE, color, radius, space, text, TOUCH } from '../ui/theme';
+import { color, radius, space, text } from '../ui/theme';
 import { markTraining } from '../data/autoImport';
-import { Empty, Button } from '../ui/primitives';
+import { Empty, Button, Select, Toggle } from '../ui/primitives';
 import type { ToolbarAction } from '../components/Toolbar';
 import { BoardPanel } from '../components/BoardPanel';
 import { Move, MoveLine } from '../components/Move';
@@ -1231,7 +1231,7 @@ export function Train({
 			{ id: 'forward', title: 'Replay the move you took back', icon: 'forward', onClick: redo, disabled: busy || !future.length },
 			{
 				id: 'branch',
-				title: 'Same position, they try something else',
+				title: 'Same position — make them try a different reply',
 				icon: 'branch',
 				onClick: () => state?.retryPoint && replayFrom(state.retryPoint),
 				disabled: busy || !state?.retryPoint,
@@ -1350,6 +1350,39 @@ export function Train({
 				</p>
 			)}
 
+			{/*
+			  * ABOVE THE BOARD, NOT UNDER IT.
+			  *
+			  * Will: "move the 'pick up where you left off' banner above the board."
+			  * It was a child of BoardPanel, which puts it below the board and the
+			  * control strip — so the one thing that explains why the position is
+			  * not the starting position sat below the fold on a phone, and you
+			  * found it only after wondering. It is context for the board, so it
+			  * goes where context goes.
+			  */}
+			{resumed && (
+				<div
+					style={{
+						fontSize: text.body,
+						color: color.ink,
+						background: color.accentSoft,
+						border: `1px solid ${color.accent}`,
+						borderRadius: radius.small,
+						padding: `${space.snug}px ${space.gap}px`,
+						marginBottom: space.snug,
+						display: 'flex',
+						alignItems: 'center',
+						gap: space.snug,
+						flexWrap: 'wrap',
+					}}
+				>
+					<span>Picked up where you left off.</span>
+					<Button kind="quiet" onClick={newRun}>
+						Start fresh instead
+					</Button>
+				</div>
+			)}
+
 			<BoardPanel
 				fen={shownFen}
 				ourColour={state?.ourColour ?? 'w'}
@@ -1391,23 +1424,6 @@ export function Train({
 				busy={busy}
 			>
 				<div style={{ marginTop: 10 }}>
-					{resumed && (
-						<div
-							style={{
-								fontSize: 13,
-								background: '#e3f2fd',
-								border: '1px solid #90caf9',
-								borderRadius: 6,
-								padding: '6px 8px',
-								marginBottom: 6,
-							}}
-						>
-							Picked up where you left off.{' '}
-							<button onClick={newRun} style={{ fontSize: 12 }}>
-								Start fresh instead
-							</button>
-						</div>
-					)}
 					{/*
 					  * ONE MOVE LIST. While a line is borrowed it shows that instead of
 					  * the game — same component, same chips, same cursor — with a banner
@@ -1421,24 +1437,16 @@ export function Train({
 								alignItems: 'center',
 								gap: 8,
 								fontSize: 13,
-								color: '#52514e',
-								marginBottom: 4,
+								color: color.ink2,
+								marginBottom: space.tight,
 							}}
 						>
 							<span>{lineOverlay.overlay.label}</span>
-							<button
-								onClick={lineOverlay.close}
-								style={{
-									marginLeft: 'auto',
-									border: 'none',
-									background: 'none',
-									color: '#1565c0',
-									cursor: 'pointer',
-									fontSize: 13,
-								}}
-							>
-								Back to the game
-							</button>
+							<span style={{ marginLeft: 'auto' }}>
+								<Button kind="quiet" onClick={lineOverlay.close}>
+									Back to the game
+								</Button>
+							</span>
 						</div>
 					)}
 					<MoveList
@@ -1465,8 +1473,8 @@ export function Train({
 						<div
 							style={{
 								fontSize: 13,
-								background: '#fff8e1',
-								border: '1px solid #ffe082',
+								background: color.warnSoft,
+								border: `1px solid ${color.warn}`,
 								borderRadius: 6,
 								padding: '6px 8px',
 								marginTop: 6,
@@ -1492,16 +1500,15 @@ export function Train({
 								/>
 								— the game is where you left it.
 							</span>
-							<button onClick={() => setPreviewPly(null)} style={{ fontSize: 12 }}>
+							<Button kind="quiet" onClick={() => setPreviewPly(null)}>
 								Back to the game
-							</button>
-							<button
+							</Button>
+							<Button
 								onClick={() => previewPly !== null && void playFromPly(previewPly)}
-								style={{ fontSize: 12 }}
 								disabled={busy}
 							>
 								Play from here
-							</button>
+							</Button>
 						</div>
 					)}
 
@@ -1521,8 +1528,8 @@ export function Train({
 							style={{
 								marginTop: 8,
 								fontSize: 14,
-								color: feedback.correct ? '#2e7d32' : '#c62828',
-								borderLeft: `3px solid ${feedback.correct ? '#2e7d32' : '#c62828'}`,
+								color: feedback.correct ? color.good : color.bad,
+								borderLeft: `3px solid ${feedback.correct ? color.good : color.bad}`,
 								paddingLeft: 8,
 							}}
 						>
@@ -1546,30 +1553,21 @@ export function Train({
 							here to learn. §1.1: never make the learner derive what can be
 							shown. */}
 						{!feedback.correct && feedback.refutation.length > 0 && (
-							<button
-								onClick={() =>
-									setExplain({
-										line: lineFromUci(feedback.fen, [
-											feedback.playedUci,
-											...feedback.refutation,
-										]),
-										label: 'Why that move does not work',
-									})
-								}
-								style={{
-									marginTop: 4,
-									fontSize: 12,
-									border: `1px solid ${color.line}`,
-									background: color.page,
-									color: color.ink,
-									borderRadius: 4,
-									padding: '4px 8px',
-									cursor: 'pointer',
-									minHeight: 32,
-								}}
-							>
-								Show it on the board
-							</button>
+							<div style={{ marginTop: space.tight }}>
+								<Button
+									onClick={() =>
+										setExplain({
+											line: lineFromUci(feedback.fen, [
+												feedback.playedUci,
+												...feedback.refutation,
+											]),
+											label: 'Why that move does not work',
+										})
+									}
+								>
+									Show it on the board
+								</Button>
+							</div>
 						)}
 							{!feedback.correct && feedback.refutation.length > 0 && (
 								<div
@@ -1619,7 +1617,7 @@ export function Train({
 								fontSize: 14,
 								marginTop: 8,
 								borderLeft: `3px solid ${
-									state.lastOpponent.kind === 'mistake' ? '#c62828' : '#e6e5e2'
+									state.lastOpponent.kind === 'mistake' ? color.bad : color.line
 								}`,
 								paddingLeft: 8,
 							}}
@@ -1636,7 +1634,7 @@ export function Train({
 								They played
 							</div>
 							{state.lastOpponent.kind === 'mistake' ? (
-								<span style={{ color: '#c62828' }}>
+								<span style={{ color: color.bad }}>
 									<Move
 										san={state.lastOpponent.san}
 										colour={other(state.ourColour)}
@@ -1662,7 +1660,7 @@ export function Train({
 					)}
 
 					{state?.finished && (
-						<div style={{ marginTop: 8, fontWeight: 600, color: '#2e7d32' }}>
+						<div style={{ marginTop: space.snug, fontWeight: 600, color: color.good }}>
 							{state.finished === 'line-complete' ? 'Line complete.' : state.note}
 						</div>
 					)}
@@ -1742,7 +1740,7 @@ export function Train({
 						/>
 					)}
 
-					{error && <div style={{ color: '#c62828', fontSize: 14 }}>{error}</div>}
+					{error && <div style={{ color: color.bad, fontSize: text.body }}>{error}</div>}
 				</div>
 			</BoardPanel>
 			</div>
@@ -1875,13 +1873,13 @@ export function Train({
 					}}
 				>
 					<h3 style={{ marginBottom: 0 }}>What you are practising</h3>
-					<button
+					<Button
+						kind="quiet"
 						onClick={() => setPractice(resetPractice())}
-						style={{ fontSize: 11 }}
 						title="Back to White, any book move over 3%, no pinned opening, 35% mistakes"
 					>
 						Reset
-					</button>
+					</Button>
 				</div>
 				<p style={{ fontSize: 12, opacity: 0.65, marginTop: 2 }}>
 					{describePractice(practice)}
@@ -1889,13 +1887,15 @@ export function Train({
 
 				<label style={{ display: 'block', fontSize: 14, marginBottom: 8 }}>
 					Colour{' '}
-					<select
+					<Select
+						label="Which colour you are practising"
 						value={practice.colour}
-						onChange={(e) => updatePractice({ colour: e.target.value as 'w' | 'b' })}
-					>
-						<option value="w">White</option>
-						<option value="b">Black</option>
-					</select>
+						onChange={(v) => updatePractice({ colour: v })}
+						options={[
+							{ id: 'w' as const, label: 'White' },
+							{ id: 'b' as const, label: 'Black' },
+						]}
+					/>
 				</label>
 
 				<div style={{ fontSize: 14, marginBottom: 4 }}>How strict?</div>
@@ -1912,30 +1912,33 @@ export function Train({
 					</label>
 				))}
 
-				{practice.strictness !== 'repertoire' && (
-					<label style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
-						Opponent plays replies above{' '}
-						<strong>{(practice.minFreq * 100).toFixed(0)}%</strong> of games
-						<input
-							type="range"
-							min={1}
-							max={20}
-							step={1}
-							value={Math.round(practice.minFreq * 100)}
-							onChange={(e) => updatePractice({ minFreq: Number(e.target.value) / 100 })}
-							style={{ width: '100%' }}
-						/>
-						<div style={{ fontSize: 12, opacity: 0.65, marginTop: 2 }}>
-							{/* This used to say "counts as theory", and it governed YOUR
-								moves as well as theirs — which is how a sound move could
-								be marked wrong for being unpopular. It now does only what
-								it should: decide how mainstream an opponent you face. */}
-							How mainstream your opponent is. Lower it to meet rarer replies. It does
-							not judge your own moves — those are judged on whether they give
-							anything away, not on how many other people choose them.
-						</div>
-					</label>
-				)}
+				{/* This used to be hidden on the strictest setting, back when strictness
+					was decided by FREQUENCY and the narrowest rung pinned this slider to
+					"the single most popular move". It no longer touches your own moves at
+					any rung, so hiding it only made the opponent's behaviour unexplainable
+					on exactly the setting where you notice it most. */}
+				<label style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+					Opponent plays replies above{' '}
+					<strong>{(practice.minFreq * 100).toFixed(0)}%</strong> of games
+					<input
+						type="range"
+						min={1}
+						max={20}
+						step={1}
+						value={Math.round(practice.minFreq * 100)}
+						onChange={(e) => updatePractice({ minFreq: Number(e.target.value) / 100 })}
+						style={{ width: '100%' }}
+					/>
+					<div style={{ fontSize: 12, opacity: 0.65, marginTop: 2 }}>
+						{/* This used to say "counts as theory", and it governed YOUR
+							moves as well as theirs — which is how a sound move could
+							be marked wrong for being unpopular. It now does only what
+							it should: decide how mainstream an opponent you face. */}
+						How mainstream your opponent is. Lower it to meet rarer replies. It does
+						not judge your own moves — those are judged on whether they give
+						anything away, not on how many other people choose them.
+					</div>
+				</label>
 
 				<h3>Training repertoire</h3>
 				{practice.roots.length === 0 ? (
@@ -1972,51 +1975,50 @@ export function Train({
 									  * back was to find it in the search field again. The list is
 									  * the library now and the switch is this session.
 									  */}
-									<button
-										onClick={() =>
+									{/*
+									  * A SWITCH, NOT A BUTTON WHOSE CAPTION IS ITS STATE.
+									  *
+									  * Will: "the training repertoire should have normal toggle
+									  * buttons instead of the labelled buttons."
+									  *
+									  * It said "training" when on and "off" when off, which is
+									  * the pattern nobody can read at a glance: a button saying
+									  * "off" might be REPORTING that it is off or OFFERING to
+									  * turn it off, and there is nothing in the pixels to say
+									  * which. A switch has a position instead of a word.
+									  */}
+									<Toggle
+										on={r.active !== false}
+										onChange={(on) =>
 											updatePractice({
 												roots: practice.roots.map((x, j) =>
-													j === i ? { ...x, active: x.active === false } : x,
+													j === i ? { ...x, active: on } : x,
 												),
 											})
 										}
-										aria-pressed={r.active !== false}
-										title={
+										label={
 											r.active !== false
-												? 'Training this one — switch it off without losing it'
-												: 'Saved but not being trained — switch it back on'
+												? `Training ${r.name} — switch it off without losing it`
+												: `${r.name} is saved but not being trained — switch it back on`
 										}
-										style={{
-											fontSize: text.note,
-											padding: '2px 10px',
-											borderRadius: radius.pill,
-											border: `1px solid ${r.active !== false ? ACTIVE.border : color.line}`,
-											background: r.active !== false ? ACTIVE.background : 'transparent',
-											color: r.active !== false ? ACTIVE.color : color.ink2,
-											cursor: 'pointer',
-											minHeight: TOUCH,
-											whiteSpace: 'nowrap',
-										}}
-									>
-										{r.active !== false ? 'training' : 'off'}
-									</button>
+									/>
 									<div style={{ flex: 1, minWidth: 0 }}>
 										<div style={{ fontSize: text.body, fontWeight: 600 }}>{r.name}</div>
 										<div style={{ opacity: 0.6, fontSize: 11 }}>
 											<MoveLine sans={r.path} size={11} />
 										</div>
 									</div>
-									<button
+									<Button
+										kind="quiet"
 										onClick={() =>
 											updatePractice({
 												roots: practice.roots.filter((_, j) => j !== i),
 											})
 										}
-										title="Forget this repertoire"
-										style={{ fontSize: text.note, minHeight: TOUCH }}
+										title={`Forget ${r.name}`}
 									>
 										×
-									</button>
+									</Button>
 								</li>
 							))}
 						</ul>
@@ -2034,12 +2036,12 @@ export function Train({
 							</div>
 						</label>
 
-						<button
+						<Button
+							kind="quiet"
 							onClick={() => updatePractice({ roots: [] })}
-							style={{ fontSize: 12, marginBottom: 8 }}
 						>
 							Clear the filter
-						</button>
+						</Button>
 					</>
 				)}
 
@@ -2056,14 +2058,13 @@ export function Train({
 				/>
 
 				<div style={{ marginTop: 8 }}>
-					<button
+					<Button
 						onClick={pinHere}
 						disabled={!state?.path.length}
-						style={{ fontSize: 12 }}
 						title="Add the position on the board to the filter"
 					>
 						…or add the position on the board
-					</button>
+					</Button>
 				</div>
 
 				<h3>Mistake rate</h3>

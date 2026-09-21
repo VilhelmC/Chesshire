@@ -12,6 +12,8 @@
 // `label` is still rendered for screen readers, and the animation is dropped
 // entirely under `prefers-reduced-motion` (see index.css).
 
+import { color } from '../ui/theme';
+
 export function Thinking({
 	label = 'Thinking',
 	show = true,
@@ -47,7 +49,7 @@ export function Thinking({
 						width: size,
 						height: size,
 						borderRadius: '50%',
-						background: '#1565c0',
+						background: color.accent,
 						display: 'inline-block',
 						// LONGHAND ONLY, NEVER THE SHORTHAND BESIDE IT.
 						//
@@ -85,7 +87,7 @@ export function ThinkingBar({ show = true, width }: { show?: boolean; width?: nu
 				width: width ?? '100%',
 				height: 3,
 				borderRadius: 2,
-				background: '#e6e5e2',
+				background: color.line,
 				overflow: 'hidden',
 				opacity: show ? 1 : 0,
 				transition: 'opacity 120ms linear',
@@ -96,7 +98,7 @@ export function ThinkingBar({ show = true, width }: { show?: boolean; width?: nu
 				style={{
 					width: '33%',
 					height: '100%',
-					background: '#1565c0',
+					background: color.accent,
 					borderRadius: 2,
 					// Longhand here too. Nothing sets a delay beside it today, but a
 					// shorthand that silently zeroes every other `animation-*` is a trap

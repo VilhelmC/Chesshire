@@ -3,8 +3,14 @@
 // The glyph sits in a fixed-width box so that a column of moves aligns on the
 // notation regardless of which pieces moved — a ragged left edge is exactly the
 // kind of small friction this change exists to remove.
+//
+// The piece itself comes from `ui/Piece`, which is the app's only definition of
+// what a piece looks like. It used to be a bare character coloured by the
+// theme's ink, which meant every move list inverted its colours in dark mode —
+// see the header of that file for why a character alone cannot carry a side.
 
-import { glyphForSan, colourOfFen, type Colour } from '../domain/notation';
+import { colourOfFen, type Colour } from '../domain/notation';
+import { Piece, roleOfSan } from '../ui/Piece';
 
 export function Move({
 	san,
@@ -28,18 +34,7 @@ export function Move({
 			title={title}
 			style={{ display: 'inline-flex', alignItems: 'baseline', gap: 4, whiteSpace: 'nowrap' }}
 		>
-			<span
-				aria-hidden
-				style={{
-					fontSize: size ? size + 3 : 16,
-					width: size ? size + 4 : 17,
-					textAlign: 'center',
-					lineHeight: 1,
-					flexShrink: 0,
-				}}
-			>
-				{glyphForSan(san, c)}
-			</span>
+			<Piece role={roleOfSan(san)} colour={c} size={size ? size + 2 : 15} />
 			<span
 				style={{
 					fontFamily: 'ui-monospace, monospace',

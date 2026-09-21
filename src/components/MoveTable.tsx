@@ -37,7 +37,8 @@ import {
 	type MoveRow,
 	type MoveSource,
 } from '../domain/moveTable';
-import { ACTIVE, color, space, text, mono, radius } from '../ui/theme';
+import { color, space, text, mono, radius } from '../ui/theme';
+import { Chip } from '../ui/primitives';
 import { sharePercent } from '../domain/distribution';
 
 /*
@@ -124,6 +125,14 @@ export type MoveTableProps = {
 	 * what it was handed — the explainer's single-source table.
 	 */
 	offers?: readonly MoveSource[];
+	/**
+	 * A move the filter may not remove.
+	 *
+	 * Pairs with `marked`: the host has named a specific move — the card's
+	 * answer — and a filter that hid it would be answering a question nobody
+	 * asked. See `filterMoves`.
+	 */
+	keep?: string;
 };
 
 export function MoveTable({
@@ -138,6 +147,7 @@ export function MoveTable({
 	limit = 10,
 	askedPopularity = false,
 	offers,
+	keep,
 }: MoveTableProps) {
 	const [all, setAll] = useState(false);
 	// The best row for the loss column is the best row OVERALL, not the best one
@@ -155,7 +165,9 @@ export function MoveTable({
 	// The board filters by the same rule, which is why it is in the domain.
 	const effective = effectiveSources(rows, on);
 	const absent = nothingAsked(rows, on);
-	const admitted = absent ? [] : filterMoves(rows, effective);
+	const admitted = absent
+		? rows.filter((r) => r.uci === keep)
+		: filterMoves(rows, effective, keep);
 	const shown = all ? admitted : admitted.slice(0, limit);
 	const folded = admitted.length - shown.length;
 
@@ -182,28 +194,17 @@ export function MoveTable({
 				{(['line', 'engine', 'popular'] as MoveSource[])
 					.filter((s) => offered.has(s))
 					.map((s) => (
-						<button
+						<Chip
 							key={s}
+							on={on.has(s)}
 							onClick={() => onToggle(s)}
 							title={SOURCE_TITLE[s]}
-							style={{
-								fontSize: text.note,
-								padding: '2px 8px',
-								borderRadius: radius.small,
-								// The same "on" as the toolbar's — see `ACTIVE`. This used to
-								// be a tint and a hairline, which is not enough to answer
-								// "is this one on" at a glance.
-								border: `1px solid ${on.has(s) ? ACTIVE.border : color.line}`,
-								background: on.has(s) ? ACTIVE.background : 'transparent',
-								color: on.has(s) ? ACTIVE.color : color.ink,
-								cursor: 'pointer',
-							}}
 						>
 							{SOURCE_LABEL[s]}
 							{/* On, asked for, and nothing came back — which is different
 								from narrowing, and should not look the same. */}
 							{on.has(s) && !available.has(s) && <span style={{ opacity: 0.7 }}> · none</span>}
-						</button>
+						</Chip>
 					))}
 				{on.size > 0 && (
 					<span style={{ fontSize: text.note, color: color.ink3, alignSelf: 'center' }}>

@@ -7,7 +7,7 @@
 // tree instead of sitting beside it.
 
 import { describe, it, expect } from 'vitest';
-import { lineLabelFor, moveNumberFor } from '../src/views/Quiz';
+import { lastMoveOf, lineLabelFor, moveNumberFor, namesFor } from '../src/views/Quiz';
 import type { MistakeCard } from '../src/domain/mistakes';
 
 const card = (over: Partial<MistakeCard> = {}): MistakeCard => ({
@@ -88,5 +88,50 @@ describe('moveNumberFor', () => {
 
 	it('starts at move 1, not move 0', () => {
 		expect(moveNumberFor(card({ path: [] })).no).toBe(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// WHAT THE POSITION WAS.
+//
+// Will, on the Hardest list: "the annotation is useless. Just says a move and
+// variation, but that tells user nothing about what the position was." The
+// missing fact is the move you were answering — `path`'s last entry — and the
+// only thing easy to get wrong about it is whose move it was, because the path
+// is the moves BEFORE the card's own.
+// ---------------------------------------------------------------------------
+describe('the move that produced the position', () => {
+	it('is the last move of the path, and White made it at an even ply', () => {
+		// 1.e4 e5 2.Nf3 — three plies, so the last is index 2, which is White's.
+		expect(lastMoveOf(card({ path: ['e4', 'e5', 'Nf3'] }))).toEqual({
+			san: 'Nf3',
+			colour: 'w',
+		});
+	});
+
+	it('is Black at an odd ply', () => {
+		expect(lastMoveOf(card({ path: ['e4', 'e5'] }))).toEqual({ san: 'e5', colour: 'b' });
+	});
+
+	it('is absent at the start, where nothing produced the position', () => {
+		expect(lastMoveOf(card({ path: [] }))).toBeNull();
+	});
+});
+
+describe('what the row leads with', () => {
+	it('names the line and where in it, not the answer', () => {
+		const label = namesFor(card({ opening: 'Italian Game', path: ['e4', 'e5', 'Nf3'] }));
+		expect(label).toContain('Italian Game');
+		expect(label).toContain('move 2');
+		// The answer is the one thing a list of your weak spots must not shout.
+		expect(label).not.toContain('e4');
+	});
+
+	it('always says where in the game, named line or not', () => {
+		// `a3 a6 b3` turns out to BE a named opening, which is the point: the
+		// move number is the part that is always there, so it is the part the
+		// row can be identified by.
+		expect(namesFor(card({ path: ['a3', 'a6', 'b3'] }))).toMatch(/move 2…/i);
+		expect(namesFor(card({ path: [] }))).toMatch(/move 1/i);
 	});
 });

@@ -16,12 +16,13 @@ import {
 	type RestoreResult,
 	type StorageStatus,
 } from '../data/backup';
-import { color } from '../ui/theme';
+import { color, radius, space, text, TOUCH } from '../ui/theme';
+import { Button } from '../ui/primitives';
 
 const INK_2 = color.ink2;
 const GRID = color.line;
 const GOOD = color.good;
-const BAD = '#c62828';
+const BAD = color.bad;
 
 export function DataPanel() {
 	const [counts, setCounts] = useState<BackupCounts | null>(null);
@@ -113,10 +114,20 @@ export function DataPanel() {
 			)}
 
 			<div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-				<button onClick={() => void download()} disabled={busy || !total}>
+				<Button onClick={() => void download()} disabled={busy || !total}>
 					Download backup
-				</button>
-				<label style={{ fontSize: 13 }}>
+				</Button>
+				{/*
+				  * A file input's own button cannot be styled, so the label IS the
+				  * button — which is why it had improvised one, and why that one was
+				  * `#fff` with theme-following ink on it: white-on-white in dark mode,
+				  * exactly as reported. Borrowing the real Button's kinds keeps the
+				  * pairing inside a single palette.
+				  */}
+				{/* inline-flex, so the label is exactly as tall as the button inside
+					it — as a block it added its own line box and stood a few pixels
+					proud of the real button beside it. */}
+				<label style={{ fontSize: text.body, display: 'inline-flex' }}>
 					<input
 						type="file"
 						accept="application/json,.json"
@@ -130,11 +141,17 @@ export function DataPanel() {
 					<span
 						role="button"
 						style={{
-							border: `1px solid ${GRID}`,
-							borderRadius: 6,
-							padding: '5px 9px',
+							display: 'inline-flex',
+							alignItems: 'center',
+							border: `1px solid ${color.line}`,
+							background: color.page,
+							color: color.ink,
+							borderRadius: radius.small,
+							padding: `${space.snug}px ${space.card}px`,
+							minHeight: TOUCH,
+							fontSize: text.body,
 							cursor: 'pointer',
-							background: '#fff',
+							touchAction: 'manipulation',
 						}}
 					>
 						Restore from file…

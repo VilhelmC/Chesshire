@@ -18,6 +18,7 @@ import { getToken, setToken } from '../data/explorer';
 import { CONFIG } from '../config';
 import { Move, MoveLine } from '../components/Move';
 import { colourAtPly } from '../domain/notation';
+import { color } from '../ui/theme';
 
 export function Coverage() {
 	const [result, setResult] = useState<BuildResult | null>(null);
@@ -79,8 +80,8 @@ export function Coverage() {
 			{!hasToken && (
 				<div
 					style={{
-						border: '1px solid #1565c0',
-						background: '#e3f2fd',
+						border: `1px solid ${color.accent}`,
+						background: color.accentSoft,
 						borderRadius: 8,
 						padding: 12,
 						marginBottom: 16,
@@ -116,7 +117,7 @@ export function Coverage() {
 			)}
 
 			{error && (
-				<p style={{ color: '#c62828', fontWeight: 600 }}>
+				<p style={{ color: color.bad, fontWeight: 600 }}>
 					{error}
 					<br />
 					<span style={{ fontWeight: 400, fontSize: 13 }}>
@@ -128,14 +129,14 @@ export function Coverage() {
 			{result && !result.complete && (
 				<div
 					style={{
-						border: '2px solid #c62828',
-						background: '#ffebee',
+						border: `2px solid ${color.bad}`,
+						background: color.badSoft,
 						borderRadius: 8,
 						padding: 16,
 						margin: '16px 0',
 					}}
 				>
-					<strong style={{ color: '#c62828' }}>Build incomplete — metrics withheld</strong>
+					<strong style={{ color: color.bad }}>Build incomplete — metrics withheld</strong>
 					<p style={{ margin: '6px 0 0', fontSize: 14 }}>
 						At least one explorer query failed, so the tree is truncated. Any coverage number
 						computed from it would look <em>better</em> than reality (positions we never asked
@@ -325,11 +326,11 @@ function Tile({
 	note: string;
 	tone: 'ok' | 'warn' | 'mute';
 }) {
-	const colour = tone === 'ok' ? '#2e7d32' : tone === 'warn' ? '#c62828' : '#666';
+	const colour = tone === 'ok' ? color.good : tone === 'warn' ? color.bad : color.ink2;
 	return (
 		<div
 			style={{
-				border: '1px solid #ddd',
+				border: `1px solid ${color.line}`,
 				borderRadius: 8,
 				padding: '12px 16px',
 				minWidth: 170,
@@ -348,8 +349,8 @@ function Warnings({ warnings }: { warnings: string[] }) {
 	return (
 		<div
 			style={{
-				border: '1px solid #ef6c00',
-				background: '#fff8e1',
+				border: `1px solid ${color.warn}`,
+				background: color.warnSoft,
 				borderRadius: 8,
 				padding: 12,
 				marginBottom: 20,
@@ -378,7 +379,7 @@ function DeviationTable({
 	return (
 		<table style={{ borderCollapse: 'collapse', fontSize: 14, width: '100%' }}>
 			<thead>
-				<tr style={{ textAlign: 'left', borderBottom: '1px solid #ccc' }}>
+				<tr style={{ textAlign: 'left', borderBottom: `1px solid ${color.line}` }}>
 					<th>After</th>
 					<th>They play</th>
 					<th style={{ textAlign: 'right' }}>Of replies</th>
@@ -393,9 +394,9 @@ function DeviationTable({
 						key={d.id}
 						onClick={() => onSelect(d)}
 						style={{
-							borderBottom: '1px solid #f0f0f0',
+							borderBottom: `1px solid ${color.line}`,
 							cursor: 'pointer',
-							background: selected?.id === d.id ? '#e3f2fd' : undefined,
+							background: selected?.id === d.id ? color.accentSoft : undefined,
 						}}
 					>
 						<td style={{ opacity: 0.7, fontSize: 13 }}>
@@ -423,7 +424,7 @@ function TrunkTable({ result }: { result: BuildResult }) {
 	return (
 		<table style={{ borderCollapse: 'collapse', fontSize: 14 }}>
 			<thead>
-				<tr style={{ textAlign: 'left', borderBottom: '1px solid #ccc' }}>
+				<tr style={{ textAlign: 'left', borderBottom: `1px solid ${color.line}` }}>
 					<th>Ply</th>
 					<th>Line</th>
 					<th>To move</th>
@@ -434,7 +435,7 @@ function TrunkTable({ result }: { result: BuildResult }) {
 			</thead>
 			<tbody>
 				{result.trunk.slice(0, 30).map((n) => (
-					<tr key={n.key} style={{ borderBottom: '1px solid #f0f0f0' }}>
+					<tr key={n.key} style={{ borderBottom: `1px solid ${color.line}` }}>
 						<td>{n.ply}</td>
 						<td>{n.path.length ? <MoveLine sans={n.path} size={12} /> : <em>start</em>}</td>
 						<td>{n.toMove === result.colour ? 'you' : 'them'}</td>
@@ -451,7 +452,7 @@ function TrunkTable({ result }: { result: BuildResult }) {
 							)}
 						</td>
 						<td style={{ textAlign: 'right' }}>{(n.mass * 100).toFixed(1)}%</td>
-						<td style={{ textAlign: 'right', color: n.sparse ? '#c62828' : undefined }}>
+						<td style={{ textAlign: 'right', color: n.sparse ? color.bad : undefined }}>
 							{n.gameCount ? n.gameCount.toLocaleString() : '—'}
 						</td>
 					</tr>

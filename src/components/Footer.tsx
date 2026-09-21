@@ -10,6 +10,7 @@
 // token in, not only in a spec file they will never open.
 
 import { useViewport } from './useViewport';
+import { color } from '../ui/theme';
 
 export const SOURCE_URL = 'https://github.com/VilhelmC/Chesshire';
 
@@ -21,7 +22,7 @@ export function Footer() {
 			style={{
 				marginTop: 32,
 				paddingTop: 12,
-				borderTop: '1px solid #eee',
+				borderTop: `1px solid ${color.line}`,
 				fontSize: 12,
 				opacity: 0.65,
 				lineHeight: 1.6,

@@ -203,10 +203,27 @@ export function nothingAsked(rows: readonly MoveRow[], on: ReadonlySet<MoveSourc
  * THE COST IS AN EMPTY TABLE, and it is a real outcome rather than a fault —
  * two sources can genuinely share no move. The caller says so in words; see
  * `MoveTable`'s `empty`.
+ *
+ * ---------------------------------------------------------------------------
+ * `keep` IS THE ONE EXEMPTION, AND IT IS NOT AN EXCEPTION TO THE RULE.
+ *
+ * A filter answers "which moves do these sources agree on". A move the reader
+ * has ASKED FOR BY NAME — the answer to the mistake card they just revealed —
+ * is not an answer to that question at all; it is the question. Hiding it
+ * because Stockfish's top five and the explorer's list happen not to overlap on
+ * it means pressing "show me the move" can produce a table without the move in
+ * it, which is the most literal possible way for a control to lie.
+ *
+ * In the domain rather than in the table because THE BOARD FILTERS BY THE SAME
+ * RULE, and the last two times a filter lived in two places the two disagreed.
  */
-export function filterMoves(rows: MoveRow[], on: ReadonlySet<MoveSource>): MoveRow[] {
+export function filterMoves(
+	rows: MoveRow[],
+	on: ReadonlySet<MoveSource>,
+	keep?: string,
+): MoveRow[] {
 	if (!on.size) return rows;
-	return rows.filter((r) => [...on].every((s) => r.sources.includes(s)));
+	return rows.filter((r) => r.uci === keep || [...on].every((s) => r.sources.includes(s)));
 }
 
 /**

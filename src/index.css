@@ -173,6 +173,83 @@ body {
 }
 
 
+/*
+ * EVERY BUTTON, INCLUDING THE ONES NOBODY HAS MIGRATED YET.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "many different button styles in Progress, Settings, Mistakes, Train —
+ * I think we need to unify button styles — probably a single button factory,
+ * same with dropdowns. Each component needs consistent styling across app."
+ *
+ * There IS a factory — `ui/primitives`' Button — and the screens he named were
+ * mostly not using it. Converting every call site is the right fix and it is
+ * being done, but it is also the fix that has to be done again the next time
+ * somebody types `<button>`: the factory is only a convention, and a convention
+ * is a thing you can forget.
+ *
+ * So the browser's default button is redefined to BE the app's normal button.
+ * Now the lazy path and the correct path are the same path, a bare `<button>`
+ * in a screen nobody has touched still looks like the rest of the app, and the
+ * primitives keep working because an inline style beats a stylesheet — every
+ * kind, chip, toggle and toolbar cell sets its own ground and overrides this.
+ *
+ * WHAT IS DELIBERATELY NOT HERE: height. A `min-height` would be right for a
+ * standalone button and catastrophic for the move list, whose cells are 20px
+ * and set their own padding — one global rule cannot know which it is looking
+ * at, so sizing stays with whoever knows.
+ */
+button {
+	font-family: inherit;
+	font-size: 14px;
+	color: var(--ink);
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: 4px;
+	padding: 8px 12px;
+	cursor: pointer;
+	/* Stops a double-tap being read as a zoom gesture. */
+	touch-action: manipulation;
+}
+
+button:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+/*
+ * LINKS TOO.
+ *
+ * Will: "the blue colour is still used multiple places: tab names, progress
+ * graph, LINKS, settings load bar." The links were the one case nobody had put
+ * a colour on at all — so they were the browser's `-webkit-link` blue, which is
+ * a fourth blue nothing in the app chose and which does not respond to the
+ * theme either. There are nine of them across the footer, Review, Progress and
+ * the import list, and colouring them one at a time is nine chances to miss
+ * one.
+ */
+a {
+	color: var(--accent);
+}
+
+/*
+ * And the same for the native dropdown, which had no styling at all anywhere it
+ * was used directly and so was the one control that still looked like 1998 on
+ * one platform and like macOS on another.
+ */
+select,
+input[type='text'],
+input[type='search'],
+input[type='number'] {
+	font-family: inherit;
+	font-size: 14px;
+	color: var(--ink);
+	background: var(--page);
+	border: 1px solid var(--line);
+	border-radius: 4px;
+	padding: 8px 10px;
+}
+
+
 @keyframes schackal-pulse {
 	0%,
 	80%,
