@@ -53,21 +53,33 @@ import { sharePercent } from '../domain/distribution';
  * the toolbar button and the table chip were one control under two names, which
  * is why one of them always read as unintuitive.
  *
- * `engine` over `stockfish`: the explainer already says "the engine's line", and
- * naming the implementation would be a second name again. `played` over "stats"
- * or "frequent" — it says whose fact it is, which is what the other two do.
+ * `played` over "stats" or "frequent" — it says whose fact it is, which is what
+ * the other two do.
+ *
+ * ---------------------------------------------------------------------------
+ * AND "engine" BECAME "top 5", BECAUSE THE CHIP HAD STOPPED MEANING ANYTHING.
+ *
+ * Will: "now when I filter 'engine' it includes all moves, but we want the old
+ * meaning of engine, which was 'the top 5 moves'. Perhaps rename to 'top 5'?"
+ *
+ * The tag is fixed separately — see `MoveSources.engine` — but the name was
+ * always the weaker half of it. "engine" names WHO SAID SO, and once every row
+ * in the table carries an engine evaluation that stops distinguishing anything:
+ * the whole table is the engine's opinion now. "top 5" names WHAT IS SELECTED,
+ * which is what the other two chips do ("book" is theory, "played" is what
+ * people play) and what a filter has to say to be usable.
  */
 const SOURCE_LABEL: Record<MoveSource, string> = {
 	line: 'book',
 	popular: 'played',
-	engine: 'engine',
+	engine: 'top 5',
 };
 
 /** What each tag means, said once, so the chips do not have to be guessed at. */
 const SOURCE_TITLE: Record<MoveSource, string> = {
-	line: 'Theory: a move your repertoire allows here',
+	line: 'Theory: a move real games play here',
 	popular: 'Played here in real games — the Lichess explorer',
-	engine: "Among Stockfish's own top moves for this position",
+	engine: "Stockfish's five best moves in this position. Every row has its evaluation; these are the ones it would put forward.",
 };
 
 export type MoveTableProps = {
@@ -133,6 +145,14 @@ export type MoveTableProps = {
 	 * asked. See `filterMoves`.
 	 */
 	keep?: string;
+	/**
+	 * The board is marking book moves, so say what the mark means.
+	 *
+	 * The arrows carry `◆` on a move that is theory. A symbol on a board with
+	 * no key is a puzzle rather than a signal, and the table is where the
+	 * reader already is when they are looking at the arrows.
+	 */
+	marksBook?: boolean;
 };
 
 export function MoveTable({
@@ -148,6 +168,7 @@ export function MoveTable({
 	askedPopularity = false,
 	offers,
 	keep,
+	marksBook = false,
 }: MoveTableProps) {
 	const [all, setAll] = useState(false);
 	// The best row for the loss column is the best row OVERALL, not the best one
@@ -400,7 +421,9 @@ export function MoveTable({
 					<div style={{ fontSize: text.note, color: color.ink3, marginTop: space.tight }}>
 						<strong>played</strong> is the share of games from this position; <strong>scores</strong> is the
 						expected score for {mover === 'w' ? 'White' : 'Black'} — a win is 100%, a draw 50%. Neither is
-						an evaluation. A blank cell is <em>not looked up</em>, never zero.
+						an evaluation. A blank cell is <em>not looked up</em>; <strong>0%</strong> means looked up and
+						never played.
+						{marksBook && ' On the board, ◆ marks a move that is in the book.'}
 					</div>
 					)}
 				</div>

@@ -1,10 +1,41 @@
 // The board and everything that belongs to it, in one place.
 //
-// Every screen that shows a position shows the same thing in the same geometry:
-// evaluation bar on the left, board, captured material beneath, then whatever
-// the view has to say, then the control strip. A control that means one thing in
-// the trainer means the same thing here and sits where the hand already expects
-// it (§1.1, "one interface, learned once").
+// Every screen that shows a position shows the same thing in the same geometry.
+// A control that means one thing in the trainer means the same thing here and
+// sits where the hand already expects it (§1.1, "one interface, learned once").
+//
+// ---------------------------------------------------------------------------
+// THE ORDER OF A PAGE, DECIDED ONCE.
+//
+// Will: "we are being inconsistent about component ordering / page layout. For
+// example: on Train 'show moves' table is displayed beneath buttons array and
+// session statistics. In Mistakes tab the 'show moves' table is displayed above
+// the buttons array and the past move list. In Train training wheels are
+// displayed below past move list, in Mistakes above."
+//
+// Every one of those is a call site having improvised, so the rule is written
+// down here and the geometry enforces the first half of it:
+//
+//   1. evaluation bar, board, captured material   <- this component
+//   2. THE CONTROL STRIP                          <- this component
+//   3. what just happened: the verdict on your move, their reply
+//   4. analysis of the position in front of you: the move table, the
+//      training wheels, commentary, the explainer
+//   5. history: the move list
+//   6. options and preferences
+//
+// The strip MOVED UP to get here. It used to render after `children`, so
+// everything a view had to say stood between the board and the buttons that
+// act on it — and how far between depended on how much the view had to say
+// that second, which is why the two tabs disagreed. The controls belong to the
+// board, so they go next to it.
+//
+// 3–6 are the caller's, because only the caller knows what it has; the reason
+// they are listed here rather than in each view is that the LAST time each
+// view decided for itself, they came out different. Will, on the ordering:
+// "the past move list (history) is not really important — it should be after
+// analytical content (but before options and preferences)." Which is what 4 and
+// 5 say: the thing in front of you outranks the record of how you got here.
 //
 // The board sizes itself from the CONTAINER rather than from the window. The
 // two differ constantly — a sidebar appears, panels stack, an on-screen
@@ -13,7 +44,7 @@
 // old fixed 420 was hardcoded in four places and made the app unusable at any
 // width below about 900.
 
-import { Board, type Shape } from './Board';
+import { Board, type BoardProps, type Shape } from './Board';
 import { EvalBar } from './EvalBar';
 import { MaterialBar } from './MaterialBar';
 import { Toolbar, type ToolbarAction } from './Toolbar';
@@ -65,12 +96,13 @@ export function BoardPanel({
 	onSelectSquare,
 	onMove,
 	version,
+	via,
 	actions = [],
 	/** True while the engine is working: shows the pulsing indicator. */
 	busy = false,
 	/** Optional words beside the indicator. */
 	note,
-	/** Between the material strip and the controls. */
+	/** Everything below the controls — steps 3 to 6 of the order above. */
 	children,
 }: {
 	fen: string;
@@ -103,6 +135,8 @@ export function BoardPanel({
 	onSelectSquare?: (square: string) => void;
 	onMove?: (uci: string) => void;
 	version?: number;
+	/** Forwarded to the board — see `Board`'s `via`. */
+	via?: BoardProps['via'];
 	actions?: ToolbarAction[];
 	busy?: boolean;
 	note?: string;
@@ -129,6 +163,7 @@ export function BoardPanel({
 					onSelectSquare={onSelectSquare}
 					size={size}
 					version={version}
+					via={via}
 				/>
 			</div>
 
@@ -139,8 +174,6 @@ export function BoardPanel({
 				<div style={{ marginTop: 8 }}>
 					<MaterialBar fen={fen} ourColour={ourColour} />
 				</div>
-
-				{children}
 
 				{actions.length > 0 && (
 					<div
@@ -157,6 +190,8 @@ export function BoardPanel({
 						{note && <span style={{ fontSize: 12, opacity: 0.6 }}>{note}</span>}
 					</div>
 				)}
+
+				{children}
 			</div>
 		</div>
 	);

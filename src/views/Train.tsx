@@ -30,10 +30,15 @@ import {
 	type SessionConfig,
 } from '../engine/session';
 import { applyUci, replayLine, parseSquare } from '../domain/chess';
-import { getToken, fetchExplorer } from '../data/explorer';
-import { distributionOf, type Distribution } from '../domain/distribution';
+import { getToken } from '../data/explorer';
 import { MoveTable } from '../components/MoveTable';
-import { mergeMoves, filterMoves, effectiveSources, type MoveSource } from '../domain/moveTable';
+import { useMoveTable } from '../hooks/useMoveTable';
+import {
+	filterMoves,
+	effectiveSources,
+	type MoveRow,
+	type MoveSource,
+} from '../domain/moveTable';
 import { ShareMenu, canShareNatively } from '../components/ShareMenu';
 import { LinePlayer, type BoardOverride } from '../components/LinePlayer';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
@@ -42,20 +47,18 @@ import { useTrainingWheels } from '../hooks/useTrainingWheels';
 import { useLineOverlay } from '../hooks/useLineOverlay';
 import { useCommentary } from '../hooks/useCommentary';
 import { Commentary } from '../components/CommentaryPanel';
-import { lineFromUci, type Line } from '../domain/line';
-import { color, radius, space, text } from '../ui/theme';
+import { lineFromUci, stepAt, type Line } from '../domain/line';
+import { walkBackTo, walkThrough } from '../domain/walk';
+import { color, space, text } from '../ui/theme';
 import { markTraining } from '../data/autoImport';
 import { Empty, Button, Select, Toggle } from '../ui/primitives';
 import type { ToolbarAction } from '../components/Toolbar';
 import { BoardPanel } from '../components/BoardPanel';
+import type { Shape } from '../components/Board';
 import { Move, MoveLine } from '../components/Move';
 import { other, colourAtPly, colourOfFen } from '../domain/notation';
 import { MoveList, MoveListLegend, type MoveChip } from '../components/MoveList';
-import {
-	candidateMoves,
-	brushForGrade,
-	type Candidate,
-} from '../engine/candidates';
+import { brushForGrade, type Candidate } from '../engine/candidates';
 import { BOT_LEVELS, levelFor, estimate, type Estimate } from '../domain/rating';
 import { freeplayLosses, gameLosses } from '../domain/progress';
 import { fromGame, type Reviewable } from '../domain/reviewable';
@@ -118,8 +121,16 @@ export function Train({
 	const [stats, setStats] = useState<Stats>(EMPTY);
 	const [practice, setPractice] = useState<PracticeConfig>(() => loadPractice());
 	const vp = useViewport();
-	// `q0`–`q4` are the quality ramp registered in Board.
-	type Arrow = { orig: string; dest: string; brush: string; label?: string };
+	/*
+	 * `q0`–`q4` are the quality ramp registered in Board, and `book` is the ring.
+	 *
+	 * THE SAME `Shape` THE BOARD TAKES, not a local narrowing of it. This was
+	 * declared here with `dest` REQUIRED, which is narrower than what it is
+	 * forwarded to — and the difference is exactly the shape that now matters: a
+	 * `Shape` with no `dest` is a CIRCLE, which is how a book move is marked.
+	 * `BoardPanel` had already been caught making this mistake once.
+	 */
+	type Arrow = Shape;
 	const [hint, setHint] = useState<Arrow[]>([]);
 	const [attempts, setAttempts] = useState(0);
 	/** Bumped on a rejected move, to pull the piece back to where it started. */
@@ -163,6 +174,10 @@ export function Train({
 			opening: state?.opening ?? null,
 			bookHere: state?.bookHere?.map((m) => `${m.san} ${m.verdict} ${(m.freq * 100).toFixed(1)}%`) ?? null,
 			finished: state?.finished ?? null,
+			// Whether this run was restored rather than started. Nothing says so on
+			// screen any more — see the note where the banner used to be — but it is
+			// still a real fact about the session and worth having in a bug report.
+			resumed,
 			feedback,
 			hintArrows: hint.length,
 			// The two that decide what the board draws, since they are derived and
@@ -219,7 +234,6 @@ export function Train({
 	 * Anything else writing it is a second owner, and a second owner is how the
 	 * tag and the arrows came to disagree.
 	 */
-	const [candidates, setCandidates] = useState<Candidate[] | null>(null);
 	const [botLevel, setBotLevel] = useState<number | 'auto'>('auto');
 	const [rating, setRating] = useState<Estimate>({ elo: null, acpl: null, sample: 0, confident: false });
 	const [resumed, setResumed] = useState(false);
@@ -499,10 +513,65 @@ export function Train({
 	 * A preview, not a rewind: the game is untouched and one click returns to it.
 	 * Clicking the ply already being viewed — or the live position — steps out.
 	 */
+	/**
+	 * Jump to a ply in the game, animating the moves in between.
+	 *
+	 * -------------------------------------------------------------------------
+	 * Will: "I'm wondering whether whenever we step or forward we can actually
+	 * show the animation?"
+	 *
+	 * Chessground animates every position change already, so one ply was always
+	 * fine. Clicking a move eight plies back was not: it slid every piece
+	 * straight to where it ends up, simultaneously, which is a picture of the
+	 * DIFFERENCE rather than of the moves. The positions in between are right
+	 * here in `line`, so the board is handed them — see `Board`'s `via`.
+	 */
+	/**
+	 * Give the move list back to the game, walking out of the line first.
+	 *
+	 * -------------------------------------------------------------------------
+	 * Will: "if we've been stepping through a branch move sequence, if we return
+	 * to the game it would be useful to animate the sequence of moving the
+	 * pieces back — that way user gets intuitive visual cue."
+	 *
+	 * The borrowed line and the game share a position — the line starts from the
+	 * board you were looking at — so the way back is the line's own moves
+	 * unplayed, one at a time, ending on the live position. Without it the board
+	 * cut from somewhere four plies deep in a hypothetical straight to the real
+	 * game, which looks like a different position appearing rather than like
+	 * coming back from somewhere.
+	 *
+	 * Wrapped rather than pushed into `useLineOverlay`, because the destination
+	 * is the GAME's position and the overlay deliberately does not know about
+	 * the game — see that hook's note on what it does not own.
+	 */
+	function closeLine() {
+		const o = lineOverlay.overlay;
+		if (o && state) {
+			// Index −1 is the position the line starts from, so the cursor at `at`
+			// sits at index `at + 1` of this array.
+			const positions = [
+				stepAt(o.line, -1).fen,
+				...o.line.steps.map((_, i) => stepAt(o.line, i).fen),
+			];
+			// The destination is what the board shows ONCE THE OVERLAY IS GONE, so
+			// it is `shownFen`'s own fallback chain minus the overlay — reading
+			// `shownFen` here would give the line's position, which is where we
+			// are leaving from.
+			setVia(walkBackTo(positions, o.at, explaining?.fen ?? shown?.fen ?? state.fen));
+		}
+		lineOverlay.close();
+	}
+
 	function previewAt(ply: number) {
 		if (busyRef.current || !state) return;
 		setHint([]);
-		setPreviewPly((cur) => (cur === ply || ply === state.path.length ? null : ply));
+		// Clicking the ply you are already on, or the last one, goes back to the
+		// live position — so the DESTINATION is not always the ply clicked.
+		const leaving = previewPly ?? state.path.length;
+		const landing = previewPly === ply || ply === state.path.length ? state.path.length : ply;
+		setVia(walkThrough(line.map((p) => p.fen), leaving, landing));
+		setPreviewPly(landing === state.path.length ? null : landing);
 	}
 
 	/**
@@ -521,7 +590,6 @@ export function Train({
 	 * solution. The explorer response is already cached from the run itself, so
 	 * this is usually not even a request.
 	 */
-	const [distribution, setDistribution] = useState<Distribution | null>(null);
 	/**
 	 * WHICH LISTS THE ONE TABLE IS SHOWING.
 	 *
@@ -572,6 +640,14 @@ export function Train({
 		rememberView({ tableShown: next });
 	}, []);
 	const [sharing, setSharing] = useState(false);
+	/**
+	 * Positions the board should pass through on its way to the next one.
+	 *
+	 * Set by the handful of actions that move the board more than one ply at a
+	 * time; ignored by the board unless its `to` names the position actually
+	 * being shown, so a leftover value cannot be replayed at the wrong moment.
+	 */
+	const [via, setVia] = useState<{ to: string; through: string[] } | null>(null);
 	/** A claim being demonstrated on the board rather than described in prose. */
 	const [explain, setExplain] = useState<{ line: Line; label: string } | null>(null);
 	const [explaining, setExplaining] = useState<BoardOverride>(null);
@@ -941,124 +1017,56 @@ export function Train({
 	// position, so that is the one its prose might name.
 	const commentary = useCommentary(shownFen || null, asking?.fen === shownFen ? asking.uci : null);
 
-	/**
-	 * Everything known about the moves here, merged.
+	/*
+	 * EVERYTHING KNOWN ABOUT THE MOVES HERE — fetched by the shared hook, so
+	 * Mistakes gets the same table from the same code.
 	 *
-	 * The three sources arrive independently — the line is in `state`, the engine
-	 * costs a search, the explorer a round trip — so this merges whatever has
-	 * turned up rather than waiting for all three. A row with no evaluation shows
-	 * "…", never a zero.
+	 * Two effects and a merge used to live inline here, and a near-copy of them
+	 * lived in Quiz. The difference between the copies was not cosmetic: this
+	 * one gated each fetch on its own chip, which is what made a book move show
+	 * a blank evaluation. See `useMoveTable`.
 	 */
-	const moveRows = useMemo(
-		() =>
-			mergeMoves({
-				// ONLY WHEN THERE IS A LINE. Out of book `expected` is every legal
-				// move — the run will accept anything sound — so tagging them all "the
-				// line" put the label on thirty rows and made it mean nothing. A
-				// position with no canon has no canon moves to show.
-				line: state?.phase === 'book' ? state.expected.map((e) => ({ uci: e.uci, san: e.san })) : undefined,
-				engine: candidates ?? undefined,
-				popular: distribution?.moves,
-			}),
-		[state?.expected, candidates, distribution],
+	const table = useMoveTable(
+		tableShown && !previewing ? (state?.fen ?? null) : null,
+		state?.ourColour,
+		tableShown,
+		{ minFreq: practice.minFreq },
 	);
+	const moveRows = table.rows;
 
 	/**
 	 * THE BOARD DRAWS WHAT THE TABLE IS SHOWING.
 	 *
-	 * ---------------------------------------------------------------------------
+	 * -------------------------------------------------------------------------
 	 * Will, on the thirty-six green arrows "show me the move" produced: "that
 	 * wouldn't be a problem if user also toggled intersection with show picked or
 	 * best."
 	 *
-	 * Exactly, and it is a better answer than the cap I was about to offer. The
-	 * arrows were never too many — they were UNFILTERED, because the board and
-	 * the table were being driven from different places. `showMe` pushed every
-	 * book move into `hint`, `showOptions` overwrote it with the engine's five,
-	 * and whichever button was pressed last won. The intersection the table had
-	 * just learned to compute never reached the board at all.
+	 * Exactly. The arrows are DERIVED from the admitted rows rather than stored,
+	 * so the filter chips became the arrow control without gaining a button.
 	 *
-	 * So the arrows are DERIVED from the admitted rows rather than stored. Turn
-	 * on "the line" alone and you get every book move, which is what was asked
-	 * for; add "engine" and the board narrows to the moves both back. The filter
-	 * chips became the arrow control without gaining a single button.
+	 * -------------------------------------------------------------------------
+	 * AND THE COLOUR NO LONGER DEPENDS ON A CHIP.
 	 *
-	 * ---------------------------------------------------------------------------
-	 * THE GRADE COMES FROM THE ENGINE OR NOT AT ALL. The colour ramp means "how
-	 * far behind the best move, among everything the engine ranked" — a fact
-	 * about a search over all legal moves, not about whichever rows a filter
-	 * admits. Re-deriving it from the visible subset would make a move change
-	 * colour when a chip was pressed, which is a claim about the position that
-	 * nothing supports. A row the engine never scored is drawn green: shown, but
-	 * making no claim about how good it is.
+	 * Will: "when 'show moves' engine option is untoggled arrows are drawn
+	 * without their colour mapping — they should have eval scores just like
+	 * engine top list moves."
+	 *
+	 * They were plain green because the grade came from `candidates`, and
+	 * `candidates` was only fetched while the engine chip was down. So turning
+	 * off a FILTER silently withdrew a FACT, and the board went from a ranked
+	 * ramp to nine identical arrows. The search runs whenever the table is up
+	 * now, so the ramp survives every combination of chips — which is what it
+	 * always claimed to mean.
 	 */
-	/*
-	 * THE ENGINE'S PICKS, KEPT IN STEP WITH THE BOARD.
-	 *
-	 * Clearing first is the half that matters: without it the previous
-	 * position's five moves stay drawn for as long as the new search takes, on a
-	 * board where they are no longer legal. A blank table for a moment is honest;
-	 * a wrong one is not.
-	 */
-	const engineOn = tableShown && tableOn.has('engine');
-	const liveFen = state?.fen ?? null;
-	const ourColour = state?.ourColour;
-
-	useEffect(() => {
-		setCandidates(null);
-		if (!engineOn || !liveFen || !ourColour) return;
-		let live = true;
-		void (async () => {
-			try {
-				const cands = await candidateMoves(liveFen, ourColour, 5);
-				if (live) setCandidates(cands);
-			} catch (e) {
-				if (live) setError((e as Error).message);
-			}
-		})();
-		return () => {
-			live = false;
-		};
-	}, [engineOn, liveFen, ourColour]);
-
-	/** What people play here, kept in step the same way. */
-	const popularOn = tableShown && tableOn.has('popular');
-	useEffect(() => {
-		setDistribution(null);
-		if (!popularOn || !liveFen) return;
-		let live = true;
-		void (async () => {
-			try {
-				const data = await fetchExplorer(liveFen);
-				if (live) setDistribution(distributionOf(data, colourOfFen(liveFen)));
-			} catch (e) {
-				if (live) setError((e as Error).message);
-			}
-		})();
-		return () => {
-			live = false;
-		};
-	}, [popularOn, liveFen]);
-
-	const gradeByUci = useMemo(
-		() => new Map((candidates ?? []).map((c) => [c.uci, c])),
-		[candidates],
-	);
-
 	const tableArrows = useMemo<Arrow[]>(() => {
 		// HIDDEN TABLE, NO ARROWS. The chips are what say which source an arrow
 		// came from; drawn without them the board is coloured for no stated reason.
-		if (!tableShown || !tableOn.size) return [];
-		return filterMoves(moveRows, effectiveSources(moveRows, tableOn)).map((row) => {
-			const c = gradeByUci.get(row.uci);
-			return c
-				? {
-						...arrowFor(row.uci, brushForGrade(c.grade)),
-						label: `${c.cp > 0 ? '+' : ''}${(c.cp / 100).toFixed(1)}`,
-					}
-				: arrowFor(row.uci, 'green');
-		});
-	}, [tableShown, moveRows, tableOn, gradeByUci]);
+		if (!tableShown) return [];
+		return filterMoves(moveRows, effectiveSources(moveRows, tableOn)).flatMap((row) =>
+			arrowForRow(row, table.grades, table.book),
+		);
+	}, [tableShown, moveRows, tableOn, table.grades, table.book]);
 
 	const shownLastMove: [string, string] | undefined = lineOverlay.board
 		? lineOverlay.board.lastMove
@@ -1114,6 +1122,7 @@ export function Train({
 		yourTurn &&
 		((tableShown && tableOn.size > 0) || (wheels.active && wheels.on.size > 0));
 
+	const liveFen = state?.fen ?? null;
 	const chargedFor = useRef<string | null>(null);
 	useEffect(() => {
 		if (!assisting || !liveFen) return;
@@ -1221,7 +1230,7 @@ export function Train({
 					id: 'resign',
 					title: 'Stop showing this line',
 					icon: 'resign',
-					onClick: lineOverlay.close,
+					onClick: closeLine,
 				},
 			];
 
@@ -1236,13 +1245,22 @@ export function Train({
 				onClick: () => state?.retryPoint && replayFrom(state.retryPoint),
 				disabled: busy || !state?.retryPoint,
 			},
-			{
-				id: 'mistake',
-				title: 'Replay the same mistake',
-				icon: 'mistake',
-				onClick: () => state?.deviationPoint && replayFrom(state.deviationPoint),
-				disabled: busy || !state?.deviationPoint,
-			},
+			/*
+			 * THERE IS NO "REPLAY THE SAME MISTAKE" BUTTON.
+			 *
+			 * Will: "maybe we don't need a 'replay same mistake' button since user
+			 * can just step backwards?"
+			 *
+			 * They can. `deviationPoint` is a snapshot of the position immediately
+			 * AFTER their blunder — which is precisely where `back` lands you, and
+			 * `forward` brings you out again. So it was a third way to reach a
+			 * position that two permanently-available controls already reach, taking
+			 * up a cell in a strip whose icons were already hard to tell apart.
+			 *
+			 * The distinction worth keeping is the one `branch` makes: stepping back
+			 * gives you the SAME reply again, while that re-rolls it. Same position,
+			 * genuinely different outcome — which is a thing stepping cannot do.
+			 */
 			{
 				/*
 				 * ONE BUTTON WHERE THERE WERE THREE.
@@ -1287,24 +1305,72 @@ export function Train({
 				accent: sharing,
 				disabled: !state?.path.length,
 			},
+			/*
+			 * ONLY IN FREE PLAY, AND HIDDEN RATHER THAN DISABLED.
+			 *
+			 * Will: "maybe we only need to display a 'resign' button in free play
+			 * mode."
+			 *
+			 * Right, and the reason is what the word means. Resigning is conceding
+			 * a GAME — an act with an opponent on the other end of it. A drill has
+			 * no opponent to concede to and no result to concede: leaving one is
+			 * `restart`, the first cell in this same strip. So in the book phase
+			 * the button was offering to lose something that was not being played
+			 * for.
+			 *
+			 * In free play there IS a game: you are playing the position out
+			 * against the engine, the result is scored and it feeds the rating.
+			 * There, resigning is the ordinary thing it sounds like.
+			 *
+			 * Hidden rather than greyed, because a disabled cell still spends a
+			 * slot in a strip that has to cross a 360px screen, and still has to be
+			 * read and dismissed before it can be ignored.
+			 */
+			...(state?.phase === 'freeplay'
+				? [
+						{
+							id: 'resign',
+							title: 'Resign — end this game',
+							icon: 'resign',
+							onClick: () => {
+								if (!state || state.finished) return;
+								const ended = resign(state);
+								setState(ended);
+								persistRun(ended, lossByPly);
+							},
+							disabled: busy || !!state.finished,
+						} satisfies ToolbarAction,
+					]
+				: []),
 			{
-				id: 'resign',
-				title: 'Resign — end this run',
-				icon: 'resign',
-				onClick: () => {
-					if (!state || state.finished) return;
-					const ended = resign(state);
-					setState(ended);
-					persistRun(ended, lossByPly);
-				},
-				disabled: busy || !state || !!state.finished,
-			},
-			{
+				/*
+				 * FREE PLAY IS NOT A REWARD FOR FINISHING.
+				 *
+				 * Will: "I think 'play on' should be always available (sometimes it
+				 * is disabled). There is no reason I can see why user shouldn't be
+				 * able to go into free play mode against the engine from any
+				 * position."
+				 *
+				 * There is no reason, and there never was one in the engine: `playOn`
+				 * only flips the phase and clears `finished`, so it has always worked
+				 * from anywhere. The `!state.finished` guard was a statement about
+				 * when the button was OFFERED, and it smuggled in a claim — that
+				 * leaving the drill is something you earn by completing it — that
+				 * nobody decided and nothing supports.
+				 *
+				 * The two names are the same act described from where you are
+				 * standing. At the end of a line, continuing IS playing on. In the
+				 * middle of one it is abandoning the drill, and saying "play on"
+				 * there would hide that.
+				 */
 				id: 'playon',
-				title: 'Play on against the engine from here',
+				title: state?.finished
+					? 'Play on against the engine from here'
+					: 'Leave the drill and play this position out against the engine',
+				caption: state?.finished ? 'play on' : 'free play',
 				icon: 'playon',
 				onClick: continuePlaying,
-				disabled: busy || !state || state.phase === 'freeplay' || !state.finished,
+				disabled: busy || !state || state.phase === 'freeplay',
 				accent: state?.finished === 'punished',
 			},
 		];
@@ -1351,37 +1417,25 @@ export function Train({
 			)}
 
 			{/*
-			  * ABOVE THE BOARD, NOT UNDER IT.
+			  * THERE IS NO "PICKED UP WHERE YOU LEFT OFF" BANNER.
 			  *
-			  * Will: "move the 'pick up where you left off' banner above the board."
-			  * It was a child of BoardPanel, which puts it below the board and the
-			  * control strip — so the one thing that explains why the position is
-			  * not the starting position sat below the fold on a phone, and you
-			  * found it only after wondering. It is context for the board, so it
-			  * goes where context goes.
+			  * Will: "I don't know why we need the 'Picked up where you left off'
+			  * banner and 'start fresh instead' button. These confer nothing
+			  * 'restart' button doesn't already do. Sessions are not being persisted
+			  * anyway currently, so it's only the board position."
+			  *
+			  * Both halves hold. The button duplicated `restart`, which is the first
+			  * control in the strip and permanently available; and the notice was
+			  * announcing a continuity the app does not actually provide — what
+			  * survives a reload is the position, not the session, so "where you
+			  * left off" was a slightly larger claim than the truth. A banner whose
+			  * button already exists and whose sentence is not quite right is two
+			  * reasons to delete it.
+			  *
+			  * `resumed` is still tracked: it is read by the debug snapshot, and
+			  * whether a run was restored is a real fact about the session even with
+			  * nothing on screen saying so.
 			  */}
-			{resumed && (
-				<div
-					style={{
-						fontSize: text.body,
-						color: color.ink,
-						background: color.accentSoft,
-						border: `1px solid ${color.accent}`,
-						borderRadius: radius.small,
-						padding: `${space.snug}px ${space.gap}px`,
-						marginBottom: space.snug,
-						display: 'flex',
-						alignItems: 'center',
-						gap: space.snug,
-						flexWrap: 'wrap',
-					}}
-				>
-					<span>Picked up where you left off.</span>
-					<Button kind="quiet" onClick={newRun}>
-						Start fresh instead
-					</Button>
-				</div>
-			)}
 
 			<BoardPanel
 				fen={shownFen}
@@ -1420,98 +1474,20 @@ export function Train({
 				}
 				onMove={onMove}
 				version={boardVersion}
+				/*
+				 * THE OVERLAY'S WALK WINS WHILE IT OWNS THE BOARD.
+				 *
+				 * Same precedence as `shownFen` a few lines up, and for the same
+				 * reason: whoever is deciding which position is shown is also the
+				 * only one who can say how it was reached. Leaving the line is the
+				 * exception and it is `closeLine`'s — by then the overlay is gone,
+				 * so this falls through to the run's own.
+				 */
+				via={lineOverlay.via ?? via}
 				actions={toolbarActions()}
 				busy={busy}
 			>
 				<div style={{ marginTop: 10 }}>
-					{/*
-					  * ONE MOVE LIST. While a line is borrowed it shows that instead of
-					  * the game — same component, same chips, same cursor — with a banner
-					  * saying whose line it is and how to give it back.
-					  */}
-					{lineOverlay.overlay && (
-						<div
-							data-region="line-banner"
-							style={{
-								display: 'flex',
-								alignItems: 'center',
-								gap: 8,
-								fontSize: 13,
-								color: color.ink2,
-								marginBottom: space.tight,
-							}}
-						>
-							<span>{lineOverlay.overlay.label}</span>
-							<span style={{ marginLeft: 'auto' }}>
-								<Button kind="quiet" onClick={lineOverlay.close}>
-									Back to the game
-								</Button>
-							</span>
-						</div>
-					)}
-					<MoveList
-						region="train-move-list"
-						onAsk={lineOverlay.overlay?.onAsk}
-						chips={lineOverlay.chips ?? chips()}
-						currentPly={
-							lineOverlay.overlay
-								? lineOverlay.overlay.at
-								: previewing
-									? previewPly!
-									: (state?.path.length ?? 0)
-						}
-						onJump={
-							lineOverlay.overlay ? lineOverlay.setAt : busy ? undefined : previewAt
-						}
-						onPlayFrom={
-							lineOverlay.overlay ? undefined : busy ? undefined : (ply) => void playFromPly(ply)
-						}
-					/>
-					{!lineOverlay.overlay && <MoveListLegend />}
-
-					{previewing && (
-						<div
-							style={{
-								fontSize: 13,
-								background: color.warnSoft,
-								border: `1px solid ${color.warn}`,
-								borderRadius: 6,
-								padding: '6px 8px',
-								marginTop: 6,
-								display: 'flex',
-								gap: 8,
-								alignItems: 'center',
-								flexWrap: 'wrap',
-							}}
-						>
-							{/* Name the move rather than a ply number — §1.1, do not make
-								the reader derive what can be shown. */}
-							<span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-								Looking back at
-								<strong>
-									{Math.floor((previewPly! - 1) / 2) + 1}.
-									{previewPly! % 2 === 0 ? '..' : ''}
-								</strong>
-								<Move
-									san={state!.path[previewPly! - 1]}
-									colour={colourAtPly(previewPly! - 1)}
-									bold
-									size={13}
-								/>
-								— the game is where you left it.
-							</span>
-							<Button kind="quiet" onClick={() => setPreviewPly(null)}>
-								Back to the game
-							</Button>
-							<Button
-								onClick={() => previewPly !== null && void playFromPly(previewPly)}
-								disabled={busy}
-							>
-								Play from here
-							</Button>
-						</div>
-					)}
-
 					{/* ---------------------------------------------------------------
 						Two different things were sharing one paragraph, in the wrong
 						order: commentary on the CURRENT position sat above the verdict
@@ -1665,6 +1641,69 @@ export function Train({
 						</div>
 					)}
 
+					{/*
+					  * ONE TABLE, THREE FILTERS. Will: "we should unify these three
+					  * buttons: one table, the buttons just toggle which moves are
+					  * included ... so we use the same component for all three."
+					  *
+					  * The move is the row; being in the line, being popular and being one
+					  * of the engine's picks are TAGS on it. A move in two lists used to
+					  * appear twice, in two shapes, with different columns filled in.
+					  */}
+					{/*
+					  * ONLY ONCE A BUTTON HAS ASKED. `state.expected` is always populated —
+					  * out of book it is every legal move — so gating on "are there rows"
+					  * put thirty unevaluated rows on screen unbidden the moment the table
+					  * shipped. The three buttons are what request a source; before any of
+					  * them is pressed there is no question on the table.
+					  */}
+					{/*
+					  * NOT WHILE LOOKING BACK. The table describes the live position, and
+					  * the board already hides its arrows while previewing — so showing
+					  * the rows would put a list of moves beside a board they are not
+					  * legal on. `previewAt` used to achieve this by clearing
+					  * `candidates`, which made it a second owner of state the effect now
+					  * holds; this says the same thing where it belongs.
+					  */}
+					{/* NOT GATED ON HAVING ROWS. Turn every source off and there are no
+						rows — and the table carrying the chips would unmount, taking the
+						only way back with it. Same fault as the vanishing chip, one level
+						up. An empty table says it is empty; it does not disappear. */}
+					{tableShown && state && !previewing && (
+						<>
+							<h3 data-region="train-moves-head">Moves here</h3>
+							<MoveTable
+								rows={moveRows}
+								mover={colourOfFen(state.fen)}
+								on={tableOn}
+								// All three, always — a chip is how you switch a source back on,
+								// so it cannot be allowed to vanish with the source's rows.
+								offers={['line', 'engine', 'popular']}
+								onToggle={(src) =>
+									setTableOn((cur) => {
+										const next = new Set(cur);
+										if (next.has(src)) next.delete(src);
+										else next.add(src);
+										return next;
+									})
+								}
+								onAsk={(uci) =>
+									state?.fen &&
+									setAsking({ fen: state.fen, uci, alternatives: moveRows.map((r) => r.uci) })
+								}
+								askedPopularity={table.askedPopularity}
+								marksBook
+								region="train-moves"
+							/>
+						</>
+					)}
+
+					{/* ---------------------------------------------------------------
+						ANALYSIS, THEN HISTORY. See `BoardPanel` for the order and why
+						it is the same on every tab. The move list used to come FIRST
+						here and last in Mistakes, so the two tabs disagreed about what
+						the page was about.
+					--------------------------------------------------------------- */}
 					{explain && (
 						<LinePlayer
 							line={explain.line}
@@ -1695,9 +1734,102 @@ export function Train({
 							onShowLine={lineOverlay.show}
 							onClose={() => {
 								setAsking(null);
-								lineOverlay.close();
+								closeLine();
 							}}
 						/>
+					)}
+
+
+					{/* THE HISTORY, after everything that is about the position in
+						front of you. Will: "I think the past move list (history) is not
+						really important — it should be after analytical content (but
+						before options and preferences)." */}
+					{/*
+					  * ONE MOVE LIST. While a line is borrowed it shows that instead of
+					  * the game — same component, same chips, same cursor — with a banner
+					  * saying whose line it is and how to give it back.
+					  */}
+					{lineOverlay.overlay && (
+						<div
+							data-region="line-banner"
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: 8,
+								fontSize: 13,
+								color: color.ink2,
+								marginBottom: space.tight,
+							}}
+						>
+							<span>{lineOverlay.overlay.label}</span>
+							<span style={{ marginLeft: 'auto' }}>
+								<Button kind="quiet" onClick={closeLine}>
+									Back to the game
+								</Button>
+							</span>
+						</div>
+					)}
+					<MoveList
+						region="train-move-list"
+						onAsk={lineOverlay.overlay?.onAsk}
+						chips={lineOverlay.chips ?? chips()}
+						currentPly={
+							lineOverlay.overlay
+								? lineOverlay.overlay.at
+								: previewing
+									? previewPly!
+									: (state?.path.length ?? 0)
+						}
+						onJump={
+							lineOverlay.overlay ? lineOverlay.setAt : busy ? undefined : previewAt
+						}
+						onPlayFrom={
+							lineOverlay.overlay ? undefined : busy ? undefined : (ply) => void playFromPly(ply)
+						}
+					/>
+					{!lineOverlay.overlay && <MoveListLegend />}
+
+					{previewing && (
+						<div
+							style={{
+								fontSize: 13,
+								background: color.warnSoft,
+								border: `1px solid ${color.warn}`,
+								borderRadius: 6,
+								padding: '6px 8px',
+								marginTop: 6,
+								display: 'flex',
+								gap: 8,
+								alignItems: 'center',
+								flexWrap: 'wrap',
+							}}
+						>
+							{/* Name the move rather than a ply number — §1.1, do not make
+								the reader derive what can be shown. */}
+							<span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+								Looking back at
+								<strong>
+									{Math.floor((previewPly! - 1) / 2) + 1}.
+									{previewPly! % 2 === 0 ? '..' : ''}
+								</strong>
+								<Move
+									san={state!.path[previewPly! - 1]}
+									colour={colourAtPly(previewPly! - 1)}
+									bold
+									size={13}
+								/>
+								— the game is where you left it.
+							</span>
+							<Button kind="quiet" onClick={() => setPreviewPly(null)}>
+								Back to the game
+							</Button>
+							<Button
+								onClick={() => previewPly !== null && void playFromPly(previewPly)}
+								disabled={busy}
+							>
+								Play from here
+							</Button>
+						</div>
 					)}
 
 					{sharing && state && (
@@ -1770,62 +1902,6 @@ export function Train({
 					)}
 				</div>
 
-
-				{/*
-				  * ONE TABLE, THREE FILTERS. Will: "we should unify these three
-				  * buttons: one table, the buttons just toggle which moves are
-				  * included ... so we use the same component for all three."
-				  *
-				  * The move is the row; being in the line, being popular and being one
-				  * of the engine's picks are TAGS on it. A move in two lists used to
-				  * appear twice, in two shapes, with different columns filled in.
-				  */}
-				{/*
-				  * ONLY ONCE A BUTTON HAS ASKED. `state.expected` is always populated —
-				  * out of book it is every legal move — so gating on "are there rows"
-				  * put thirty unevaluated rows on screen unbidden the moment the table
-				  * shipped. The three buttons are what request a source; before any of
-				  * them is pressed there is no question on the table.
-				  */}
-				{/*
-				  * NOT WHILE LOOKING BACK. The table describes the live position, and
-				  * the board already hides its arrows while previewing — so showing
-				  * the rows would put a list of moves beside a board they are not
-				  * legal on. `previewAt` used to achieve this by clearing
-				  * `candidates`, which made it a second owner of state the effect now
-				  * holds; this says the same thing where it belongs.
-				  */}
-				{/* NOT GATED ON HAVING ROWS. Turn every source off and there are no
-					rows — and the table carrying the chips would unmount, taking the
-					only way back with it. Same fault as the vanishing chip, one level
-					up. An empty table says it is empty; it does not disappear. */}
-				{tableShown && state && !previewing && (
-					<>
-						<h3 data-region="train-moves-head">Moves here</h3>
-						<MoveTable
-							rows={moveRows}
-							mover={colourOfFen(state.fen)}
-							on={tableOn}
-							// All three, always — a chip is how you switch a source back on,
-							// so it cannot be allowed to vanish with the source's rows.
-							offers={['line', 'engine', 'popular']}
-							onToggle={(src) =>
-								setTableOn((cur) => {
-									const next = new Set(cur);
-									if (next.has(src)) next.delete(src);
-									else next.add(src);
-									return next;
-								})
-							}
-							onAsk={(uci) =>
-								state?.fen &&
-								setAsking({ fen: state.fen, uci, alternatives: moveRows.map((r) => r.uci) })
-							}
-							askedPopularity={distribution !== null}
-							region="train-moves"
-						/>
-					</>
-				)}
 
 				<h3>Engine strength</h3>
 				<div style={{ fontSize: 14 }}>
@@ -2135,6 +2211,55 @@ function arrowFor(
 	brush: string,
 ): { orig: string; dest: string; brush: string } {
 	return { orig: uci.slice(0, 2), dest: uci.slice(2, 4), brush };
+}
+
+/**
+ * One table row, as shapes on the board.
+ *
+ * ---------------------------------------------------------------------------
+ * TWO SHAPES, NOT A LONGER LABEL.
+ *
+ * Will: "with the ◆ denoting book moves the text becomes too small to read in
+ * the arrow labels. We need another way to denote book moves."
+ *
+ * Chessground sizes label text as `0.4 * 0.75 ** text.length`, so appending to
+ * a label shrinks the WHOLE label exponentially: "+0.3" renders at 0.127 and
+ * "+0.3 ◆" at 0.071. The marker did not take a corner of the badge, it took
+ * half the evaluation's legibility — which is the one thing on the arrow that
+ * has to be readable.
+ *
+ * So the move keeps its arrow, carrying quality in colour and width and its
+ * score in a four-character label, and a book move gets a SECOND shape: a ring
+ * round the square it lands on. Separate object, separate channel, and the
+ * arrow is untouched.
+ *
+ * Exported so the two tabs draw the same thing. They had two copies of this,
+ * and the copies had already diverged on whether an unranked move gets a label.
+ */
+export function arrowForRow(
+	row: MoveRow,
+	grades: Map<string, Candidate>,
+	book: ReadonlySet<string>,
+): Shape[] {
+	const dest = row.uci.slice(2, 4);
+	const c = grades.get(row.uci);
+	const out: Shape[] = [
+		c
+			? {
+					...arrowFor(row.uci, brushForGrade(c.grade)),
+					// ONE DECIMAL, and it is load-bearing: at two the label is already
+					// down to 0.095 and at three it would be unreadable. A tenth of a
+					// pawn is also as fine a distinction as this search can support.
+					label: `${c.cp > 0 ? '+' : ''}${(c.cp / 100).toFixed(1)}`,
+				}
+			: // A row the engine never scored is drawn green: shown, but making no
+				// claim about how good it is. Rare now that the table asks for two
+				// dozen lines, and it means what it says when it happens.
+				arrowFor(row.uci, 'green'),
+	];
+	// A shape with no `dest` is a circle on its `orig` — see `Board`'s mapping.
+	if (book.has(row.uci)) out.push({ orig: dest, brush: 'book' });
+	return out;
 }
 
 /**

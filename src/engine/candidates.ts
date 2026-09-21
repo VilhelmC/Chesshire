@@ -31,6 +31,29 @@ export async function candidateMoves(
 	ourColour: 'w' | 'b',
 	count = 5,
 	movetimeMs = 400,
+	/**
+	 * How many of the top moves the colour ramp is scaled over.
+	 *
+	 * -----------------------------------------------------------------------
+	 * SEPARATED FROM `count`, WHICH USED TO DECIDE BOTH.
+	 *
+	 * Will: "why are not all moves shown with eval score? regardless of whether
+	 * engine is toggled… it irritates me that the table has different grammars
+	 * for different categories."
+	 *
+	 * Right, and the fix is to ask the engine for many more lines — MultiPV is
+	 * one search whatever the count, so twenty-four costs what five did under a
+	 * fixed movetime. But `grade` was scaled over EVERYTHING returned, so
+	 * widening the request would have quietly rescaled the board's arrows:
+	 * include one hanging-queen move and the best five all collapse into the
+	 * same dark brush, because they are now "close" relative to a disaster.
+	 *
+	 * The ramp means "how far behind the best, among the moves worth
+	 * considering", so it is scaled over the top few and everything past them
+	 * clamps to the faintest brush. Asking for more rows now changes the TABLE
+	 * without touching the BOARD, which is the whole point of separating them.
+	 */
+	gradeOver = 5,
 ): Promise<Candidate[]> {
 	const a = await analysePosition(fen, 12, count, movetimeMs);
 
@@ -41,10 +64,13 @@ export async function candidateMoves(
 	if (!rows.length) return [];
 
 	const best = rows[0].cp;
-	// Grade against the spread actually on the board. Scaling to a fixed range
-	// would make every position look the same, when the useful signal is whether
-	// this particular choice is close or wide.
-	const worstLoss = Math.max(1, best - rows[rows.length - 1].cp);
+	// Grade against the spread actually on the board — among the moves worth
+	// considering. Scaling to a fixed range would make every position look the
+	// same, when the useful signal is whether this particular choice is close or
+	// wide; scaling over every line returned would make it depend on how many we
+	// happened to ask for.
+	const ramp = rows.slice(0, Math.max(1, gradeOver));
+	const worstLoss = Math.max(1, best - ramp[ramp.length - 1].cp);
 
 	return rows.map((r) => {
 		let san = r.uci;

@@ -70,6 +70,33 @@ export type BoardProps = {
 	 * a move that was never accepted.
 	 */
 	version?: number;
+	/**
+	 * Positions to pass through on the way to `fen`, so a jump reads as moves.
+	 *
+	 * -------------------------------------------------------------------------
+	 * Will: "I'm wondering whether whenever we step or forward we can actually
+	 * show the animation? Including if we've been stepping through a branch move
+	 * sequence, if we return to the game it would be useful to animate the
+	 * sequence of moving the pieces back — that way user gets intuitive visual
+	 * cue."
+	 *
+	 * Chessground already animates every position change, including a jump of
+	 * four plies — measured, not assumed. But a jump animates pieces STRAIGHT TO
+	 * THEIR DESTINATIONS: going back four moves at once slides the bishop from
+	 * c4 to f1 and the knight from f3 to g1 at the same time, and a piece that
+	 * moved twice cuts a diagonal across squares it was never on. That is motion
+	 * without meaning — it says something changed and nothing about what.
+	 *
+	 * So a caller that knows the intervening positions hands them over and the
+	 * board plays them in order. It has to be the caller: only it can say
+	 * whether two positions are joined by a line of play at all, and a jump
+	 * between unrelated ones (a new run, a different game) must stay a jump
+	 * rather than pretending to be a sequence of moves.
+	 *
+	 * `to` is carried alongside so a stale value cannot be misapplied — if it
+	 * does not name the fen being set, this is not that walk.
+	 */
+	via?: { to: string; through: string[] } | null;
 };
 
 /**
@@ -149,6 +176,7 @@ export function Board({
 	apiRef,
 	size = 420,
 	version = 0,
+	via = null,
 }: BoardProps) {
 	const ref = useRef<HTMLDivElement>(null);
 	const api = useRef<Api | null>(null);
@@ -267,13 +295,70 @@ export function Board({
 		lastFen.current = fen;
 		lastVersion.current = version;
 
-		cg.set({
-			fen,
-			turnColor: turnOf(fen),
-			lastMove: lastMove as Key[] | undefined,
-		});
+		const land = () =>
+			cg.set({
+				fen,
+				turnColor: turnOf(fen),
+				lastMove: lastMove as Key[] | undefined,
+				// Back to the ordinary duration, whatever a walk may have set.
+				animation: { duration: ANIM_MS },
+			});
+
+		// A walk this caller asked for, for THIS position — see `via`. A value
+		// left over from an earlier transition names a different destination and
+		// is ignored rather than replayed at the wrong moment.
+		const through = via && via.to === fen ? via.through : [];
+		if (!through.length || reducedMotion()) {
+			land();
+			return;
+		}
+
+		/*
+		 * The steps are paced to fit a fixed budget rather than given a fixed
+		 * interval each. Ten plies at a comfortable 180ms is nearly two seconds
+		 * of watching, which stops being a cue and becomes a wait — and the
+		 * thing being communicated ("we went back that way") is just as clear
+		 * faster. Never below chessground's own 70ms floor, under which it
+		 * disables animation and the pieces teleport anyway.
+		 */
+		const interval = Math.max(MIN_STEP_MS, Math.min(STEP_MS, WALK_BUDGET_MS / through.length));
+		/*
+		 * EACH MOVE HAS TO FINISH INSIDE ITS OWN SLOT.
+		 *
+		 * Will: "it would be more intuitive if they were animated one at a time so
+		 * it is actually reversing the move sequence."
+		 *
+		 * One position per slot already means one piece moves at a time. But
+		 * chessground's animation is a fixed 200ms, so on a long walk — where the
+		 * budget squeezes the slots below that — every move is cut off partway and
+		 * the next begins, and a dozen half-finished slides read as one smear. The
+		 * duration follows the pacing instead, so each move lands before the next
+		 * one starts and the sequence stays countable.
+		 */
+		const duration = Math.max(MIN_STEP_MS, interval - 20);
+		let cancelled = false;
+		let i = 0;
+		const timers: number[] = [];
+		const tick = () => {
+			if (cancelled) return;
+			if (i < through.length) {
+				const at = through[i++];
+				cg.set({ fen: at, turnColor: turnOf(at), animation: { duration } });
+				timers.push(window.setTimeout(tick, interval));
+			} else {
+				land();
+			}
+		};
+		tick();
+		return () => {
+			cancelled = true;
+			for (const t of timers) window.clearTimeout(t);
+			// Whatever interrupted this walk is about to set its own position, and
+			// the board must not be left halfway along a path nobody is on.
+			if (lastFen.current === fen) land();
+		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [fen, lastMoveKey, version]);
+	}, [fen, lastMoveKey, version, via]);
 
 	useEffect(() => {
 		const cg = api.current;
@@ -386,6 +471,37 @@ export function Board({
 	return <div ref={ref} style={{ width: size, height: size }} />;
 }
 
+/** Chessground's own default, restored whenever a walk ends. */
+const ANIM_MS = 200;
+/** One position per this many milliseconds while walking a `via` path. */
+const STEP_MS = 170;
+/**
+ * …and the whole walk is squeezed to fit inside this, however many plies.
+ *
+ * Ten plies at a comfortable pace is nearly two seconds of watching, which
+ * stops being a cue and becomes a wait. The thing being communicated — "we came
+ * back that way" — survives being shown faster.
+ */
+const WALK_BUDGET_MS = 1100;
+/**
+ * The floor, and it is chessground's rather than a taste.
+ *
+ * Below 70ms it disables animation outright (`config.ts`), so a walk paced any
+ * faster would teleport each step and lose the very thing it is for.
+ */
+const MIN_STEP_MS = 70;
+
+/**
+ * Someone who asked their system not to animate things means it.
+ *
+ * The CSS honours this for the working indicator already; a board that replays
+ * six moves when the reader asked for stillness is the same promise broken
+ * more visibly.
+ */
+function reducedMotion(): boolean {
+	return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+}
+
 /** Board size below which rank/file labels stop being legible and become noise. */
 const COORDS_MIN = 360;
 
@@ -478,6 +594,35 @@ const QUALITY_BRUSHES = {
 	 * ramp teaches them to.
 	 */
 	past: { key: 'pa', color: '#7d7d7d', opacity: 0.55, lineWidth: 6 },
+	/**
+	 * A ring around a square: this move is in the book.
+	 *
+	 * -------------------------------------------------------------------------
+	 * IT CANNOT GO ON THE LABEL, AND THAT IS ARITHMETIC RATHER THAN TASTE.
+	 *
+	 * Will: "with the ◆ denoting book moves the text becomes too small to read
+	 * in the arrow labels. We need another way to denote book moves. Is it
+	 * possible to change the style of the arrows somehow?"
+	 *
+	 * Chessground sizes a label's text as `0.4 * 0.75 ** text.length` — every
+	 * extra character shrinks THE WHOLE LABEL, exponentially. "+0.3" renders at
+	 * 0.127; "+0.3 ◆" renders at 0.071, which is 44% smaller. So a marker in the
+	 * label does not cost a corner of the badge, it costs half the eval's
+	 * legibility, and no choice of symbol avoids that.
+	 *
+	 * The arrow's own style is already fully spent: colour AND width both carry
+	 * position on the quality ramp, which is deliberate — two channels so it
+	 * survives colour-blindness and a small screen. Adding a dash would be a
+	 * third visual variable on one object, and "dashed" reads as tentative,
+	 * which is the opposite of what theory is.
+	 *
+	 * So the mark is a separate object on the destination square. Green, because
+	 * this app already draws the book move and the solution in plain green (see
+	 * the ramp's note above — the ramp is NOT green precisely so that green can
+	 * keep meaning "this is the answer"). Thin, so it frames the square rather
+	 * than competing with the arrow landing in it.
+	 */
+	book: { key: 'bk', color: '#15781B', opacity: 0.9, lineWidth: 6 },
 };
 
 /** True if moving orig->dest is a pawn reaching the last rank. */

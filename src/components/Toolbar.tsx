@@ -23,18 +23,36 @@ export type ToolbarAction = {
 		| 'back'
 		| 'forward'
 		| 'branch'
-		| 'mistake'
 		| 'reveal'
-		| 'answer'
 		| 'playon'
 		| 'options'
-		| 'stats'
 		| 'share'
 		| 'resign';
 	onClick: () => void;
 	disabled?: boolean;
 	accent?: boolean;
+	/**
+	 * Override the icon's fixed caption.
+	 *
+	 * Normally one icon means one word — that is what keeps the strip from
+	 * moving. But a control whose MEANING shifts with the situation has to be
+	 * able to say so: the same button is "free play" from a live position and
+	 * "play on" once the line has ended, and calling it one of those everywhere
+	 * is wrong half the time. Still a fixed word per press, so the layout still
+	 * holds still.
+	 */
+	caption?: string;
 };
+
+/*
+ * `mistake` and `stats` USED TO BE HERE.
+ *
+ * `stats` went when the three filter buttons collapsed into the move table.
+ * `mistake` went with the button it drew — Will: "maybe we don't need a 'replay
+ * same mistake' button since user can just step backwards?" They are deleted
+ * rather than left available, because an icon nothing draws is a vocabulary
+ * entry a reader has to check before concluding it is unused.
+ */
 
 /** One fixed word per control, for when there is no hover to reveal the title. */
 const CAPTION: Record<ToolbarAction['icon'], string> = {
@@ -50,12 +68,9 @@ const CAPTION: Record<ToolbarAction['icon'], string> = {
 	 * being handed a different problem from the same starting point.
 	 */
 	branch: 'new reply',
-	mistake: 'mistake',
 	reveal: 'show moves',
-	answer: 'answer',
 	playon: 'play on',
 	options: 'options',
-	stats: 'played',
 	share: 'share',
 	resign: 'resign',
 };
@@ -169,7 +184,7 @@ export function Toolbar({
 								lineHeight: 1,
 							}}
 						>
-							{CAPTION[a.icon]}
+							{a.caption ?? CAPTION[a.icon]}
 						</span>
 					)}
 				</button>
@@ -201,22 +216,32 @@ function Icon({ name }: { name: ToolbarAction['icon'] }) {
 				</svg>
 			);
 		case 'branch':
-			// Two paths diverging from one — the position where their choice forks.
+			/*
+			 * A DIE, BECAUSE THE ACTION IS A RE-ROLL.
+			 *
+			 * Will: "'Same position — different reply' — maybe there is a better
+			 * icon for this?"
+			 *
+			 * It was a fork: two paths diverging from a point. Accurate about the
+			 * TREE and wrong about the act — a fork says "here are your options",
+			 * which is what the move table does, and at 18px it was three dots and
+			 * two curves that read as a share glyph. It also sat next to `share`,
+			 * which is genuinely three dots and two lines.
+			 *
+			 * What this button does is put the position back and make the opponent
+			 * CHOOSE AGAIN, at random, weighted by how often people play each reply
+			 * — that is literally a dice roll, and the app's own "mistake rate"
+			 * setting is the loaded die. A die is unlike anything else in the strip
+			 * at any size, and it says "same position, different draw" without
+			 * having to be learned.
+			 */
 			return (
 				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
-					<path d="M7 20V12c0-2 2-3 4-4l4-2" />
-					<path d="M7 12c0 2 2 3 4 4l4 2" />
-					<circle cx="7" cy="20" r="1.8" fill="currentColor" stroke="none" />
-					<circle cx="16" cy="5" r="1.8" fill="currentColor" stroke="none" />
-					<circle cx="16" cy="19" r="1.8" fill="currentColor" stroke="none" />
-				</svg>
-			);
-		case 'mistake':
-			return (
-				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
-					<circle cx="12" cy="12" r="8" />
-					<line x1="9" y1="9" x2="15" y2="15" />
-					<line x1="15" y1="9" x2="9" y2="15" />
+					<rect x="4" y="4" width="16" height="16" rx="3.5" />
+					<circle cx="9" cy="9" r="1.5" fill="currentColor" stroke="none" />
+					<circle cx="15" cy="9" r="1.5" fill="currentColor" stroke="none" />
+					<circle cx="9" cy="15" r="1.5" fill="currentColor" stroke="none" />
+					<circle cx="15" cy="15" r="1.5" fill="currentColor" stroke="none" />
 				</svg>
 			);
 		case 'reveal':
@@ -224,27 +249,6 @@ function Icon({ name }: { name: ToolbarAction['icon'] }) {
 				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
 					<path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z" />
 					<circle cx="12" cy="12" r="2.5" />
-				</svg>
-			);
-		case 'answer':
-			/*
-			 * A KEY, not a second eye.
-			 *
-			 * Mistakes had one button meaning "show the moves on the board" and
-			 * another meaning "tell me the answer", and both were drawn with the
-			 * eye — because the eye had been the answer button first and "show the
-			 * moves" inherited it when the filters were unified. Two controls with
-			 * one icon is the same fault as one control with two names.
-			 *
-			 * A key unlocks a specific thing; an eye looks at everything. That is
-			 * the actual difference between them.
-			 */
-			return (
-				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
-					<circle cx="8" cy="9" r="3.4" />
-					<path d="M10.6 11.4 19 19.8" />
-					<path d="M16.4 17.2 14.6 19" />
-					<path d="M19 19.8 17.2 21.6" />
 				</svg>
 			);
 		case 'resign':
@@ -262,16 +266,6 @@ function Icon({ name }: { name: ToolbarAction['icon'] }) {
 					<line x1="4" y1="7" x2="18" y2="7" strokeWidth="3.2" />
 					<line x1="4" y1="12" x2="15" y2="12" strokeWidth="2" />
 					<line x1="4" y1="17" x2="12" y2="17" strokeWidth="1.2" />
-				</svg>
-			);
-		case 'stats':
-			// Three bars of falling height: a distribution, as opposed to the
-			// `options` ramp, which is arrows of falling weight.
-			return (
-				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
-					<rect x="4" y="9" width="4" height="11" fill="currentColor" stroke="none" />
-					<rect x="10" y="13" width="4" height="7" fill="currentColor" stroke="none" />
-					<rect x="16" y="16" width="4" height="4" fill="currentColor" stroke="none" />
 				</svg>
 			);
 		case 'share':

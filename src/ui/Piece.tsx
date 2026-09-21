@@ -3,11 +3,6 @@
 // ---------------------------------------------------------------------------
 // WHY THIS IS NOT JUST A CHARACTER.
 //
-// Will: "Progress: 'where it breaks' and 'does it carry into your games' —
-// glyphs are inverted when app is in dark mode. White pieces use hollow glyphs
-// so appear black and black pieces use white solid pieces... Same with
-// Mistakes: 'Hardest' array."
-//
 // Unicode ships TWO piece sets. `♔♕♖♗♘♙` are OUTLINE shapes and `♚♛♜♝♞♟` are
 // FILLED ones, and neither carries a colour: both are stroked and filled in
 // whatever the current text colour happens to be. On a light page an outline
@@ -15,25 +10,38 @@
 // reads black — so "use the outline set for White" works, by accident, in
 // exactly one theme. Flip to dark ink on a dark page and the meanings swap:
 // the filled king renders solid pale and reads WHITE, the outline king reads
-// as a dark hole. Which is the report, exactly.
+// as a dark hole. Which was the report.
 //
-// The fix cannot be "swap the sets in dark mode", because that leaves two
-// definitions of which shape means which side and a third theme away from
-// being wrong again. So:
+// ---------------------------------------------------------------------------
+// AND WHY THERE IS NO LONGER A LITTLE TAN SQUARE BEHIND IT.
 //
-//   ONE SET — the filled one, always. Colour is applied LITERALLY, and the
-//   glyph stands on a fixed board-coloured chip so neither ink can land on a
-//   surface its own value.
+// Will: "I'm not sure what I think about the tan chip behind piece glyphs.
+// Accepted for now, but we should be able to dynamically pick correct glyph and
+// colour for a piece glyph depending on background lightness."
 //
-// Nothing in the palette can reach these three values, which is the point:
-// `color.ink` and `color.page` SWAP between themes and a piece's colour must
-// not. This was already solved correctly inside MaterialBar and nowhere else;
-// this file is that solution, extracted, so the move list and the mistake rows
-// cannot drift away from it again.
+// The chip existed to guarantee a known background, because a near-black man
+// painted on a near-black panel is invisible and the component has no way to
+// find out what is behind it. That is worth being precise about: a React
+// component genuinely CANNOT read its own backdrop. It could only be TOLD, by
+// every call site, correctly, forever — and "forever" is the part that fails.
+// The move list, four mistake rows, the material bar and whatever gets built
+// next would each have to know which surface they sit on and keep knowing it
+// through every restyle. That is the same one-definition-two-readers trap this
+// repo keeps falling into, with a dozen readers instead of two.
+//
+// So the glyph carries its own contrast instead. ONE FILLED SET, painted in the
+// piece's literal colour, with a hairline HALO in the opposite one. Whatever is
+// behind it, one of the two differs from it: a white man on a pale page is
+// found by its dark edge, a black man on a dark page by its light edge, and on
+// mid-tones both are visible at once. Nothing has to be told anything, and
+// there is no second glyph set to get out of step.
+//
+// The halo is `text-shadow` rather than `-webkit-text-stroke`, which strokes
+// centred on the outline and eats into a 15px glyph until the knight loses its
+// ears.
 // ---------------------------------------------------------------------------
 
 import type { Role, Colour } from '../domain/material';
-import { radius } from './theme';
 
 /** The filled set. There is no second set — see the header. */
 export const PIECE_GLYPH: Record<Role, string> = {
@@ -48,15 +56,15 @@ export const PIECE_GLYPH: Record<Role, string> = {
 /**
  * Literal, not tokens.
  *
- * Measured against the chip rather than guessed: white reads 3.1:1 on it and
- * black 6.1:1, which clears the 3:1 that WCAG asks of a graphical object in
- * both directions. A lighter chip pushed white below 3:1 and a darker one did
- * the same to black — there is less room here than it looks.
+ * `color.ink` and `color.page` SWAP between themes and a piece's colour must
+ * not. These two are the piece's own identity, so they are hard values — the
+ * one place in the app where a hex is the correct answer rather than a
+ * shortcut.
  */
-const INK: Record<Colour, string> = { w: '#ffffff', b: '#101010' };
+const INK: Record<Colour, string> = { w: '#ffffff', b: '#111111' };
 
-/** Board tan, fixed. A near-black man must never stand on a near-black panel. */
-const SQUARE = '#a09176';
+/** The opposite one, which is what draws the edge. */
+const EDGE: Record<Colour, string> = { w: INK.b, b: INK.w };
 
 /** SAN's piece letters. Anything else — including castling's O-O — is handled below. */
 const ROLE_OF_LETTER: Record<string, Role> = {
@@ -77,17 +85,11 @@ export function Piece({
 	role,
 	colour,
 	size = 15,
-	/**
-	 * The chip can be dropped where the glyph already sits on a known surface —
-	 * but only where that surface is fixed by something other than the theme.
-	 */
-	plain = false,
 	title,
 }: {
 	role: Role;
 	colour: Colour;
 	size?: number;
-	plain?: boolean;
 	title?: string;
 }) {
 	return (
@@ -97,9 +99,12 @@ export function Piece({
 			style={{
 				display: 'inline-block',
 				color: INK[colour],
-				background: plain ? undefined : SQUARE,
-				borderRadius: plain ? undefined : radius.small - 2,
-				padding: plain ? undefined : '0 1px',
+				/*
+				 * Four offsets rather than a blur. A blurred shadow spreads its ink
+				 * over two pixels and reads as a smudge at this size; four hard
+				 * half-pixel copies read as an outline, which is what it is.
+				 */
+				textShadow: `0.5px 0 0 ${EDGE[colour]}, -0.5px 0 0 ${EDGE[colour]}, 0 0.5px 0 ${EDGE[colour]}, 0 -0.5px 0 ${EDGE[colour]}`,
 				fontSize: size,
 				lineHeight: 1,
 				// A column of moves should align on the notation, not on whichever

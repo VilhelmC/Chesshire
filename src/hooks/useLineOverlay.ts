@@ -31,7 +31,8 @@
 // ---------------------------------------------------------------------------
 
 import { useCallback, useMemo, useState } from 'react';
-import { type Line, stepAt, arrowFor } from '../domain/line';
+import { type Line, stepAt, arrowFor, positionsOf } from '../domain/line';
+import { walkThrough } from '../domain/walk';
 import type { MoveChip } from '../components/MoveList';
 import type { BoardOverride } from '../components/LineStepper';
 
@@ -80,27 +81,63 @@ export type LineOverlayState = {
 	step: (delta: number) => void;
 	/** True when the step controls should drive the overlay rather than the game. */
 	active: boolean;
+	/**
+	 * Positions the board should pass through to reach the current one.
+	 *
+	 * -------------------------------------------------------------------------
+	 * Will: "when I press 'Back to the start of the line' after viewing a branch
+	 * sequence it animates all pieces moving back to their positions at the same
+	 * time. It would be more intuitive if they were animated one at a time so it
+	 * is actually reversing the move sequence."
+	 *
+	 * The walk was wired for jumps in the GAME's move list and for leaving a
+	 * line, and not for jumps WITHIN one — so the one control whose whole job is
+	 * to travel several plies at once, "back to the start", was the one that
+	 * still teleported.
+	 *
+	 * It belongs here rather than in each host because the positions are the
+	 * overlay's own: it already computes `board` from `stepAt`, so it is the only
+	 * thing that can say what lies between two cursor positions without being
+	 * told. Two hosts wiring this separately is how the arrows and the table came
+	 * to disagree twice.
+	 */
+	via: { to: string; through: string[] } | null;
 };
 
 export function useLineOverlay(): LineOverlayState {
 	const [overlay, setOverlay] = useState<LineOverlay | null>(null);
+	const [via, setVia] = useState<{ to: string; through: string[] } | null>(null);
+
+	/** Move the cursor, and remember the way there so the board can replay it. */
+	const goTo = useCallback((next: (o: LineOverlay) => number) => {
+		setOverlay((o) => {
+			if (!o) return o;
+			const at = Math.max(-1, Math.min(o.line.steps.length - 1, next(o)));
+			// Computed here, in the same place the cursor moves, so the two cannot
+			// describe different journeys.
+			setVia(walkThrough(positionsOf(o.line), o.at + 1, at + 1));
+			return { ...o, at };
+		});
+	}, []);
 
 	const show = useCallback((line: Line, label: string, extras?: LineExtras) => {
+		// A line that has just appeared has nothing to walk back through: the
+		// board is arriving somewhere new, and pretending otherwise would animate
+		// a journey that did not happen.
+		setVia(null);
 		setOverlay({ line, label, at: -1, ...extras });
 	}, []);
 
-	const close = useCallback(() => setOverlay(null), []);
-
-	const setAt = useCallback((at: number) => {
-		setOverlay((o) => (o ? { ...o, at: Math.max(-1, Math.min(o.line.steps.length - 1, at)) } : o));
+	const close = useCallback(() => {
+		// Leaving is the HOST's walk — the destination is the game's position,
+		// which this deliberately knows nothing about. See Train's `closeLine`.
+		setVia(null);
+		setOverlay(null);
 	}, []);
 
-	const step = useCallback(
-		(delta: number) => {
-			setOverlay((o) => (o ? { ...o, at: Math.max(-1, Math.min(o.line.steps.length - 1, o.at + delta)) } : o));
-		},
-		[],
-	);
+	const setAt = useCallback((at: number) => goTo(() => at), [goTo]);
+
+	const step = useCallback((delta: number) => goTo((o) => o.at + delta), [goTo]);
 
 	/**
 	 * The line as chips the existing list can render.
@@ -132,5 +169,5 @@ export function useLineOverlay(): LineOverlayState {
 		return { fen, lastMove, arrows: arrowFor(overlay.line, overlay.at) };
 	}, [overlay]);
 
-	return { overlay, chips, board, show, close, setAt, step, active: overlay !== null };
+	return { overlay, chips, board, show, close, setAt, step, via, active: overlay !== null };
 }

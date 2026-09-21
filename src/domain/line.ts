@@ -119,6 +119,26 @@ export function stepAt(line: Line, index: number): { fen: string; lastMove?: [st
 }
 
 /**
+ * Every position the line passes through, indexed from its start.
+ *
+ * ---------------------------------------------------------------------------
+ * THE OFFSET IS THE WHOLE OF IT, so it is written down once.
+ *
+ * A line's cursor is −1 before its first move, which means index 0 of this
+ * array is the position the line starts FROM and the cursor at `at` sits at
+ * index `at + 1`. Every caller that wants to animate between two cursor
+ * positions has to get that right, and the ways of getting it wrong — showing
+ * the destination twice, skipping the first move — are indistinguishable from
+ * a timing bug when you are watching pieces move.
+ *
+ * Here rather than in the overlay hook because it is a fact about a `Line` and
+ * nothing to do with a board, a cursor or React.
+ */
+export function positionsOf(line: Line): string[] {
+	return [stepAt(line, -1).fen, ...line.steps.map((_, i) => stepAt(line, i).fen)];
+}
+
+/**
  * An arrow for the move that PRODUCED the position being shown.
  *
  * ---------------------------------------------------------------------------

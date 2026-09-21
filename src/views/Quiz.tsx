@@ -9,7 +9,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BoardPanel } from '../components/BoardPanel';
 import type { ToolbarAction } from '../components/Toolbar';
 import { analysePosition, toColourPov } from '../data/cloudEval';
-import { candidateMoves, brushForGrade, type Candidate } from '../engine/candidates';
 import { loadMistakes, saveCard, clearMistakes, deleteCard } from '../data/mistakes';
 import {
 	due,
@@ -31,10 +30,9 @@ import { useCommentary } from '../hooks/useCommentary';
 import { Commentary } from '../components/CommentaryPanel';
 import { MoveList, MoveListLegend } from '../components/MoveList';
 import { MoveTable } from '../components/MoveTable';
-import { mergeMoves, filterMoves, effectiveSources, type MoveSource } from '../domain/moveTable';
-import { distributionOf, type Distribution } from '../domain/distribution';
-import { fetchExplorer } from '../data/explorer';
-import { colourOfFen } from '../domain/notation';
+import { useMoveTable } from '../hooks/useMoveTable';
+import { arrowForRow } from './Train';
+import { filterMoves, effectiveSources, type MoveSource } from '../domain/moveTable';
 import { Move } from '../components/Move';
 import { withGlyph } from '../domain/notation';
 import { nameForPath } from '../domain/openings';
@@ -50,17 +48,6 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	const [queue, setQueue] = useState<MistakeCard[]>([]);
 	const [current, setCurrent] = useState<MistakeCard | null>(null);
 	const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
-	/**
-	 * THE ANSWER IS ON SCREEN. Only the reveal button sets this.
-	 *
-	 * It used to mean two things at once and that is the bug Will hit: "when I
-	 * click 'show options' the 'show solution' button is greyed out and becomes
-	 * unclickable — that's annoying and wrong behaviour." Quite. `showOptions`
-	 * set `reveal` because using help stops the card counting, and the reveal
-	 * button is disabled on `reveal`, so asking for one kind of help withdrew the
-	 * other. The two facts are now separate fields.
-	 */
-	const [reveal, setReveal] = useState(false);
 	/** Help of ANY kind was used, so a correct answer no longer counts. */
 	const [helped, setHelped] = useState(false);
 	const [loaded, setLoaded] = useState(false);
@@ -68,9 +55,6 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	const [boardVersion, setBoardVersion] = useState(0);
 	/** Evaluation of the card's position, from our side. Null until it arrives. */
 	const [evalCp, setEvalCp] = useState<number | null>(null);
-	const [candidates, setCandidates] = useState<Candidate[] | null>(null);
-	/** What players actually play here — the same explorer Train asks. */
-	const [distribution, setDistribution] = useState<Distribution | null>(null);
 	/**
 	 * Which tags the shared move table is showing.
 	 *
@@ -127,7 +111,6 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		setTableShownState(next);
 		remember({ tableShown: next });
 	}, []);
-	const [busy, setBusy] = useState(false);
 	const vp = useViewport();
 	/**
 	 * Categories to draw from. Empty means all of them, not none.
@@ -185,7 +168,6 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 			fen: current?.fen ?? null,
 			position: describePosition(current?.fen),
 			boardVersion,
-			reveal,
 			helped,
 			feedback,
 			queueLength: queue.length,
@@ -250,65 +232,6 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		});
 	}
 
-	/*
-	 * THE TWO SOURCES ARE STANDING REQUESTS, NOT BUTTON PRESSES.
-	 *
-	 * They were `showOptions()` and `showDistribution()`: fetch once, stash the
-	 * result, and let a second press throw it away. That works exactly as long as
-	 * the position never changes underneath them — and in Mistakes it changes on
-	 * every card. The effect owns the state instead, so "engine is on" is a fact
-	 * about what you want to see rather than a record of a button you pressed,
-	 * and moving to the next card refills it without being asked.
-	 *
-	 * Clearing first is the half that matters: the previous card's five moves
-	 * must not stay drawn on a board where they are not legal. A blank table for
-	 * a moment is honest; a wrong one is not. Train learned this the hard way —
-	 * see the same pair of effects there.
-	 */
-	const cardFen = current?.fen ?? null;
-	const cardColour = current?.ourColour;
-	const engineOn = tableShown && tableOn.has('engine');
-	useEffect(() => {
-		setCandidates(null);
-		if (!engineOn || !cardFen || !cardColour) return;
-		let live = true;
-		// The search is the one thing here that takes long enough to need saying
-		// so; `busy` is what puts the board's working indicator up.
-		setBusy(true);
-		void (async () => {
-			try {
-				const cands = await candidateMoves(cardFen, cardColour, 5);
-				if (live) setCandidates(cands);
-			} catch (e) {
-				if (live) setFeedback({ ok: false, text: (e as Error).message });
-			} finally {
-				if (live) setBusy(false);
-			}
-		})();
-		return () => {
-			live = false;
-			setBusy(false);
-		};
-	}, [engineOn, cardFen, cardColour]);
-
-	const popularOn = tableShown && tableOn.has('popular');
-	useEffect(() => {
-		setDistribution(null);
-		if (!popularOn || !cardFen) return;
-		let live = true;
-		void (async () => {
-			try {
-				const data = await fetchExplorer(cardFen);
-				if (live) setDistribution(distributionOf(data, colourOfFen(cardFen)));
-			} catch (e) {
-				if (live) setFeedback({ ok: false, text: (e as Error).message });
-			}
-		})();
-		return () => {
-			live = false;
-		};
-	}, [popularOn, cardFen]);
-
 	/**
 	 * The moves that led to this position, replayed.
 	 *
@@ -349,6 +272,40 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 	const [focus, setFocus] = useState<number | null>(null);
 	const atCard = previewPly === null || previewPly >= lastPly;
 	const boardFen = atCard ? current?.fen : line[previewPly as number]?.fen;
+	/*
+	 * EVERYTHING KNOWN ABOUT THE MOVES HERE — the same hook Train uses.
+	 *
+	 * -------------------------------------------------------------------------
+	 * Will: "you added a 'show moves' button in Mistakes, but it does not have
+	 * the 'book' filter category. It should be unified across tabs. Instead you
+	 * added an 'answer' button for no reason. Remove it."
+	 *
+	 * Both halves of that are one mistake. `line` here used to be THE CARD'S
+	 * ANSWER — a private meaning for a chip that says "book" in the other tab —
+	 * and because the answer had to be earned, it needed a button to earn it
+	 * with. So the tab grew a control Train does not have, in order to feed a
+	 * source that meant something Train's does not.
+	 *
+	 * `line` is theory at this position in both tabs now, read off the explorer
+	 * that is being fetched anyway. The answer needs no button: it is a move in
+	 * the position, so it appears in the table like every other move, and
+	 * putting the table up already counts as help. One less control, one less
+	 * meaning, and the two tabs finally describe the same thing.
+	 */
+	const table = useMoveTable(
+		atCard ? (current?.fen ?? null) : null,
+		current?.ourColour,
+		tableShown,
+	);
+	const moveRows = table.rows;
+	/*
+	 * `busy` is the shared hook's search — the only thing on this tab slow
+	 * enough to need the board's working indicator. It used to be a state field
+	 * set by hand inside `showOptions`, which is one more owner of a fact the
+	 * hook already knows.
+	 */
+	const busy = table.working;
+
 	// THE POSITION THE BOARD IS SHOWING, not the card's. Train had this exact bug:
 	// stepping back through the run-up left the wheels describing a position that
 	// was no longer on screen. The borrowed line is excluded on purpose — while it
@@ -362,34 +319,7 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		asking?.fen === commentaryFen ? asking.uci : null,
 	);
 
-	/**
-	 * Everything known about the moves here, merged — the same table Train shows.
-	 *
-	 * `line` is the card's own answer, and it is only tagged once the answer has
-	 * been revealed: before that, putting it in the table would be the solution
-	 * printed next to the question.
-	 */
-	const moveRows = useMemo(
-		() =>
-			mergeMoves({
-				line:
-					reveal && current
-						? [{ uci: current.expectedUci, san: current.expectedSan }]
-						: undefined,
-				engine: candidates ?? undefined,
-				popular: distribution?.moves,
-			}),
-		[reveal, current, candidates, distribution],
-	);
 
-	/**
-	 * The rows the table admits, drawn on the board.
-	 *
-	 * The grade comes from the engine's own ranking or not at all — see Train's
-	 * `tableArrows` for why re-deriving it from the visible subset would be a
-	 * claim nothing supports. The card's answer keeps its plain green, and is
-	 * pushed last so it sits on top rather than being replaced.
-	 */
 	/*
 	 * THE SAME RULE AS TRAIN'S: if it is on screen while the card is being
 	 * answered, it is help.
@@ -414,30 +344,17 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		// back through the run-up puts a different board under it, and moves drawn
 		// there are not legal, let alone recommended. Same rule the board already
 		// applies to `interactive`, and the wheels to their own overlays.
-		if (!atCard) return [];
-		const graded = new Map((candidates ?? []).map((c) => [c.uci, c]));
+		//
 		// HIDDEN TABLE, NO ARROWS — the chips are what say which source an arrow
 		// came from, and drawn without them the board is coloured for no stated
-		// reason. The same rule Train applies.
-		if (!tableShown) return [];
-		const keep = reveal && current ? current.expectedUci : undefined;
-		const out = filterMoves(moveRows, effectiveSources(moveRows, tableOn), keep).map((row) => {
-			const c = graded.get(row.uci);
-			return {
-				orig: row.uci.slice(0, 2),
-				dest: row.uci.slice(2, 4),
-				brush: c ? brushForGrade(c.grade) : 'green',
-				...(c ? { label: `${c.cp > 0 ? '+' : ''}${(c.cp / 100).toFixed(1)}` } : {}),
-			};
-		});
-		if (reveal && current)
-			out.push({
-				orig: current.expectedUci.slice(0, 2),
-				dest: current.expectedUci.slice(2, 4),
-				brush: 'green',
-			});
-		return out;
-	}, [moveRows, tableOn, tableShown, candidates, reveal, current, atCard]);
+		// reason.
+		if (!atCard || !tableShown) return [];
+		// `arrowForRow`, not a second copy of it: this one had already drifted
+		// from Train's, on whether an unranked move gets a label.
+		return filterMoves(moveRows, effectiveSources(moveRows, tableOn)).flatMap((row) =>
+			arrowForRow(row, table.grades, table.book),
+		);
+	}, [moveRows, tableOn, tableShown, table.grades, table.book, atCard]);
 
 	/**
 	 * The move that produced the position being shown.
@@ -538,23 +455,13 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 				disabled: !current,
 			},
 			{
-				id: 'reveal',
-				title: 'Show me the move (stops this card counting)',
-				// NOT the eye: the eye is "show the moves" across the whole app now,
-				// and this is the answer to one question rather than a view of the
-				// position. See `Toolbar`'s `answer`.
-				icon: 'answer',
-				accent: reveal,
-				onClick: () => {
-					setReveal(true);
-					setHelped(true);
-				},
-				disabled: !current || reveal,
-			},
-			{
 				id: 'skip',
 				title: 'Skip — put this card to the back of the queue',
 				icon: 'playon',
+				// The icon is borrowed; the WORD must not be. Captioned 'play on',
+				// this read as the trainer's free-play button on a tab that has no
+				// such thing.
+				caption: 'skip',
 				onClick: () => next([...queue.slice(1), queue[0]]),
 				disabled: queue.length < 2,
 			},
@@ -565,14 +472,12 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		setQueue(fromQueue);
 		setCurrent(fromQueue[0] ?? null);
 		setFeedback(null);
-		setReveal(false);
 		setHelped(false);
-		// The rows belonged to the last card's position; the EFFECTS refill them
-		// for the new one. `setTableOn(new Set())` used to be here too, which
-		// silently switched the filters off on every card — so a preference that
-		// now persists across reloads would have been wiped one card later.
-		setCandidates(null);
-		setDistribution(null);
+		// NOTHING TO CLEAR. The rows belonged to the last card's position and the
+		// hook owns them, keyed on the fen — it is the only writer, which is the
+		// rule Train had to learn twice. `setTableOn(new Set())` used to be here
+		// too, silently switching the filters off on every card, so a preference
+		// that now persists across reloads would have been wiped one card later.
 		setAsking(null);
 		lineOverlay.close();
 		// Back to the position being asked about. Carrying a preview across cards
@@ -590,8 +495,9 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		// Not string equality — a card whose answer is castling was stored with
 		// chessops' king-takes-rook spelling and could never be answered.
 		const correct = sameMove(current.fen, uci, current.expectedUci);
-		// ANY help, not only the revealed answer — the weighted-options list names
-		// the move too. `reveal` is about what is on screen; `helped` is about score.
+		// ANY help, not only a named answer — the table of evaluations names the
+		// move too, which is why `helped` is set by the table being up rather than
+		// by a button that promises the answer.
 		// `applyAnswer`, not `answer` — it hands back the card AND the deck, so there
 		// is no second copy left to go stale. See its comment for the failure it is
 		// named after.
@@ -643,7 +549,23 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 		} else {
 			// Straight back to the same card.
 			setBoardVersion((v) => v + 1);
-			setFeedback({ ok: false, text: `${san} is not it. Try again.` });
+			/*
+			 * AND WHERE TO LOOK, now that there is no button that just tells you.
+			 *
+			 * Removing the answer button is right — it was a control Train does not
+			 * have, feeding a source that meant something Train's did not — but
+			 * "not it, try again" with no route out is a loop. The route is the
+			 * table, which lists every move here with what the engine and the
+			 * explorer think of it, so it TEACHES the answer rather than handing it
+			 * over. Only said once you are actually stuck, and only while the table
+			 * is not already up.
+			 */
+			setFeedback({
+				ok: false,
+				text: tableShown
+					? `${san} is not it. Try again.`
+					: `${san} is not it. Try again — or show the moves to see what is on offer here.`,
+			});
 		}
 	}
 
@@ -695,6 +617,11 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 						}
 						onMove={onMove}
 						version={boardVersion}
+						// The borrowed line owns the board while it is up, so it is also
+						// what knows how the board got here — see `useLineOverlay`'s
+						// `via`. Mistakes has no walk of its own: every other position
+						// change on this tab is one ply, or a new card, which is a jump.
+						via={lineOverlay.via}
 						actions={actions()}
 						busy={busy}
 						// BOTH KINDS OF HELP CAN BE ON SCREEN AT ONCE, and the solution is
@@ -772,6 +699,38 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 								</div>
 							)}
 
+							{/*
+							  * THE SAME TABLE TRAIN HAS. One row per move, with the tags
+							  * that say where it came from — the engine's picks, what
+							  * people play, and the card's own answer once revealed. Every
+							  * row has a `?`, which is the doorway §1 asked for.
+							  */}
+							{tableShown && (
+								<div style={{ marginTop: 10 }}>
+									<MoveTable
+										rows={moveRows}
+										mover={current.ourColour}
+										on={tableOn}
+										// All three, and the SAME three Train offers — a chip is
+										// how you switch a source back on, so it cannot vanish
+										// with its rows, and "book" has to mean the same thing on
+										// both tabs or the word is doing two jobs.
+										offers={['line', 'engine', 'popular']}
+										onToggle={(src) => tag(src, !tableOn.has(src))}
+										onAsk={(uci) =>
+											setAsking({
+												fen: current.fen,
+												uci,
+												alternatives: moveRows.map((r) => r.uci),
+											})
+										}
+										askedPopularity={table.askedPopularity}
+										marksBook
+										region="quiz-moves"
+									/>
+								</div>
+							)}
+
 							<TrainingWheels
 								on={wheels.on}
 								onChange={wheels.setOn}
@@ -796,41 +755,6 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 										lineOverlay.close();
 									}}
 								/>
-							)}
-
-							{/*
-							  * THE SAME TABLE TRAIN HAS. One row per move, with the tags
-							  * that say where it came from — the engine's picks, what
-							  * people play, and the card's own answer once revealed. Every
-							  * row has a `?`, which is the doorway §1 asked for.
-							  */}
-							{tableShown && (
-								<div style={{ marginTop: 10 }}>
-									<MoveTable
-										rows={moveRows}
-										mover={current.ourColour}
-										on={tableOn}
-										// The host says what it can offer, so a chip you switch
-										// off is still there to switch back on. Mistakes has no
-										// repertoire, so it offers two sources rather than
-										// Train's three.
-										offers={['engine', 'popular']}
-										// The revealed answer is not a filter result; it is the
-										// thing you asked for by name. See `filterMoves`.
-										keep={reveal ? current.expectedUci : undefined}
-										marked={reveal ? current.expectedUci : undefined}
-										onToggle={(src) => tag(src, !tableOn.has(src))}
-										onAsk={(uci) =>
-											setAsking({
-												fen: current.fen,
-												uci,
-												alternatives: moveRows.map((r) => r.uci),
-											})
-										}
-										askedPopularity={distribution !== null}
-										region="quiz-moves"
-									/>
-								</div>
 							)}
 
 							{/* The run-up to the position. A mistake from a real game

@@ -195,3 +195,101 @@ describe('a kept move', () => {
 		expect(filterMoves(rows, on, 'h2h4').map((r) => r.san)).toEqual(['e4']);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// ASKED AND ABSENT IS NOT THE SAME AS NOT ASKED.
+//
+// Will: "why are not all moves listed with 'played' statistics? … It irritates
+// me that the table has different grammars for different categories." Two
+// different things were rendering as the same empty cell.
+// ---------------------------------------------------------------------------
+describe('a move the explorer has never heard of', () => {
+	it('reads zero once the explorer has answered', () => {
+		const rows = mergeMoves({
+			engine: [cand('a2a3', 'a3', 5)],
+			popular: [share('e2e4', 'e4', 90)],
+		});
+		const a3 = rows.find((r) => r.san === 'a3')!;
+		expect(a3.games).toBe(0);
+		expect(a3.share).toBe(0);
+	});
+
+	it('still reads blank when nobody asked', () => {
+		const rows = mergeMoves({ engine: [cand('a2a3', 'a3', 5)] });
+		expect(rows[0].games).toBeNull();
+		expect(rows[0].share).toBeNull();
+	});
+
+	it('claims no score for a move with no games', () => {
+		// A score is an average over games. Zero here would say the move loses
+		// every time, which is a claim about chess rather than about the data.
+		const rows = mergeMoves({ engine: [cand('a2a3', 'a3', 5)], popular: [] });
+		expect(rows[0].score).toBeNull();
+	});
+
+	it('is not tagged popular merely for having a zero in the column', () => {
+		// The count is data; the TAG is what the filter reads. A move nobody plays
+		// must not start satisfying the "played" chip.
+		const rows = mergeMoves({ engine: [cand('a2a3', 'a3', 5)], popular: [] });
+		expect(rows[0].sources).toEqual(['engine']);
+	});
+
+	it('leaves a move the explorer did list alone', () => {
+		const rows = mergeMoves({ popular: [share('e2e4', 'e4', 90, 0.55)] });
+		expect(rows[0].games).toBe(90);
+		expect(rows[0].score).toBe(0.55);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// HAVING AN EVALUATION IS NOT THE SAME AS BEING RECOMMENDED.
+//
+// Will: "now when I filter 'engine' it includes all moves, but we want the old
+// meaning of engine, which was 'the top 5 moves', so it actually filters
+// something."
+//
+// Asking the engine for every legal move — which is what gives every row a
+// score — also tagged every legal move `engine`, so the chip selected the whole
+// table. The two lists are separate now: `engine` is the shortlist and carries
+// the tag, `scores` fills numbers and carries nothing.
+// ---------------------------------------------------------------------------
+describe('scores that are not a recommendation', () => {
+	const sources = {
+		line: [{ uci: 'a2a3', san: 'a3' }],
+		engine: [cand('e2e4', 'e4', 30), cand('d2d4', 'd4', 20)],
+		scores: [
+			{ uci: 'e2e4', cp: 30, loss: 0 },
+			{ uci: 'a2a3', cp: -40, loss: 70 },
+			{ uci: 'h2h4', cp: -90, loss: 120 },
+		],
+	};
+
+	it('gives a book move an evaluation without calling it an engine pick', () => {
+		const a3 = mergeMoves(sources).find((r) => r.san === 'a3')!;
+		expect(a3.cp).toBe(-40);
+		expect(a3.loss).toBe(70);
+		expect(a3.sources).toEqual(['line']);
+	});
+
+	it('leaves the shortlist filterable', () => {
+		const rows = mergeMoves(sources);
+		const on = new Set<MoveSource>(['engine']);
+		// The whole point: with a3 scored but untagged, the chip still narrows.
+		expect(filterMoves(rows, on).map((r) => r.san)).toEqual(['e4', 'd4']);
+	});
+
+	it('does not admit a move whose only claim is having been scored', () => {
+		// h2h4 is in `scores` and nowhere else. It is legal, it has a number, and
+		// nobody has any reason to see it — listing every legal move is the thing
+		// the table exists to avoid.
+		expect(mergeMoves(sources).map((r) => r.san)).not.toContain('h4');
+	});
+
+	it('does not overwrite a score the shortlist already gave', () => {
+		const rows = mergeMoves({
+			engine: [cand('e2e4', 'e4', 30, 0)],
+			scores: [{ uci: 'e2e4', cp: 999, loss: 999 }],
+		});
+		expect(rows[0].cp).toBe(30);
+	});
+});

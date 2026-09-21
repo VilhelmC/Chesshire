@@ -57,8 +57,34 @@ export type MoveRow = {
 export type MoveSources = {
 	/** The moves the opening line allows here. */
 	line?: { uci: string; san: string }[];
-	/** What the engine ranks, mover's point of view. */
+	/**
+	 * The engine's own shortlist — the moves it would actually put forward.
+	 *
+	 * -------------------------------------------------------------------------
+	 * SMALL ON PURPOSE, AND SEPARATE FROM `scores`.
+	 *
+	 * Will: "now when I filter 'engine' it includes all moves, but we want the
+	 * old meaning of engine, which was 'the top 5 moves' I think, so it actually
+	 * filters something."
+	 *
+	 * That was a regression I introduced. Asking the engine for two dozen lines
+	 * so that every row could carry an evaluation ALSO tagged every one of them
+	 * `engine`, because one list was doing two jobs — and a filter that selects
+	 * everything is not a filter. Having an evaluation is a fact about a move;
+	 * being on the shortlist is a judgement about it, and only the second is
+	 * worth filtering on.
+	 */
 	engine?: Candidate[];
+	/**
+	 * Evaluations for moves that are not on the shortlist.
+	 *
+	 * Fills the numeric columns WITHOUT tagging anything, and — the part that
+	 * matters — without creating rows. A move nobody plays, that is not theory
+	 * and that the engine did not shortlist has an evaluation like every other
+	 * legal move, and listing it would bury the table under moves whose only
+	 * claim is being legal.
+	 */
+	scores?: { uci: string; cp: number; loss?: number }[];
 	/** What people actually play, from the explorer. */
 	popular?: MoveShare[];
 };
@@ -102,6 +128,45 @@ export function mergeMoves(sources: MoveSources): MoveRow[] {
 		row.games = p.games;
 		row.share = p.share;
 		row.score = p.score;
+	}
+
+	// Evaluations for rows that already exist, and only for those. `touch` is
+	// deliberately not called here: this fills columns, it does not admit moves.
+	for (const sc of sources.scores ?? []) {
+		const row = rows.get(sc.uci);
+		if (!row || row.cp !== null) continue;
+		row.cp = sc.cp;
+		row.loss = sc.loss ?? null;
+	}
+
+	/*
+	 * ASKED AND ABSENT IS NOT THE SAME AS NOT ASKED.
+	 *
+	 * -------------------------------------------------------------------------
+	 * Will: "why are not all moves listed with 'played' statistics? Most book
+	 * and engine moves are played sometimes, so there should be stats for them.
+	 * It irritates me that the table has different grammars for different
+	 * categories."
+	 *
+	 * Two different things were both rendering as an empty cell. A move nobody
+	 * has looked up has no number — that is the blank this file argues for at
+	 * the top, and it stays. But once the explorer HAS answered for this
+	 * position, a move missing from its list is not unknown: it is a move with
+	 * no games, and the honest cell is `0`, not silence.
+	 *
+	 * `undefined` means the source was never consulted; an array — including an
+	 * empty one — means it was. So the distinction survives in the type.
+	 */
+	if (sources.popular !== undefined) {
+		for (const row of rows.values()) {
+			if (row.games === null) {
+				row.games = 0;
+				row.share = 0;
+				// NOT zero. A score is an average over games and there are none;
+				// writing 0 here would claim the move loses every time.
+				row.score = null;
+			}
+		}
 	}
 
 	const out = [...rows.values()];
@@ -203,23 +268,22 @@ export function nothingAsked(rows: readonly MoveRow[], on: ReadonlySet<MoveSourc
  * THE COST IS AN EMPTY TABLE, and it is a real outcome rather than a fault —
  * two sources can genuinely share no move. The caller says so in words; see
  * `MoveTable`'s `empty`.
- *
- * ---------------------------------------------------------------------------
- * `keep` IS THE ONE EXEMPTION, AND IT IS NOT AN EXCEPTION TO THE RULE.
- *
- * A filter answers "which moves do these sources agree on". A move the reader
- * has ASKED FOR BY NAME — the answer to the mistake card they just revealed —
- * is not an answer to that question at all; it is the question. Hiding it
- * because Stockfish's top five and the explorer's list happen not to overlap on
- * it means pressing "show me the move" can produce a table without the move in
- * it, which is the most literal possible way for a control to lie.
- *
- * In the domain rather than in the table because THE BOARD FILTERS BY THE SAME
- * RULE, and the last two times a filter lived in two places the two disagreed.
  */
 export function filterMoves(
 	rows: MoveRow[],
 	on: ReadonlySet<MoveSource>,
+	/**
+	 * A move the filter may not remove.
+	 *
+	 * A filter answers "which moves do these sources agree on". A move the host
+	 * has named — a specific one it must be able to show whatever is toggled —
+	 * is not an answer to that question; it is a different question, and hiding
+	 * it would let a control produce a table without the thing it named in it.
+	 *
+	 * In the domain rather than in the table because THE BOARD FILTERS BY THE
+	 * SAME RULE, and the last two times a filter lived in two places the two
+	 * disagreed.
+	 */
 	keep?: string,
 ): MoveRow[] {
 	if (!on.size) return rows;
