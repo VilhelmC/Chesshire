@@ -18,7 +18,8 @@
 
 import { Move } from './Move';
 import { withGlyph } from '../domain/notation';
-import { ACTIVE, color, text } from '../ui/theme';
+import { ACTIVE, color, space, text } from '../ui/theme';
+import { Button } from '../ui/primitives';
 import { useMeasure } from './useViewport';
 
 export type MoveChip = {
@@ -413,6 +414,58 @@ function Cell({
 				</span>
 			)}
 		</button>
+	);
+}
+
+/**
+ * A title for the move list, saying what list it is.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "maybe the history should have a small label / header so user know
+ * what they're looking at?"
+ *
+ * It had none. Every other block below the board is captioned — "Moves here",
+ * the verdict, the wheels — so a bare grid of notation between two labelled
+ * things reads as part of whichever one it is nearer, and which one that was
+ * changed when the order did.
+ *
+ * It also absorbs the borrowed-line banner, which both tabs had improvised
+ * separately: while a line is up, the label IS the header, because that is the
+ * thing the list is showing. Two names for one strip is what made them drift —
+ * Train's said `color.ink2` at 13px and Mistakes' used a hand-rolled link
+ * button, for the same sentence.
+ */
+export function MoveListHeader({
+	title = 'Moves so far',
+	borrowed,
+	onClose,
+}: {
+	title?: string;
+	/** A line is being shown instead of the game: its label. */
+	borrowed?: string;
+	onClose?: () => void;
+}) {
+	return (
+		<div
+			data-region="move-list-header"
+			style={{
+				display: 'flex',
+				alignItems: 'baseline',
+				gap: space.snug,
+				marginBottom: space.tight,
+			}}
+		>
+			<h3 style={{ margin: 0, fontSize: text.heading, fontWeight: 600, color: color.ink }}>
+				{borrowed ?? title}
+			</h3>
+			{borrowed && onClose && (
+				<span style={{ marginLeft: 'auto' }}>
+					<Button kind="quiet" onClick={onClose}>
+						Back to the game
+					</Button>
+				</span>
+			)}
+		</div>
 	);
 }
 

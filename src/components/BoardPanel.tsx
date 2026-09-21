@@ -16,6 +16,7 @@
 // Every one of those is a call site having improvised, so the rule is written
 // down here and the geometry enforces the first half of it:
 //
+//   0. WHERE YOU ARE                              <- this component
 //   1. evaluation bar, board, captured material   <- this component
 //   2. THE CONTROL STRIP                          <- this component
 //   3. what just happened: the verdict on your move, their reply
@@ -23,6 +24,13 @@
 //      training wheels, commentary, the explainer
 //   5. history: the move list
 //   6. options and preferences
+//
+// Step 0 arrived last and for the same reason as the rest. Will: "perhaps that
+// message should be part of the standard machinery everything consumes, so a
+// board is always displayed with the line it belongs to if such a line exists."
+// It is a `caption` PROP rather than a slot taking arbitrary JSX: a caller says
+// what it knows about where it is and what else is worth saying, and cannot say
+// where the line goes or how it reads. See `PositionCaption`.
 //
 // The strip MOVED UP to get here. It used to render after `children`, so
 // everything a view had to say stood between the board and the buttons that
@@ -48,6 +56,7 @@ import { Board, type BoardProps, type Shape } from './Board';
 import { EvalBar } from './EvalBar';
 import { MaterialBar } from './MaterialBar';
 import { Toolbar, type ToolbarAction } from './Toolbar';
+import { PositionCaption, type CaptionProps } from './PositionCaption';
 import { Thinking } from './Thinking';
 import { useMeasure, useViewport, clamp } from './useViewport';
 import type { Colour } from '../domain/material';
@@ -91,12 +100,14 @@ export function BoardPanel({
 	ourColour,
 	evalCp = null,
 	interactive = false,
+	movableColor = 'auto',
 	lastMove,
 	arrows = [],
 	onSelectSquare,
 	onMove,
 	version,
 	via,
+	caption,
 	actions = [],
 	/** True while the engine is working: shows the pulsing indicator. */
 	busy = false,
@@ -109,6 +120,16 @@ export function BoardPanel({
 	ourColour: Colour;
 	evalCp?: number | null;
 	interactive?: boolean;
+	/**
+	 * Which side the user may move — forwarded, not re-decided.
+	 *
+	 * `Board` has had this since the Lab's sandbox needed it and this wrapper
+	 * did not pass it on, which is the SAME drift the `arrows` prop was already
+	 * caught for: a wrapper that narrows what it forwards will always lose the
+	 * case that matters. Here the case that matters is exploring a position,
+	 * where you move both colours.
+	 */
+	movableColor?: 'auto' | 'both';
 	lastMove?: [string, string];
 	/**
 	 * THE SAME `Shape` THE BOARD TAKES, not a hand-written copy of it.
@@ -137,6 +158,14 @@ export function BoardPanel({
 	version?: number;
 	/** Forwarded to the board — see `Board`'s `via`. */
 	via?: BoardProps['via'];
+	/**
+	 * Step 0: where this position is, and why you are looking at it.
+	 *
+	 * Omitting it reserves the space and says nothing, which is what a board
+	 * with no path to speak of should do. Passing `{ path }` alone is enough for
+	 * the opening and the move number.
+	 */
+	caption?: CaptionProps;
 	actions?: ToolbarAction[];
 	busy?: boolean;
 	note?: string;
@@ -151,12 +180,20 @@ export function BoardPanel({
 
 	return (
 		<div ref={ref} style={{ width: '100%', maxWidth: MAX_BOARD + barWidth + GAP }}>
+			{/* Indented to the board's left edge, like everything below it. The
+				line Train used to write sat above the evaluation bar instead, a
+				bar's width further left than the board it described. */}
+			<div style={{ marginLeft: vp.phone ? 0 : barWidth + GAP }}>
+				<PositionCaption {...(caption ?? { path: [] })} />
+			</div>
+
 			<div style={{ display: 'flex', gap: GAP }}>
 				<EvalBar cp={evalCp} ourColour={ourColour} height={size} width={barWidth} />
 				<Board
 					fen={fen}
 					orientation={ourColour === 'b' ? 'black' : 'white'}
 					interactive={interactive}
+					movableColor={movableColor}
 					lastMove={lastMove}
 					arrows={arrows}
 					onMove={onMove}

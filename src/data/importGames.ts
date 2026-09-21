@@ -21,6 +21,7 @@ import { fetchLichessGames, fetchChesscomGames, type ImportedGame } from './game
 import { findMistakes, type AnalyseOptions, type GameMistake } from '../engine/analyseGame';
 import { engine } from '../engine/stockfish';
 import { positionKey, applyUci } from '../domain/chess';
+import { fullyScored } from '../domain/scored';
 
 /** Cards taken from a single game, worst first. */
 export const MAX_PER_GAME = 4;
@@ -136,8 +137,30 @@ export async function importGames(req: ImportRequest): Promise<ImportResult> {
 	}
 
 	// --- pick what to analyse ------------------------------------------------
-	const seen = req.force ? new Set<string>() : new Set((await safeImported()).map((r) => r.id));
-	const todo = games.filter((g) => !seen.has(g.id)).sort((a, b) => b.playedAt - a.playedAt);
+	/*
+	 * "ALREADY IMPORTED" IS NOT "ALREADY ANALYSED".
+	 *
+	 * Will: "I notice many of the games in my review list are incompletely scored
+	 * — often only a handful of plies at the beginning of the game."
+	 *
+	 * This was `new Set(rows.map(r => r.id))`, so a game whose walk was cut short
+	 * — cancelled, or with the engine refusing positions partway — was written
+	 * with the evaluations it had and then skipped for ever after, because the
+	 * row existed. The row existing and the game being measured are two different
+	 * facts and this is where they were being conflated. See `domain/scored.ts`.
+	 *
+	 * A partly-scored game now comes back into `todo` and is re-analysed in
+	 * place. It costs an import that finds one, which is the correct price for
+	 * not leaving half a game on the screen with no way to finish it.
+	 */
+	const done = req.force
+		? new Set<string>()
+		: new Set(
+				(await safeImported())
+					.filter((r) => fullyScored(r.evals, r.moves?.length ?? 0))
+					.map((r) => r.id),
+			);
+	const todo = games.filter((g) => !done.has(g.id)).sort((a, b) => b.playedAt - a.playedAt);
 	const skipped = games.length - todo.length;
 
 	// --- is there an engine at all? -----------------------------------------

@@ -5,7 +5,7 @@ import { Progress } from './views/Progress';
 import { Review } from './views/Review';
 import { Quiz } from './views/Quiz';
 import { Lab } from './views/Lab';
-import type { TrainHandoff } from './views/Train';
+import { Play, type PlayHandoff } from './views/Play';
 import { DebugCorner } from './components/DebugCorner';
 import { BugReport } from './components/BugReport';
 import { InstallBar } from './components/InstallBar';
@@ -38,13 +38,30 @@ import { Mark } from './ui/Mark';
  * game from this morning" is a reason to open the app, not a footnote to a
  * chart. Hidden behind a button, it read as absent.
  */
-type Tab = 'train' | 'quiz' | 'review' | 'progress' | 'lab' | 'settings';
+type Tab = 'train' | 'play' | 'quiz' | 'review' | 'progress' | 'lab' | 'settings';
 
 export default function App() {
 	const [tab, setTab] = useState<Tab>('train');
 	const vp = useViewport();
 	/** A position handed from Review to Train, so a game can be played on from there. */
-	const [handoff, setHandoff] = useState<TrainHandoff>(null);
+	const [handoff, setHandoff] = useState<PlayHandoff>(null);
+
+	/**
+	 * Hand a position to the board you can play on.
+	 *
+	 * -------------------------------------------------------------------------
+	 * THREE TABS WANTED THIS AND ONLY ONE OF THEM WANTED A DRILL.
+	 *
+	 * Review hands over a game to play out, Mistakes a card, and the trainer
+	 * itself when you press free play. All three used to land in Train, which
+	 * meant Train was the app's board as well as its trainer — and the board
+	 * half was what everything else kept borrowing. It is its own tab now and
+	 * this is the one door into it.
+	 */
+	const playFrom = (h: PlayHandoff) => {
+		setHandoff(h);
+		setTab('play');
+	};
 	/** Bumped when games are imported, so the deck reloads. */
 	const [dataVersion, setDataVersion] = useState(0);
 
@@ -152,6 +169,12 @@ export default function App() {
 				<TabButton compact={vp.phone} active={tab === 'train'} onClick={() => setTab('train')}>
 					Train
 				</TabButton>
+				{/* Next to Train, because it is the other tab that is a board. The
+					drill and the game are the two things you do with a position; the
+					rest of the bar is about looking back at what you did. */}
+				<TabButton compact={vp.phone} active={tab === 'play'} onClick={() => setTab('play')}>
+					Play
+				</TabButton>
 				<TabButton compact={vp.phone} active={tab === 'quiz'} onClick={() => setTab('quiz')}>
 					Mistakes
 				</TabButton>
@@ -179,22 +202,25 @@ export default function App() {
 				see `.tab-body * + h3` in index.css. */}
 			<main className="tab-body">
 				{tab === 'train' && (
-					<Train
-						handoff={handoff}
-						onHandoffUsed={() => setHandoff(null)}
-						onNeedsToken={() => setTab('settings')}
+					<Train onPlayFrom={playFrom} onNeedsToken={() => setTab('settings')} />
+				)}
+				{tab === 'play' && (
+					<Play handoff={handoff} onHandoffUsed={() => setHandoff(null)} />
+				)}
+
+				{tab === 'quiz' && (
+					<Quiz
+						key={dataVersion}
+						onOpenSettings={() => setTab('settings')}
+						// The same door Review uses. A mistake is a position you got
+						// wrong and were never allowed to play out, which is the one
+						// thing that answers "what would have happened?".
+						onPlayFrom={playFrom}
 					/>
 				)}
-				{tab === 'quiz' && <Quiz key={dataVersion} onOpenSettings={() => setTab('settings')} />}
 
 				{tab === 'review' && (
-					<Review
-						key={dataVersion}
-						onPlayFrom={(h) => {
-							setHandoff(h);
-							setTab('train');
-						}}
-					/>
+					<Review key={dataVersion} onPlayFrom={playFrom} />
 				)}
 
 				{/* Progress keeps its way in, but as a shortcut to a tab that exists

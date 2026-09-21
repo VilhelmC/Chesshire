@@ -17,6 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import { SignIn } from '../components/SignIn';
+import { BuildStamp } from '../components/BuildStamp';
 import { DataPanel } from '../components/DataPanel';
 import { SyncStatus } from '../components/SyncStatus';
 import { ImportGames } from './ImportGames';
@@ -83,6 +84,22 @@ export function Settings({ onImported }: { onImported: () => void }) {
 				>
 					<Drills />
 				</Disclosure>
+			</Section>
+
+			{/*
+			  * LAST, AND ON THIS TAB, because that is where Will looked for it.
+			  *
+			  * "Where can I see the version stamp? Maybe there should be version and
+			  * last updated info somewhere? Like the bottom of the settings tab."
+			  *
+			  * It is also the right place on its own terms: this is the one screen
+			  * that is about the app rather than about chess, and the question it
+			  * answers — am I running the build I just deployed — is asked while
+			  * standing somewhere else, on a phone, wondering whether to trust what
+			  * is on screen.
+			  */}
+			<Section title="This build">
+				<BuildStamp />
 			</Section>
 		</div>
 	);

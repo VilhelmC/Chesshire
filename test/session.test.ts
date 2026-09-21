@@ -17,7 +17,7 @@ vi.mock('../src/data/cloudEval', () => ({
 	toColourPov: (cp: number, c: 'w' | 'b') => (c === 'w' ? cp : -cp),
 }));
 
-const { startRun, submitMove, resumeFrom, playFrom } = await import('../src/engine/session');
+const { startRun, submitMove, resumeFrom, playFrom, playOn, storedPhase } = await import('../src/engine/session');
 const { applySan, applyUci, INITIAL_FEN } = await import('../src/domain/chess');
 const { DEFAULT_PRACTICE } = await import('../src/domain/practice');
 const type_ = await import('../src/domain/book');
@@ -299,7 +299,8 @@ describe('resuming from an earlier position', () => {
 		// "play from here" left `expected` empty and greyed out Show me with
 		// nothing to show.
 		const c = cfg();
-		const s = await playFrom(ITALIAN_PATH, 4, 'w', c, 'book');
+		const s = await playFrom(ITALIAN_PATH, 4, 'w', c, 'drill');
+		expect(s.mode).toBe('drill');
 		expect(s.phase).toBe('book');
 		expect(s.expected.length).toBeGreaterThan(0);
 	});
@@ -309,13 +310,15 @@ describe('resuming from an earlier position', () => {
 		// request and must keep working.
 		const c = cfg();
 		const s = await playFrom(ITALIAN_PATH, 4, 'w', c);
-		expect(s.phase).toBe('freeplay');
+		// `mode`, not a phase. These were one field and the conflation is what
+		// made free play a special case of the drill rather than its own thing.
+		expect(s.mode).toBe('free');
 		expect(s.expected).toEqual([]);
 	});
 
 	it('replays only as far as asked', async () => {
 		const c = cfg();
-		const s = await playFrom(ITALIAN_PATH, 2, 'w', c, 'book');
+		const s = await playFrom(ITALIAN_PATH, 2, 'w', c, 'drill');
 		// Two of our plies, plus their reply.
 		expect(s.path.slice(0, 2)).toEqual(['e4', 'e5']);
 		expect(s.path.length).toBeGreaterThanOrEqual(2);
@@ -323,7 +326,7 @@ describe('resuming from an earlier position', () => {
 
 	it('has the opponent answer from the book, not from the engine', async () => {
 		const c = cfg();
-		const s = await playFrom(['e4'], 1, 'w', c, 'book');
+		const s = await playFrom(['e4'], 1, 'w', c, 'drill');
 		// After 1.e4 the synthetic book offers e5 and c5; one of them was played.
 		expect(['e5', 'c5']).toContain(s.path[1]);
 		expect(s.lastOpponent?.kind).toBe('book');
@@ -508,5 +511,51 @@ describe('a novelty — off the line, and the engine does not mind', () => {
 		expect(out.novelty).toBeUndefined();
 		expect(out.correct).toBe(false);
 		expect(out.message).toMatch(/leaves Italian Game/i);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// A DRILL AND A GAME ARE DIFFERENT THINGS.
+//
+// `phase` used to be `'book' | 'punish' | 'freeplay'`: one field answering
+// WHERE IN THE DRILL and IS THIS A DRILL. Free play therefore read as a phase
+// of a drill, and everything that is simply untrue of it — an expected set,
+// strictness, a book to be checked against — had to be written as an exception.
+//
+// The storage format is deliberately NOT part of the split: rows written by
+// every previous build carry `'freeplay'`, and the rating estimate reads them.
+// ---------------------------------------------------------------------------
+describe('mode and phase', () => {
+	it('starts a run as a drill, at the book', async () => {
+		const s = await startRun(cfg());
+		expect(s.mode).toBe('drill');
+		expect(s.phase).toBe('book');
+	});
+
+	it('leaves the drill without pretending free play is a phase of it', async () => {
+		const c = cfg();
+		let s = await startRun(c);
+		s = await playOn(s, c);
+		expect(s.mode).toBe('free');
+		// Whatever `phase` says is nobody's business while the mode is free, and
+		// that is the point: there is no longer a value it has to pretend to be.
+		expect(s.expected).toEqual([]);
+	});
+
+	it('keeps writing the stored label every previous build wrote', () => {
+		// `progress.ts` selects free-play answers by this string. Changing it
+		// would silently empty the one measurement with real history behind it.
+		expect(storedPhase({ mode: 'free', phase: 'book' })).toBe('freeplay');
+		expect(storedPhase({ mode: 'drill', phase: 'book' })).toBe('book');
+		expect(storedPhase({ mode: 'drill', phase: 'punish' })).toBe('punish');
+	});
+
+	it('carries the mode through a restore point', async () => {
+		// A snapshot that forgot whether it was a drill would resume a free-play
+		// position into the trainer, expecting book moves that are not coming.
+		const c = cfg();
+		let s = await startRun(c);
+		s = (await submitMove(s, c, applySan(s.fen, 'e4').uci)).state;
+		if (s.retryPoint) expect(s.retryPoint.mode).toBe('drill');
 	});
 });

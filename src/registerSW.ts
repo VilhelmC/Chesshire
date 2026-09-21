@@ -125,6 +125,7 @@ export function registerSW() {
 				});
 
 				// A long session should not sit on a stale version forever.
+				registration = reg;
 				setInterval(() => void reg.update(), UPDATE_CHECK_MS);
 			})
 			.catch((err) => set({ reason: `Service worker failed to register: ${err}` }));
@@ -142,6 +143,41 @@ export function registerSW() {
 
 /** Hourly. Frequent enough to catch a deploy, rare enough to be free. */
 const UPDATE_CHECK_MS = 60 * 60 * 1000;
+
+/** Kept so a person can ask on demand rather than waiting up to an hour. */
+let registration: ServiceWorkerRegistration | null = null;
+
+/**
+ * Ask the server now whether there is a newer build.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "how do I know if the saved page / app updated?"
+ *
+ * The hourly check already existed and is what eventually raises the "Reload to
+ * update" bar. What was missing is the ability to ASK — on a phone, having just
+ * deployed, the honest state is "I do not know yet and will not for up to an
+ * hour", and no amount of version stamping fixes that on its own.
+ *
+ * Returns what actually happened rather than a boolean, because the three
+ * failures are different advice: nothing cached means a refresh is enough,
+ * unreachable means try later, and current means stop looking — the bug is
+ * somewhere else.
+ */
+export async function checkForUpdate(): Promise<
+	'current' | 'update' | 'offline' | 'unsupported'
+> {
+	if (!registration) return 'unsupported';
+	try {
+		await registration.update();
+	} catch {
+		// `update()` rejects when the request fails, which offline is the common
+		// cause of. It does NOT reject for "no change" — that resolves.
+		return 'offline';
+	}
+	// `update()` resolves once the check is done; a replacement, if there was
+	// one, arrives through `updatefound` and lands in `waiting`.
+	return registration.waiting || waiting ? 'update' : 'current';
+}
 
 /** Apply a waiting update. The controllerchange handler reloads the page. */
 export function applyUpdate() {

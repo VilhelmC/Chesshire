@@ -15,16 +15,15 @@ import {
 import { STRICTNESS } from '../domain/book';
 import { OpeningSearch } from '../components/OpeningSearch';
 import { nameForPath } from '../domain/openings';
+import { nameOf } from '../domain/caption';
 
 import {
 	startRun,
 	submitMove,
 	resumeFrom,
-	playOn,
 	playFrom,
 	resign,
 	explainMistake,
-	toPgn,
 	type RunState,
 	type RestorePoint,
 	type SessionConfig,
@@ -39,7 +38,7 @@ import {
 	type MoveRow,
 	type MoveSource,
 } from '../domain/moveTable';
-import { ShareMenu, canShareNatively } from '../components/ShareMenu';
+import { ShareMenu, shareItemsFor } from '../components/ShareMenu';
 import { LinePlayer, type BoardOverride } from '../components/LinePlayer';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
 import { TrainingWheels } from '../components/TrainingWheels';
@@ -54,10 +53,11 @@ import { markTraining } from '../data/autoImport';
 import { Empty, Button, Select, Toggle } from '../ui/primitives';
 import type { ToolbarAction } from '../components/Toolbar';
 import { BoardPanel } from '../components/BoardPanel';
+import { PositionStack } from '../components/PositionStack';
 import type { Shape } from '../components/Board';
 import { Move, MoveLine } from '../components/Move';
 import { other, colourAtPly, colourOfFen } from '../domain/notation';
-import { MoveList, MoveListLegend, type MoveChip } from '../components/MoveList';
+import { MoveList, MoveListHeader, MoveListLegend, type MoveChip } from '../components/MoveList';
 import { brushForGrade, type Candidate } from '../engine/candidates';
 import { BOT_LEVELS, levelFor, estimate, type Estimate } from '../domain/rating';
 import { freeplayLosses, gameLosses } from '../domain/progress';
@@ -67,10 +67,9 @@ import { db } from '../data/db';
 // Aliased: this file already has a `remember` — the one that stores the RUN.
 import { recall as recallView, remember as rememberView } from '../data/viewState';
 import { loadProgress } from '../data/progress';
-import { logAnswer, logRun } from '../data/progress';
+import { logRun } from '../data/progress';
+import { recordOutcome } from '../data/outcome';
 import { saveSession, loadSession, clearSession } from '../data/session';
-import { recordMistake } from '../data/mistakes';
-import { positionKey } from '../domain/chess';
 import { loadMemory, persist } from '../data/memory';
 import {
 	afterAnswer,
@@ -96,12 +95,11 @@ const EMPTY: Stats = { runs: 0, moves: 0, correct: 0, punished: 0, missed: 0, sh
 export type TrainHandoff = { moves: string[]; ply: number; ourColour: 'w' | 'b' } | null;
 
 export function Train({
-	handoff,
-	onHandoffUsed,
+	onPlayFrom,
 	onNeedsToken,
 }: {
-	handoff?: TrainHandoff;
-	onHandoffUsed?: () => void;
+	/** Hand this position to the Play tab. The same door Review and Mistakes use. */
+	onPlayFrom?: (h: { moves: string[]; ply: number; ourColour: 'w' | 'b' }) => void;
 	/** Somewhere to send someone who cannot train yet, rather than naming a tab. */
 	onNeedsToken?: () => void;
 }) {
@@ -161,6 +159,7 @@ export function Train({
 			livePosition: state?.fen ?? null,
 			previewPly,
 			position: describePosition(boardFenOf(state, previewPly)),
+			mode: state?.mode ?? null,
 			phase: state?.phase ?? null,
 			ourColour: state?.ourColour ?? null,
 			yourTurn,
@@ -401,36 +400,17 @@ export function Train({
 		evalsRef.current[next.path.length] = next.evalNow ?? null;
 	}
 
-	// A position handed over from the review page wins over the saved session:
-	// the user just asked for this specific position.
-	useEffect(() => {
-		if (!memoryReady || !handoff) return;
-		void (async () => {
-			busyRef.current = true;
-			setBusy(true);
-			try {
-				runId.current = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-				sawMistake.current = false;
-				evalsRef.current = [];
-				setLossByPly({});
-				setMistakePlies(new Set());
-				setHistory([]);
-				setFuture([]);
-				setResumed(false);
-				const s2 = await playFrom(handoff.moves, handoff.ply, handoff.ourColour, cfg);
-				setState(s2);
-				persistRun(s2, {});
-			} finally {
-				busyRef.current = false;
-				setBusy(false);
-				onHandoffUsed?.();
-			}
-		})();
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [memoryReady, handoff]);
+	/*
+	 * NOTHING IS HANDED TO THE TRAINER ANY MORE.
+	 *
+	 * This effect took a position from Review and started a run on it. Review
+	 * was never asking for a run, though — it was asking for a board, and so
+	 * were Mistakes and this tab's own free-play button. All three go to Play
+	 * now, which is the whole point of it existing. See `App`'s `playFrom`.
+	 */
 
 	useEffect(() => {
-		if (!memoryReady || handoff) return;
+		if (!memoryReady) return;
 		void (async () => {
 			// Pick the game back up rather than throwing it away.
 			const saved = await loadSession();
@@ -452,7 +432,7 @@ export function Train({
 			await newRun();
 		})();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [memoryReady, handoff]);
+	}, [memoryReady]);
 
 	/**
 	 * Record how an opponent move was met.
@@ -706,25 +686,11 @@ export function Train({
 	 */
 	
 	/** Carry on against the engine from a won position. */
-	async function continuePlaying() {
-		if (!state || busyRef.current) return;
-		busyRef.current = true;
-		setBusy(true);
-		setFeedback(null);
-		try {
-			setState(await playOn(state, cfg));
-		} catch (e) {
-			setError((e as Error).message);
-		} finally {
-			busyRef.current = false;
-			setBusy(false);
-		}
-	}
 
 	async function onMove(uci: string, opts: { revealed?: boolean } = {}) {
 		if (!state || busyRef.current || state.finished) return;
 		// Free play has no expected list — every legal move is allowed there.
-		if (!state.expected.length && state.phase !== 'freeplay') return;
+		if (!state.expected.length && state.mode !== 'free') return;
 		busyRef.current = true;
 		setBusy(true);
 
@@ -763,7 +729,7 @@ export function Train({
 			// thing to a beginner — the whole point of the trainer is to attach
 			// recall to the position rather than to a string.
 			const arrows: Arrow[] = [...explained.arrows];
-			if (!out.correct && before.phase === 'book' && before.expected[0]) {
+			if (!out.correct && before.mode === 'drill' && before.phase === 'book' && before.expected[0]) {
 				// The run does not advance on a wrong book move, so the position on
 				// screen is still the one the arrow refers to.
 				arrows.length = 0;
@@ -816,74 +782,30 @@ export function Train({
 				setHint([]);
 			}
 
-			// One row per encounter.
-			//
-			// Free play is logged too — it is the ONLY phase whose numbers feed the
-			// rating estimate, and an earlier version skipped it entirely, which
-			// left the estimator with nothing to work from.
-			const assisted = assistedThisItem.current || !!opts.revealed;
-			if (before.phase === 'freeplay') {
-				// A negative loss is the sentinel for "could not be measured".
-				// Logging it as zero would record a perfect move every time the
-				// engine hiccupped, which is how the rating estimate drifted up.
-				if (out.cpLoss >= 200) {
-					// A serious free-play error is as much worth repeating as a missed
-					// book move, and we know what should have been played.
-					void (async () => {
-						const best = await import('../engine/score').then((m) =>
-							m.scoreMove(before.fen, uci, before.ourColour),
-						);
-						if (!best?.bestUci) return;
-						void recordMistake({
-							fen: before.fen,
-							positionKey: positionKey(before.fen),
-							ourColour: before.ourColour,
-							expectedUci: best.bestUci,
-							expectedSan: sanOf(before.fen, best.bestUci),
-							playedSan: out.played,
-							path: [...before.path],
-							ply: before.path.length,
-							phase: 'freeplay',
-							now: Date.now(),
-						});
-					})();
-				}
-				if (out.cpLoss >= 0) {
-					logAnswer({
-						id: `${runId.current}-fp-${before.path.length}-${Date.now()}`,
-						ts: Date.now(),
-						runId: runId.current,
-						path: [...before.path],
-						ply: before.path.length,
-						phase: 'freeplay',
-						correct: true,
-						revealed: false,
-						assisted: false,
-						cpLoss: out.cpLoss,
-					});
-				}
-			} else if (!loggedThisItem.current && !out.novelty) {
-				// A NOVELTY IS NOT AN ANSWER, so it is not logged as one. The position
-				// has not moved and the drill is still asking; whatever is played next
-				// is the answer, and `loggedThisItem` is deliberately left false so that
-				// move still gets its row. Logging this one as `correct: false` was the
-				// first version, and it put the error back in through the progress
-				// record after the card had been kept out of the mistakes bin.
-				loggedThisItem.current = true;
-				logAnswer({
-					id: `${runId.current}-${before.path.length}-${Date.now()}`,
-					ts: Date.now(),
-					runId: runId.current,
-					path: [...before.path],
-					ply: before.path.length,
-					phase: before.phase === 'punish' ? 'punish' : 'book',
-					correct: out.correct && !assisted,
-					revealed: !!opts.revealed,
-					assisted,
-					cpLoss: out.cpLoss,
-				});
-			}
-			if (before.phase === 'punish') sawMistake.current = true;
+			/*
+			 * WHAT THE MOVE LEAVES BEHIND — a progress row, and sometimes a card.
+			 *
+			 * This was ~100 lines here, and it is the densest part of the handler
+			 * that has nothing to do with rendering: free play logs every
+			 * measurable move, the drill logs one row per encounter with a novelty
+			 * exemption and a first-miss-only rule for cards. See `data/outcome`,
+			 * which is also the measurement — about half of what `onMove` does is
+			 * spaced-repetition bookkeeping that means nothing in a game.
+			 */
+			const once = { logged: loggedThisItem.current, mistake: loggedMistake.current };
+			recordOutcome({
+				before,
+				out,
+				uci,
+				runId: runId.current,
+				assisted: assistedThisItem.current || !!opts.revealed,
+				revealed: !!opts.revealed,
+				once,
+				sanOf,
+			});
+			loggedThisItem.current = once.logged;
+			loggedMistake.current = once.mistake;
+			if (before.mode === 'drill' && before.phase === 'punish') sawMistake.current = true;
 
 			if (out.novelty) {
 				// NOT A MISS. Will: "it should not count as error ... The card does not
@@ -892,24 +814,10 @@ export function Train({
 				// position is unchanged, so the drill simply waits for the line's move.
 				setBoardVersion((v) => v + 1);
 			} else if (!out.correct) {
+				// The CARD is `recordOutcome`'s, including the first-miss-only rule.
+				// This is the scheduler's own flag: the position failed, so it is not
+				// retired when the encounter closes below.
 				missedThisItem.current = true;
-				// Only the FIRST miss on a position becomes a card; retries of the
-				// same slip within one encounter are one mistake, not several.
-				if (!loggedMistake.current && before.expected[0]) {
-					loggedMistake.current = true;
-					void recordMistake({
-						fen: before.fen,
-						positionKey: positionKey(before.fen),
-						ourColour: before.ourColour,
-						expectedUci: before.expected[0].uci,
-						expectedSan: before.expected[0].san,
-						playedSan: out.played,
-						path: [...before.path],
-						ply: before.path.length,
-						phase: before.phase === 'punish' ? 'punish' : 'book',
-						now: Date.now(),
-					});
-				}
 			} else {
 				setHistory((h) => [...h, before]);
 				setFuture([]);
@@ -929,7 +837,7 @@ export function Train({
 				correct: s.correct + (out.correct && !opts.revealed ? 1 : 0),
 				punished: s.punished + (out.state.finished === 'punished' ? 1 : 0),
 				missed:
-					s.missed + (!out.correct && before.phase === 'punish' ? 1 : 0),
+					s.missed + (!out.correct && before.mode === 'drill' && before.phase === 'punish' ? 1 : 0),
 			}));
 			if (out.correct) {
 				setHint([]);
@@ -1079,7 +987,7 @@ export function Train({
 			: (preview?.lastMove ?? lastMove(state));
 
 	const yourTurn =
-		!!state && !state.finished && (state.expected.length > 0 || state.phase === 'freeplay');
+		!!state && !state.finished && (state.expected.length > 0 || state.mode === 'free');
 
 	/*
 	 * AND THE HELP IS STILL CHARGED FOR, once per position.
@@ -1158,9 +1066,9 @@ export function Train({
 			setFuture([]);
 			setFeedback(null);
 			setLossByPly({});
-			// 'book': this is the trainer resuming, not the review page handing a
-			// position to the engine.
-			const s2 = await playFrom(moves, ply, state.ourColour, cfg, 'book');
+			// 'drill': this is the trainer resuming, not another tab handing a
+			// position over to be played out.
+			const s2 = await playFrom(moves, ply, state.ourColour, cfg, 'drill');
 			setState(s2);
 			remember(s2);
 			persistRun(s2, lossByPly);
@@ -1177,10 +1085,11 @@ export function Train({
 		if (!state?.path.length) return;
 		const path = previewing ? state.path.slice(0, previewPly!) : [...state.path];
 		if (!path.length) return;
-		// Prefer a name over "After 7 moves": the explorer's if it gave one, the
-		// bundled index's otherwise, which also covers positions the explorer has
-		// stopped naming because they are too deep.
-		const named = state.opening?.name ?? nameForPath(path)?.name;
+		// Prefer a name over "After 7 moves". WHICH name is `nameOf`'s business —
+		// this had its own copy of the explorer-then-table rule, which is one
+		// copy more than there should be of a rule the caption above the board
+		// now applies on every screen.
+		const named = nameOf({ path, opening: state.opening?.name ?? null });
 		const root = { path, name: named ?? `After ${Math.ceil(path.length / 2)} moves` };
 		if (practice.roots.some((r) => r.path.join(' ') === path.join(' '))) return;
 		updatePractice({ roots: [...practice.roots, root] });
@@ -1326,7 +1235,7 @@ export function Train({
 			 * slot in a strip that has to cross a 360px screen, and still has to be
 			 * read and dismissed before it can be ignored.
 			 */
-			...(state?.phase === 'freeplay'
+			...(state?.mode === 'free'
 				? [
 						{
 							id: 'resign',
@@ -1351,12 +1260,17 @@ export function Train({
 				 * able to go into free play mode against the engine from any
 				 * position."
 				 *
-				 * There is no reason, and there never was one in the engine: `playOn`
-				 * only flips the phase and clears `finished`, so it has always worked
-				 * from anywhere. The `!state.finished` guard was a statement about
-				 * when the button was OFFERED, and it smuggled in a claim — that
-				 * leaving the drill is something you earn by completing it — that
-				 * nobody decided and nothing supports.
+				 * There is no reason, and there never was one in the engine. The
+				 * `!state.finished` guard was a statement about when the button was
+				 * OFFERED, and it smuggled in a claim — that leaving the drill is
+				 * something you earn by completing it — that nobody decided.
+				 *
+				 * IT IS A HANDOFF NOW, not a phase change in place. Will: "worth
+				 * considering if free play is its own tab, so when we press free
+				 * play what is really happening is we're switching tabs and loading
+				 * that position?" That is what happens: the same door Review and
+				 * Mistakes use, because all three were asking for the same thing —
+				 * this position, on a board, with the drill switched off.
 				 *
 				 * The two names are the same act described from where you are
 				 * standing. At the end of a line, continuing IS playing on. In the
@@ -1365,12 +1279,18 @@ export function Train({
 				 */
 				id: 'playon',
 				title: state?.finished
-					? 'Play on against the engine from here'
-					: 'Leave the drill and play this position out against the engine',
+					? 'Play on against the engine, in the Play tab'
+					: 'Leave the drill and play this position out, in the Play tab',
 				caption: state?.finished ? 'play on' : 'free play',
 				icon: 'playon',
-				onClick: continuePlaying,
-				disabled: busy || !state || state.phase === 'freeplay',
+				onClick: () =>
+					state &&
+					onPlayFrom?.({
+						moves: [...state.path],
+						ply: state.path.length,
+						ourColour: state.ourColour,
+					}),
+				disabled: busy || !state || !onPlayFrom,
 				accent: state?.finished === 'punished',
 			},
 		];
@@ -1392,29 +1312,20 @@ export function Train({
 					maxWidth: vp.stacked ? undefined : 560,
 				}}
 			>
-			{/* The line's name belongs above the board, not below it.
-				Underneath it was one short paragraph among the move list, the
-				options, the commentary and the controls — which is to say it was
-				findable rather than visible, and what line you are in is context
-				for the position, not a footnote to it. */}
-			{state && !state.finished && (
-				<p
-					style={{
-						margin: `0 0 ${6}px`,
-						fontSize: 13,
-						color: color.ink2,
-						minHeight: 18,
-					}}
-				>
-					{state.phase === 'punish'
-						? 'Off book — find the strongest continuation.'
-						: state.opening
-							? state.opening.name
-							: state.bookHere?.length
-								? `${state.bookHere.filter((m) => m.verdict === 'main' || m.verdict === 'book').length} book replies here`
-								: ''}
-				</p>
-			)}
+			{/*
+			  * THE LINE'S NAME IS NOT WRITTEN HERE ANY MORE.
+			  *
+			  * It was a paragraph in this file with three cases in it, and the
+			  * other three boards in the app had no equivalent — Will: "perhaps
+			  * that message should be part of the standard machinery everything
+			  * consumes, so a board is always displayed with the line it belongs
+			  * to if such a line exists." It is `BoardPanel`'s `caption` prop now;
+			  * see `components/PositionCaption`.
+			  *
+			  * Two of the three cases moved into `also` below, because they are
+			  * Train's and nothing else's. The third — the opening name — was the
+			  * shared half, and it is the part every other board was missing.
+			  */}
 
 			{/*
 			  * THERE IS NO "PICKED UP WHERE YOU LEFT OFF" BANNER.
@@ -1443,6 +1354,32 @@ export function Train({
 				evalCp={previewing ? null : (state?.evalNow ?? null)}
 				interactive={yourTurn && !busy && !previewing && !explaining}
 				lastMove={shownLastMove}
+				caption={{
+					/*
+					 * THE PATH TO WHAT IS ON THE BOARD, not to where the run is.
+					 *
+					 * Stepping back is the common case here and the caption has to
+					 * follow it: a board showing move 3 of the Italian under a line
+					 * reading "move 11" is worse than no line at all. Same slice
+					 * `pinHere` takes, for the same reason.
+					 */
+					path: previewing ? (state?.path ?? []).slice(0, previewPly!) : (state?.path ?? []),
+					// Only while the board is at the run's own position: the explorer
+					// named THAT one, and it is not the name of a position five plies
+					// earlier.
+					opening: previewing ? null : (state?.opening?.name ?? null),
+					also: [
+						// Train's two, which no other screen has: the drill has gone off
+						// book and is now asking for the strongest move, and — failing
+						// that — how much book there is to pick from here.
+						state && !state.finished && state.mode === 'drill' && state.phase === 'punish'
+							? 'off book — find the strongest continuation'
+							: null,
+						state && !state.finished && state.phase !== 'punish' && !state.opening && state.bookHere?.length
+							? `${state.bookHere.filter((m) => m.verdict === 'main' || m.verdict === 'book').length} book replies here`
+							: null,
+					],
+				}}
 				onSelectSquare={(sqName) =>
 					setFocus((f) => {
 						const n = parseSquare(sqName);
@@ -1487,393 +1424,385 @@ export function Train({
 				actions={toolbarActions()}
 				busy={busy}
 			>
-				<div style={{ marginTop: 10 }}>
-					{/* ---------------------------------------------------------------
-						Two different things were sharing one paragraph, in the wrong
-						order: commentary on the CURRENT position sat above the verdict
-						on the move you had just played, so "Correct" appeared underneath
-						a sentence about something else and the two read as one run-on
-						remark.
-
-						They are separate blocks now, each captioned, and in the order
-						they happened — your move, then their reply. Chronology is the
-						only ordering a reader does not have to be taught.
-					--------------------------------------------------------------- */}
-					{feedback && (
-						<div
-							style={{
-								marginTop: 8,
-								fontSize: 14,
-								color: feedback.correct ? color.good : color.bad,
-								borderLeft: `3px solid ${feedback.correct ? color.good : color.bad}`,
-								paddingLeft: 8,
-							}}
-						>
-							<div
-								style={{
-									fontSize: 11,
-									textTransform: 'uppercase',
-									letterSpacing: '0.06em',
-									opacity: 0.7,
-									marginBottom: 1,
-								}}
-							>
-								Your move
-							</div>
-							{feedback.message}
-							{!feedback.correct && feedback.explanation && (
-								<div style={{ opacity: 0.9, marginTop: 2 }}>{feedback.explanation}</div>
-							)}
-						{/* A sequence in prose asks the reader to replay it in their head
-							before they can check the claim — which is the work they are
-							here to learn. §1.1: never make the learner derive what can be
-							shown. */}
-						{!feedback.correct && feedback.refutation.length > 0 && (
-							<div style={{ marginTop: space.tight }}>
-								<Button
-									onClick={() =>
-										setExplain({
-											line: lineFromUci(feedback.fen, [
-												feedback.playedUci,
-												...feedback.refutation,
-											]),
-											label: 'Why that move does not work',
-										})
-									}
-								>
-									Show it on the board
-								</Button>
-							</div>
-						)}
-							{!feedback.correct && feedback.refutation.length > 0 && (
-								<div
-									style={{
-										opacity: 0.8,
-										fontSize: 12,
-										display: 'flex',
-										flexWrap: 'wrap',
-										gap: 6,
-										marginTop: 2,
-									}}
-								>
-									{/* Our move, then their refutation — colours alternate from ours. */}
-									<Move
-										san={feedback.played}
-										colour={state?.ourColour ?? 'w'}
-										size={12}
-									/>
-									{sanLine(feedback.fen, feedback.playedUci, feedback.refutation).map(
-										(san, i) => (
-											<Move
-												key={i}
-												san={san}
-												colour={
-													i % 2 === 0
-														? other(state?.ourColour ?? 'w')
-														: (state?.ourColour ?? 'w')
-												}
-												size={12}
-											/>
-										),
-									)}
-								</div>
-							)}
-							{!feedback.correct && attempts >= 2 && (
-								<div style={{ fontSize: 12, opacity: 0.7 }}>
-									Two misses — &ldquo;Show me&rdquo; will play it for you.
-								</div>
-							)}
-						</div>
-					)}
-
-					{/* Their reply, second, because it happened second. */}
-					{state?.lastOpponent && !state.finished && (
-						<div
-							style={{
-								fontSize: 14,
-								marginTop: 8,
-								borderLeft: `3px solid ${
-									state.lastOpponent.kind === 'mistake' ? color.bad : color.line
-								}`,
-								paddingLeft: 8,
-							}}
-						>
-							<div
-								style={{
-									fontSize: 11,
-									textTransform: 'uppercase',
-									letterSpacing: '0.06em',
-									opacity: 0.7,
-									marginBottom: 1,
-								}}
-							>
-								They played
-							</div>
-							{state.lastOpponent.kind === 'mistake' ? (
-								<span style={{ color: color.bad }}>
-									<Move
-										san={state.lastOpponent.san}
-										colour={other(state.ourColour)}
-										bold
-										size={14}
-									/>{' '}
-									—{' '}
-									{state.lastOpponent.severity === 'blunder' ? 'a mistake' : 'loose'},{' '}
-									{(state.lastOpponent.frequency * 100).toFixed(0)}% play it here. Punish it.
-								</span>
-							) : (
-								<span style={{ opacity: 0.75 }}>
-									<Move
-										san={state.lastOpponent.san}
-										colour={other(state.ourColour)}
-										bold
-										size={14}
-									/>
-									{state.lastOpponent.lineName ? ` — ${state.lastOpponent.lineName}` : ''}
-								</span>
-							)}
-						</div>
-					)}
-
-					{state?.finished && (
-						<div style={{ marginTop: space.snug, fontWeight: 600, color: color.good }}>
-							{state.finished === 'line-complete' ? 'Line complete.' : state.note}
-						</div>
-					)}
-
-					{/*
-					  * ONE TABLE, THREE FILTERS. Will: "we should unify these three
-					  * buttons: one table, the buttons just toggle which moves are
-					  * included ... so we use the same component for all three."
-					  *
-					  * The move is the row; being in the line, being popular and being one
-					  * of the engine's picks are TAGS on it. A move in two lists used to
-					  * appear twice, in two shapes, with different columns filled in.
-					  */}
-					{/*
-					  * ONLY ONCE A BUTTON HAS ASKED. `state.expected` is always populated —
-					  * out of book it is every legal move — so gating on "are there rows"
-					  * put thirty unevaluated rows on screen unbidden the moment the table
-					  * shipped. The three buttons are what request a source; before any of
-					  * them is pressed there is no question on the table.
-					  */}
-					{/*
-					  * NOT WHILE LOOKING BACK. The table describes the live position, and
-					  * the board already hides its arrows while previewing — so showing
-					  * the rows would put a list of moves beside a board they are not
-					  * legal on. `previewAt` used to achieve this by clearing
-					  * `candidates`, which made it a second owner of state the effect now
-					  * holds; this says the same thing where it belongs.
-					  */}
-					{/* NOT GATED ON HAVING ROWS. Turn every source off and there are no
-						rows — and the table carrying the chips would unmount, taking the
-						only way back with it. Same fault as the vanishing chip, one level
-						up. An empty table says it is empty; it does not disappear. */}
-					{tableShown && state && !previewing && (
+				<PositionStack
+					popover={
 						<>
-							<h3 data-region="train-moves-head">Moves here</h3>
-							<MoveTable
-								rows={moveRows}
-								mover={colourOfFen(state.fen)}
-								on={tableOn}
-								// All three, always — a chip is how you switch a source back on,
-								// so it cannot be allowed to vanish with the source's rows.
-								offers={['line', 'engine', 'popular']}
-								onToggle={(src) =>
-									setTableOn((cur) => {
-										const next = new Set(cur);
-										if (next.has(src)) next.delete(src);
-										else next.add(src);
-										return next;
-									})
-								}
-								onAsk={(uci) =>
-									state?.fen &&
-									setAsking({ fen: state.fen, uci, alternatives: moveRows.map((r) => r.uci) })
-								}
-								askedPopularity={table.askedPopularity}
-								marksBook
-								region="train-moves"
-							/>
+								{/*
+								  * DIRECTLY UNDER THE BUTTON THAT OPENS IT.
+								  *
+								  * Will: "the share options should appear right below the share
+								  * button. Clicking it again should hide the options. Unfocusing
+								  * (interacting with something else) should also close the share
+								  * options — that way we don't need a close button."
+								  *
+								  * It was rendered last, below the move history, so pressing a
+								  * control at the top of the strip made a panel appear a screen
+								  * further down — which on a phone is not visible at all. A menu
+								  * belongs against the thing that opened it; that is what makes it
+								  * a menu rather than a section.
+								  *
+								  * The toolbar renders before `children` now, so first child IS
+								  * directly under the strip.
+								  */}
+								{sharing && state && (
+									<ShareMenu
+										items={shareItemsFor(state)}
+										onClose={() => setSharing(false)}
+									/>
+								)}
 						</>
-					)}
+					}
+					verdict={
+						<>
+								{/* ---------------------------------------------------------------
+									Two different things were sharing one paragraph, in the wrong
+									order: commentary on the CURRENT position sat above the verdict
+									on the move you had just played, so "Correct" appeared underneath
+									a sentence about something else and the two read as one run-on
+									remark.
 
-					{/* ---------------------------------------------------------------
-						ANALYSIS, THEN HISTORY. See `BoardPanel` for the order and why
-						it is the same on every tab. The move list used to come FIRST
-						here and last in Mistakes, so the two tabs disagreed about what
-						the page was about.
-					--------------------------------------------------------------- */}
-					{explain && (
-						<LinePlayer
-							line={explain.line}
-							label={explain.label}
-							onBoard={setExplaining}
-							onClose={() => setExplain(null)}
-						/>
-					)}
+									They are separate blocks now, each captioned, and in the order
+									they happened — your move, then their reply. Chronology is the
+									only ordering a reader does not have to be taught.
+								--------------------------------------------------------------- */}
+								{feedback && (
+									<div
+										style={{
+											marginTop: 8,
+											fontSize: 14,
+											color: feedback.correct ? color.good : color.bad,
+											borderLeft: `3px solid ${feedback.correct ? color.good : color.bad}`,
+											paddingLeft: 8,
+										}}
+									>
+										<div
+											style={{
+												fontSize: 11,
+												textTransform: 'uppercase',
+												letterSpacing: '0.06em',
+												opacity: 0.7,
+												marginBottom: 1,
+											}}
+										>
+											Your move
+										</div>
+										{feedback.message}
+										{!feedback.correct && feedback.explanation && (
+											<div style={{ opacity: 0.9, marginTop: 2 }}>{feedback.explanation}</div>
+										)}
+									{/* A sequence in prose asks the reader to replay it in their head
+										before they can check the claim — which is the work they are
+										here to learn. §1.1: never make the learner derive what can be
+										shown. */}
+									{!feedback.correct && feedback.refutation.length > 0 && (
+										<div style={{ marginTop: space.tight }}>
+											<Button
+												onClick={() =>
+													setExplain({
+														line: lineFromUci(feedback.fen, [
+															feedback.playedUci,
+															...feedback.refutation,
+														]),
+														label: 'Why that move does not work',
+													})
+												}
+											>
+												Show it on the board
+											</Button>
+										</div>
+									)}
+										{!feedback.correct && feedback.refutation.length > 0 && (
+											<div
+												style={{
+													opacity: 0.8,
+													fontSize: 12,
+													display: 'flex',
+													flexWrap: 'wrap',
+													gap: 6,
+													marginTop: 2,
+												}}
+											>
+												{/* Our move, then their refutation — colours alternate from ours. */}
+												<Move
+													san={feedback.played}
+													colour={state?.ourColour ?? 'w'}
+													size={12}
+												/>
+												{sanLine(feedback.fen, feedback.playedUci, feedback.refutation).map(
+													(san, i) => (
+														<Move
+															key={i}
+															san={san}
+															colour={
+																i % 2 === 0
+																	? other(state?.ourColour ?? 'w')
+																	: (state?.ourColour ?? 'w')
+															}
+															size={12}
+														/>
+													),
+												)}
+											</div>
+										)}
+										{!feedback.correct && attempts >= 2 && (
+											<div style={{ fontSize: 12, opacity: 0.7 }}>
+												Two misses — &ldquo;Show me&rdquo; will play it for you.
+											</div>
+										)}
+									</div>
+								)}
 
-					{state && (
-						<TrainingWheels
-							on={wheels.on}
-							onChange={wheels.setOn}
-							active={wheels.active}
-							onActiveChange={wheels.setActive}
-							notes={wheels.notes}
-							hasFocus={focus !== null}
-							working={wheels.working}
-						/>
-					)}
+								{/* Their reply, second, because it happened second. */}
+								{state?.lastOpponent && !state.finished && (
+									<div
+										style={{
+											fontSize: 14,
+											marginTop: 8,
+											borderLeft: `3px solid ${
+												state.lastOpponent.kind === 'mistake' ? color.bad : color.line
+											}`,
+											paddingLeft: 8,
+										}}
+									>
+										<div
+											style={{
+												fontSize: 11,
+												textTransform: 'uppercase',
+												letterSpacing: '0.06em',
+												opacity: 0.7,
+												marginBottom: 1,
+											}}
+										>
+											They played
+										</div>
+										{state.lastOpponent.kind === 'mistake' ? (
+											<span style={{ color: color.bad }}>
+												<Move
+													san={state.lastOpponent.san}
+													colour={other(state.ourColour)}
+													bold
+													size={14}
+												/>{' '}
+												—{' '}
+												{state.lastOpponent.severity === 'blunder' ? 'a mistake' : 'loose'},{' '}
+												{(state.lastOpponent.frequency * 100).toFixed(0)}% play it here. Punish it.
+											</span>
+										) : (
+											<span style={{ opacity: 0.75 }}>
+												<Move
+													san={state.lastOpponent.san}
+													colour={other(state.ourColour)}
+													bold
+													size={14}
+												/>
+												{state.lastOpponent.lineName ? ` — ${state.lastOpponent.lineName}` : ''}
+											</span>
+										)}
+									</div>
+								)}
 
-					{/* Only appears when the register says there is a page. */}
-					<Commentary state={commentary} region="train-commentary" />
-
-					{asking && (
-						<ExplainPanel
-							{...asking}
-							onShowLine={lineOverlay.show}
-							onClose={() => {
-								setAsking(null);
-								closeLine();
-							}}
-						/>
-					)}
-
-
-					{/* THE HISTORY, after everything that is about the position in
-						front of you. Will: "I think the past move list (history) is not
-						really important — it should be after analytical content (but
-						before options and preferences)." */}
-					{/*
-					  * ONE MOVE LIST. While a line is borrowed it shows that instead of
-					  * the game — same component, same chips, same cursor — with a banner
-					  * saying whose line it is and how to give it back.
-					  */}
-					{lineOverlay.overlay && (
-						<div
-							data-region="line-banner"
-							style={{
-								display: 'flex',
-								alignItems: 'center',
-								gap: 8,
-								fontSize: 13,
-								color: color.ink2,
-								marginBottom: space.tight,
-							}}
-						>
-							<span>{lineOverlay.overlay.label}</span>
-							<span style={{ marginLeft: 'auto' }}>
-								<Button kind="quiet" onClick={closeLine}>
-									Back to the game
-								</Button>
-							</span>
-						</div>
-					)}
-					<MoveList
-						region="train-move-list"
-						onAsk={lineOverlay.overlay?.onAsk}
-						chips={lineOverlay.chips ?? chips()}
-						currentPly={
-							lineOverlay.overlay
-								? lineOverlay.overlay.at
-								: previewing
-									? previewPly!
-									: (state?.path.length ?? 0)
-						}
-						onJump={
-							lineOverlay.overlay ? lineOverlay.setAt : busy ? undefined : previewAt
-						}
-						onPlayFrom={
-							lineOverlay.overlay ? undefined : busy ? undefined : (ply) => void playFromPly(ply)
-						}
-					/>
-					{!lineOverlay.overlay && <MoveListLegend />}
-
-					{previewing && (
-						<div
-							style={{
-								fontSize: 13,
-								background: color.warnSoft,
-								border: `1px solid ${color.warn}`,
-								borderRadius: 6,
-								padding: '6px 8px',
-								marginTop: 6,
-								display: 'flex',
-								gap: 8,
-								alignItems: 'center',
-								flexWrap: 'wrap',
-							}}
-						>
-							{/* Name the move rather than a ply number — §1.1, do not make
-								the reader derive what can be shown. */}
-							<span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-								Looking back at
-								<strong>
-									{Math.floor((previewPly! - 1) / 2) + 1}.
-									{previewPly! % 2 === 0 ? '..' : ''}
-								</strong>
-								<Move
-									san={state!.path[previewPly! - 1]}
-									colour={colourAtPly(previewPly! - 1)}
-									bold
-									size={13}
+								{state?.finished && (
+									<div style={{ marginTop: space.snug, fontWeight: 600, color: color.good }}>
+										{state.finished === 'line-complete' ? 'Line complete.' : state.note}
+									</div>
+								)}
+						</>
+					}
+					moves={
+						<>
+								{/*
+								  * ONE TABLE, THREE FILTERS. Will: "we should unify these three
+								  * buttons: one table, the buttons just toggle which moves are
+								  * included ... so we use the same component for all three."
+								  *
+								  * The move is the row; being in the line, being popular and being one
+								  * of the engine's picks are TAGS on it. A move in two lists used to
+								  * appear twice, in two shapes, with different columns filled in.
+								  */}
+								{/*
+								  * ONLY ONCE A BUTTON HAS ASKED. `state.expected` is always populated —
+								  * out of book it is every legal move — so gating on "are there rows"
+								  * put thirty unevaluated rows on screen unbidden the moment the table
+								  * shipped. The three buttons are what request a source; before any of
+								  * them is pressed there is no question on the table.
+								  */}
+								{/*
+								  * NOT WHILE LOOKING BACK. The table describes the live position, and
+								  * the board already hides its arrows while previewing — so showing
+								  * the rows would put a list of moves beside a board they are not
+								  * legal on. `previewAt` used to achieve this by clearing
+								  * `candidates`, which made it a second owner of state the effect now
+								  * holds; this says the same thing where it belongs.
+								  */}
+								{/* NOT GATED ON HAVING ROWS. Turn every source off and there are no
+									rows — and the table carrying the chips would unmount, taking the
+									only way back with it. Same fault as the vanishing chip, one level
+									up. An empty table says it is empty; it does not disappear. */}
+								{tableShown && state && !previewing && (
+									<>
+										<h3 data-region="train-moves-head">Moves here</h3>
+										<MoveTable
+											rows={moveRows}
+											mover={colourOfFen(state.fen)}
+											on={tableOn}
+											// All three, always — a chip is how you switch a source back on,
+											// so it cannot be allowed to vanish with the source's rows.
+											offers={['line', 'engine', 'popular']}
+											onToggle={(src) =>
+												setTableOn((cur) => {
+													const next = new Set(cur);
+													if (next.has(src)) next.delete(src);
+													else next.add(src);
+													return next;
+												})
+											}
+											onAsk={(uci) =>
+												state?.fen &&
+												setAsking({ fen: state.fen, uci, alternatives: moveRows.map((r) => r.uci) })
+											}
+											askedPopularity={table.askedPopularity}
+											marksBook
+											region="train-moves"
+										/>
+									</>
+								)}
+						</>
+					}
+					lines={
+						<>
+								{/* ---------------------------------------------------------------
+									ANALYSIS, THEN HISTORY. See `BoardPanel` for the order and why
+									it is the same on every tab. The move list used to come FIRST
+									here and last in Mistakes, so the two tabs disagreed about what
+									the page was about.
+								--------------------------------------------------------------- */}
+								{explain && (
+									<LinePlayer
+										line={explain.line}
+										label={explain.label}
+										onBoard={setExplaining}
+										onClose={() => setExplain(null)}
+									/>
+								)}
+						</>
+					}
+					wheels={
+						<>
+								{state && (
+									<TrainingWheels
+										on={wheels.on}
+										onChange={wheels.setOn}
+										active={wheels.active}
+										onActiveChange={wheels.setActive}
+										notes={wheels.notes}
+										hasFocus={focus !== null}
+										working={wheels.working}
+									/>
+								)}
+						</>
+					}
+					commentary={
+						<>
+								{/* Only appears when the register says there is a page. */}
+								<Commentary state={commentary} region="train-commentary" />
+						</>
+					}
+					explain={
+						<>
+								{asking && (
+									<ExplainPanel
+										{...asking}
+										onShowLine={lineOverlay.show}
+										onClose={() => {
+											setAsking(null);
+											closeLine();
+										}}
+									/>
+								)}
+						</>
+					}
+					history={
+						<>
+								{/* THE HISTORY, after everything that is about the position in
+									front of you. Will: "I think the past move list (history) is not
+									really important — it should be after analytical content (but
+									before options and preferences)." */}
+								{/*
+								  * ONE MOVE LIST. While a line is borrowed it shows that instead of
+								  * the game — same component, same chips, same cursor — with a banner
+								  * saying whose line it is and how to give it back.
+								  */}
+								<MoveListHeader borrowed={lineOverlay.overlay?.label} onClose={closeLine} />
+								<MoveList
+									region="train-move-list"
+									onAsk={lineOverlay.overlay?.onAsk}
+									chips={lineOverlay.chips ?? chips()}
+									currentPly={
+										lineOverlay.overlay
+											? lineOverlay.overlay.at
+											: previewing
+												? previewPly!
+												: (state?.path.length ?? 0)
+									}
+									onJump={
+										lineOverlay.overlay ? lineOverlay.setAt : busy ? undefined : previewAt
+									}
+									onPlayFrom={
+										lineOverlay.overlay ? undefined : busy ? undefined : (ply) => void playFromPly(ply)
+									}
 								/>
-								— the game is where you left it.
-							</span>
-							<Button kind="quiet" onClick={() => setPreviewPly(null)}>
-								Back to the game
-							</Button>
-							<Button
-								onClick={() => previewPly !== null && void playFromPly(previewPly)}
-								disabled={busy}
-							>
-								Play from here
-							</Button>
-						</div>
-					)}
+								{!lineOverlay.overlay && <MoveListLegend />}
+						</>
+					}
+					footer={
+						<>
+								{previewing && (
+									<div
+										style={{
+											fontSize: 13,
+											background: color.warnSoft,
+											border: `1px solid ${color.warn}`,
+											borderRadius: 6,
+											padding: '6px 8px',
+											marginTop: 6,
+											display: 'flex',
+											gap: 8,
+											alignItems: 'center',
+											flexWrap: 'wrap',
+										}}
+									>
+										{/* Name the move rather than a ply number — §1.1, do not make
+											the reader derive what can be shown. */}
+										<span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+											Looking back at
+											<strong>
+												{Math.floor((previewPly! - 1) / 2) + 1}.
+												{previewPly! % 2 === 0 ? '..' : ''}
+											</strong>
+											<Move
+												san={state!.path[previewPly! - 1]}
+												colour={colourAtPly(previewPly! - 1)}
+												bold
+												size={13}
+											/>
+											— the game is where you left it.
+										</span>
+										<Button kind="quiet" onClick={() => setPreviewPly(null)}>
+											Back to the game
+										</Button>
+										<Button
+											onClick={() => previewPly !== null && void playFromPly(previewPly)}
+											disabled={busy}
+										>
+											Play from here
+										</Button>
+									</div>
+								)}
 
-					{sharing && state && (
-						<ShareMenu
-							items={[
-								{
-									id: 'pgn',
-									label: 'Copy PGN',
-									note: 'The whole run, for pasting into a board or an analysis tool.',
-									kind: 'copy',
-									value: toPgn(state, state.opening ? [state.opening.name] : []),
-								},
-								{
-									id: 'fen',
-									label: 'Copy FEN',
-									note: 'Just this position.',
-									kind: 'copy',
-									value: state.fen,
-								},
-								{
-									id: 'lichess',
-									label: 'Analyse on Lichess',
-									note: 'Opens this position in their analysis board.',
-									kind: 'open',
-									value: `https://lichess.org/analysis/${state.fen.replace(/ /g, '_')}`,
-								},
-								...(canShareNatively()
-									? [
-											{
-												id: 'native',
-												label: 'Share…',
-												note: 'Your device\u2019s own share sheet.',
-												kind: 'copy' as const,
-												value: toPgn(state, state.opening ? [state.opening.name] : []),
-											},
-										]
-									: []),
-							]}
-							onClose={() => setSharing(false)}
-						/>
-					)}
-
-					{error && <div style={{ color: color.bad, fontSize: text.body }}>{error}</div>}
-				</div>
+								{error && <div style={{ color: color.bad, fontSize: text.body }}>{error}</div>}
+						</>
+					}
+				/>
 			</BoardPanel>
 			</div>
 

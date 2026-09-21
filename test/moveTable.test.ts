@@ -293,3 +293,126 @@ describe('scores that are not a recommendation', () => {
 		expect(rows[0].cp).toBe(30);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// ONE MOVE, ONE ROW, HOWEVER IT IS SPELLED.
+//
+// Will: "sometimes a move (castling) is listed in the top 5, but then appears
+// in book without an eval score, and intersection of book and top 5 doesn't
+// contain the move — so it appears it's been registered twice and once without
+// an eval score."
+//
+// Castling has two UCI spellings — `e8g8` and the king-takes-rook `e8h8` that
+// survives Chess960 — and rows are keyed by the string. Sources that disagree
+// therefore produce two rows for one move, and no row that is in both chips.
+// This is Will's position.
+// ---------------------------------------------------------------------------
+describe('a move two sources spell differently', () => {
+	const FEN = 'rnbqk2r/ppp1bpp1/4pn1p/3p4/2PP3B/2N2N2/PP2PPPP/R2QKB1R b KQkq - 1 6';
+
+	/** The same castle, as the explorer writes it and as chessops writes it. */
+	const asExplorer = { uci: 'e8g8', san: 'O-O' };
+	const asChessops = 'e8h8';
+
+	it('merges into one row when the position is known', () => {
+		const rows = mergeMoves({
+			fen: FEN,
+			line: [asExplorer],
+			engine: [cand(asChessops, 'O-O', 30)],
+			popular: [share(asExplorer.uci, 'O-O', 750)],
+		});
+		expect(rows).toHaveLength(1);
+		expect(rows[0].sources.sort()).toEqual(['engine', 'line', 'popular']);
+	});
+
+	it('carries both the evaluation and the games on that one row', () => {
+		// The symptom: one row had the games and no eval, the other the eval and
+		// no games. Neither was the whole move.
+		const rows = mergeMoves({
+			fen: FEN,
+			line: [asExplorer],
+			engine: [cand(asChessops, 'O-O', 30)],
+			popular: [share(asExplorer.uci, 'O-O', 750)],
+		});
+		expect(rows[0].cp).toBe(30);
+		expect(rows[0].games).toBe(750);
+	});
+
+	it('lets the intersection find it, which is what was broken', () => {
+		const rows = mergeMoves({
+			fen: FEN,
+			line: [asExplorer],
+			engine: [cand(asChessops, 'O-O', 30)],
+			popular: [share(asExplorer.uci, 'O-O', 750)],
+		});
+		const on = new Set<MoveSource>(['line', 'engine']);
+		expect(filterMoves(rows, on).map((r) => r.san)).toEqual(['O-O']);
+	});
+
+	it('fills a score written in the other spelling', () => {
+		// `scores` is looked up by key too, so the wide search reaching a move
+		// under chessops' spelling still fills the explorer's row.
+		const rows = mergeMoves({
+			fen: FEN,
+			line: [asExplorer],
+			scores: [{ uci: asChessops, cp: -19, loss: 0 }],
+		});
+		expect(rows[0].cp).toBe(-19);
+	});
+
+	it('splits them again without a position, which is why the fen is passed', () => {
+		// Not a wish — a record of the behaviour the fen exists to prevent, so
+		// that dropping the argument fails here rather than in the table.
+		const rows = mergeMoves({
+			line: [asExplorer],
+			engine: [cand(asChessops, 'O-O', 30)],
+		});
+		expect(rows).toHaveLength(2);
+	});
+
+	it('leaves ordinary moves exactly as they were', () => {
+		const rows = mergeMoves({
+			fen: FEN,
+			engine: [cand('d5c4', 'dxc4', 20)],
+			popular: [share('d5c4', 'dxc4', 60)],
+		});
+		expect(rows).toHaveLength(1);
+		expect(rows[0].uci).toBe('d5c4');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// A ROW'S TAGS SAY WHAT NO COLUMN SAYS.
+//
+// Will: "moves in the show list are tagged 'played' alongside 'book' or
+// 'top 5' but doesn't it go without saying that all moves are played? Perhaps
+// it's superfluous?"
+//
+// It became superfluous when every row gained a played column with a share, a
+// bar and an explicit 0% for a move looked up and never played. `popular` is
+// still a CHIP — "show me only moves people actually play" is a real question
+// — so the source has to survive on the row even though it is not printed.
+// ---------------------------------------------------------------------------
+describe('the popular tag', () => {
+	const rows = mergeMoves({
+		engine: [cand('e2e4', 'e4', 30)],
+		popular: [share('e2e4', 'e4', 90), share('d2d4', 'd4', 40)],
+	});
+
+	it('is still on the row, because the chip filters by it', () => {
+		expect(rows.find((r) => r.san === 'e4')!.sources).toContain('popular');
+	});
+
+	it('still narrows the table', () => {
+		const on = new Set<MoveSource>(['popular']);
+		expect(filterMoves(rows, on).map((r) => r.san).sort()).toEqual(['d4', 'e4']);
+	});
+
+	it('is what the played column already carries', () => {
+		// The tag and the number are the same fact, and the number is the one a
+		// reader can act on. Tagged AND blank would be the contradiction.
+		for (const r of rows) {
+			expect(r.sources.includes('popular')).toBe((r.games ?? 0) > 0);
+		}
+	});
+});

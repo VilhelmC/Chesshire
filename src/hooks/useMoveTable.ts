@@ -205,6 +205,9 @@ export function useMoveTable(
 	const rows = useMemo(
 		() =>
 			mergeMoves({
+				// So the three sources cannot spell castling two different ways and
+				// produce two rows for one move — see `MoveSources.fen`.
+				fen: fen ?? undefined,
 				line: theory,
 				// The shortlist is what the chip selects; everything else the search
 				// returned fills numbers without claiming to be a recommendation.
@@ -215,7 +218,7 @@ export function useMoveTable(
 				// rather than an unasked question.
 				popular: distribution?.moves,
 			}),
-		[theory, candidates, distribution],
+		[fen, theory, candidates, distribution],
 	);
 
 	const grades = useMemo(

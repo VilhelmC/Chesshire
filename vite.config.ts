@@ -8,8 +8,49 @@
 // run keeps the react plugin and everything else configured here. A separate
 // config would silently drop them.
 /// <reference types="vitest" />
+import { execFileSync } from 'node:child_process';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+
+/**
+ * WHICH BUILD IS THIS, AND WHEN WAS IT MADE.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "how do I know if the saved page / app updated?" and, later, "where can
+ * I see the version stamp? Maybe there should be version and last updated info
+ * somewhere?"
+ *
+ * There was no answer to the first question, which is why it kept being asked.
+ * The deploy script prints the commit it is publishing and writes it into the
+ * gh-pages COMMIT MESSAGE — visible on GitHub, and nowhere in the running app.
+ * So on a phone, with a service worker holding a cached shell, there was
+ * genuinely no way to tell a stale install from a fresh one except by looking
+ * for a feature and not finding it.
+ *
+ * Baked in at build time because that is the only moment the answer exists: the
+ * running app has no repository to ask, and a deployed one has no server of its
+ * own to ask either.
+ *
+ * `git` may legitimately be absent — a source tarball, a CI checkout without
+ * history — so every read falls back rather than failing the build. An unknown
+ * commit is worth saying; a build that will not run is not.
+ */
+function git(args: string[]): string {
+	try {
+		return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+	} catch {
+		return '';
+	}
+}
+
+const COMMIT = git(['rev-parse', '--short', 'HEAD']);
+/*
+ * Uncommitted changes mean the build does not correspond to any commit, and a
+ * stamp that named one anyway would be the most misleading kind of accurate.
+ * The deploy script makes the same distinction and prints the same `+dirty`.
+ */
+const DIRTY = git(['status', '--porcelain']).length > 0;
+const COMMITTED_AT = git(['log', '-1', '--format=%cI']);
 
 export default defineConfig({
 	// GitHub Pages serves the repo at /Schackal/, not at the origin root, so the
@@ -20,6 +61,12 @@ export default defineConfig({
 	// The manifest, the service worker and its registration all derive their own
 	// base rather than assuming '/', so this is the only place the path lives.
 	base: process.env.BASE_PATH ?? '/',
+	define: {
+		__BUILD_COMMIT__: JSON.stringify(COMMIT),
+		__BUILD_DIRTY__: JSON.stringify(DIRTY),
+		__BUILD_AT__: JSON.stringify(new Date().toISOString()),
+		__COMMIT_AT__: JSON.stringify(COMMITTED_AT),
+	},
 	plugins: [react()],
 	server: {
 		port: 5173,

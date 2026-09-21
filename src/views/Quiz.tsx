@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BoardPanel } from '../components/BoardPanel';
+import { PositionStack } from '../components/PositionStack';
 import type { ToolbarAction } from '../components/Toolbar';
 import { analysePosition, toColourPov } from '../data/cloudEval';
 import { loadMistakes, saveCard, clearMistakes, deleteCard } from '../data/mistakes';
@@ -28,14 +29,14 @@ import { useTrainingWheels } from '../hooks/useTrainingWheels';
 import { useLineOverlay } from '../hooks/useLineOverlay';
 import { useCommentary } from '../hooks/useCommentary';
 import { Commentary } from '../components/CommentaryPanel';
-import { MoveList, MoveListLegend } from '../components/MoveList';
+import { MoveList, MoveListHeader, MoveListLegend } from '../components/MoveList';
 import { MoveTable } from '../components/MoveTable';
 import { useMoveTable } from '../hooks/useMoveTable';
 import { arrowForRow } from './Train';
 import { filterMoves, effectiveSources, type MoveSource } from '../domain/moveTable';
 import { Move } from '../components/Move';
 import { withGlyph } from '../domain/notation';
-import { nameForPath } from '../domain/openings';
+import { nameOf, moveNumber, whereYouAre } from '../domain/caption';
 import { registerDebug, describePosition } from '../data/debug';
 import { useViewport } from '../components/useViewport';
 import { color, space, text } from '../ui/theme';
@@ -43,7 +44,14 @@ import { recall, remember } from '../data/viewState';
 
 const INK_2 = color.ink2;
 
-export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
+export function Quiz({
+	onOpenSettings,
+	onPlayFrom,
+}: {
+	onOpenSettings?: () => void;
+	/** Hand a position to the trainer. The same shape Review hands over. */
+	onPlayFrom?: (h: { moves: string[]; ply: number; ourColour: 'w' | 'b' }) => void;
+}) {
 	const [cards, setCards] = useState<MistakeCard[]>([]);
 	const [queue, setQueue] = useState<MistakeCard[]>([]);
 	const [current, setCurrent] = useState<MistakeCard | null>(null);
@@ -413,13 +421,23 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 			];
 
 		return [
-			{
-				id: 'first',
-				title: 'Back to the start of the game',
-				icon: 'first',
-				onClick: () => setPreviewPly(0),
-				disabled: !lastPly || previewPly === 0,
-			},
+			/*
+			 * THERE IS NO "RESTART" HERE.
+			 *
+			 * Will: "a skip button could also be useful and could replace 'restart'
+			 * in Mistakes, since it is not meaningful there."
+			 *
+			 * Right on both counts. Nothing restarts on this tab — a card is a
+			 * position, not a run — and the button captioned `restart` actually
+			 * jumped to the start of the RUN-UP, which is a third thing again. A
+			 * control whose word, picture and behaviour are three different claims
+			 * is worse than no control.
+			 *
+			 * The jump itself is not lost: every chip in the list below is
+			 * clickable, and the list now says what it is ("How you got here"), so
+			 * going to its first move is a tap on the thing you are looking at
+			 * rather than an icon you have to decode.
+			 */
 			{
 				id: 'back',
 				title: 'Step back through the moves that led here',
@@ -454,14 +472,41 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 				onClick: () => setTableShown(!tableShown),
 				disabled: !current,
 			},
+			/*
+			 * FREE PLAY, FROM THE POSITION IN FRONT OF YOU.
+			 *
+			 * Will: "user should be able to go into free play mode directly from
+			 * mistakes imo."
+			 *
+			 * A mistake card is a position you got wrong and were never allowed to
+			 * play out — which is the one thing that would actually answer "what
+			 * would have happened?". The card already carries the moves that reach
+			 * it, and Train already accepts exactly that shape from Review, so this
+			 * is the handoff that exists rather than a second way in.
+			 */
+			...(onPlayFrom && current
+				? [
+						{
+							id: 'playon',
+							title: 'Play this position out against the engine, in the Train tab',
+							icon: 'playon',
+							caption: 'free play',
+							onClick: () =>
+								onPlayFrom({
+									// `path` is the moves BEFORE the mistake, so the position
+									// it reaches is the one being asked about — you play on
+									// from where you went wrong, not from after it.
+									moves: current.path ?? [],
+									ply: current.path?.length ?? 0,
+									ourColour: current.ourColour,
+								}),
+						} satisfies ToolbarAction,
+					]
+				: []),
 			{
 				id: 'skip',
 				title: 'Skip — put this card to the back of the queue',
-				icon: 'playon',
-				// The icon is borrowed; the WORD must not be. Captioned 'play on',
-				// this read as the trainer's free-play button on a tab that has no
-				// such thing.
-				caption: 'skip',
+				icon: 'skip',
 				onClick: () => next([...queue.slice(1), queue[0]]),
 				disabled: queue.length < 2,
 			},
@@ -605,6 +650,39 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 						ourColour={current.ourColour}
 						evalCp={evalCp}
 						lastMove={lastMove}
+						caption={{
+							// Stepping back through the run-up moves the caption with the
+							// board, same as Train. The card's own `ply` is authoritative at
+							// the card, because a card old enough to have no path still
+							// knows which move it was.
+							path: atCard ? (current.path ?? []) : (current.path ?? []).slice(0, previewPly as number),
+							opening: atCard ? (current.opening ?? null) : null,
+							...(atCard ? { ply: plyOf(current) } : {}),
+							also: atCard
+								? [
+										// Will's example, in full: "Scotch opening, move 5 · you
+										// played ♞Nxe5 · missed 4×". The first segment is the
+										// shared half; the rest are the deck's, and they are the
+										// only place in the app that knows them.
+										<>
+											you played{' '}
+											<Move san={current.playedSan} colour={current.ourColour} size={12} />
+										</>,
+										`missed ${current.lapses}×`,
+										current.origin ? gameLabel(current.origin) : null,
+										current.origin ? (
+											<a
+												href={current.origin.url}
+												target="_blank"
+												rel="noreferrer"
+												style={{ color: 'inherit' }}
+											>
+												see the game
+											</a>
+										) : null,
+									]
+								: [],
+						}}
 						// Only the card's own position accepts a move. Stepping back is
 						// for looking; answering somewhere else in the game would be
 						// answering a different question.
@@ -641,196 +719,187 @@ export function Quiz({ onOpenSettings }: { onOpenSettings?: () => void }) {
 									? wheels.arrows
 									: tableArrows}
 					>
-						<div style={{ marginTop: 10, minHeight: 96 }}>
-							{brokenReason(current) ? (
-								<div
-									style={{
-										fontSize: 13,
-										background: color.badSoft,
-										border: `1px solid ${color.bad}`,
-										borderRadius: 6,
-										padding: '6px 8px',
-										marginBottom: 6,
-									}}
-								>
-									<strong>This card cannot be answered.</strong> {brokenReason(current)}{' '}
-									<button
-										onClick={async () => {
-											await deleteCard(current.id);
-											await reload();
-										}}
-										style={{ fontSize: 12, marginLeft: 4 }}
-									>
-										Remove it
-									</button>
-								</div>
-							) : null}
-							<div style={{ fontSize: 15 }}>
-								<strong>Your move.</strong> {promptFor(current)}
-							</div>
-							<div style={{ fontSize: 13, color: INK_2, marginTop: 2 }}>
-								{namesFor(current)} · you played{' '}
-								<Move san={current.playedSan} colour={current.ourColour} size={13} /> ·
-								missed {current.lapses}×
-								{current.origin && (
-									<>
-										{' · '}
-										<a
-											href={current.origin.url}
-											target="_blank"
-											rel="noreferrer"
-											style={{ color: INK_2 }}
-										>
-											see the game
-										</a>
-									</>
-								)}
-							</div>
-
-							{feedback && (
-								<div
-									style={{
-										marginTop: 8,
-										fontSize: 14,
-										color: feedback.ok ? color.good : color.bad,
-									}}
-								>
-									{feedback.text}
-								</div>
-							)}
-
-							{/*
-							  * THE SAME TABLE TRAIN HAS. One row per move, with the tags
-							  * that say where it came from — the engine's picks, what
-							  * people play, and the card's own answer once revealed. Every
-							  * row has a `?`, which is the doorway §1 asked for.
-							  */}
-							{tableShown && (
-								<div style={{ marginTop: 10 }}>
-									<MoveTable
-										rows={moveRows}
-										mover={current.ourColour}
-										on={tableOn}
-										// All three, and the SAME three Train offers — a chip is
-										// how you switch a source back on, so it cannot vanish
-										// with its rows, and "book" has to mean the same thing on
-										// both tabs or the word is doing two jobs.
-										offers={['line', 'engine', 'popular']}
-										onToggle={(src) => tag(src, !tableOn.has(src))}
-										onAsk={(uci) =>
-											setAsking({
-												fen: current.fen,
-												uci,
-												alternatives: moveRows.map((r) => r.uci),
-											})
-										}
-										askedPopularity={table.askedPopularity}
-										marksBook
-										region="quiz-moves"
-									/>
-								</div>
-							)}
-
-							<TrainingWheels
-								on={wheels.on}
-								onChange={wheels.setOn}
-								active={wheels.active}
-								onActiveChange={wheels.setActive}
-								notes={wheels.notes}
-								hasFocus={focus !== null}
-								working={wheels.working}
-							/>
-
-							{/* Only appears when the register says there is a page. Stepping
-								back through the run-up lands on the opening plies, which is
-								exactly where the book has something to say. */}
-							<Commentary state={commentary} region="quiz-commentary" />
-
-							{asking && (
-								<ExplainPanel
-									{...asking}
-									onShowLine={lineOverlay.show}
-									onClose={() => {
-										setAsking(null);
-										lineOverlay.close();
-									}}
-								/>
-							)}
-
-							{/* The run-up to the position. A mistake from a real game
-								without the moves that produced it is a puzzle with the
-								premise removed — and every card already stores the path,
-								so nothing is fetched to show this.
-
-								ONE MOVE LIST: while a line is borrowed it shows that
-								instead of the game, with a banner saying whose it is. */}
-							{(lastPly > 0 || lineOverlay.overlay) && (
-								<div style={{ marginTop: 10 }}>
-									{lineOverlay.overlay && (
+						<PositionStack
+							verdict={
+								<>
+									{brokenReason(current) ? (
 										<div
-											data-region="line-banner"
 											style={{
-												display: 'flex',
-												alignItems: 'center',
-												gap: 8,
 												fontSize: 13,
-												color: INK_2,
-												marginBottom: 4,
+												background: color.badSoft,
+												border: `1px solid ${color.bad}`,
+												borderRadius: 6,
+												padding: '6px 8px',
+												marginBottom: 6,
 											}}
 										>
-											<span>{lineOverlay.overlay.label}</span>
+											<strong>This card cannot be answered.</strong> {brokenReason(current)}{' '}
 											<button
-												onClick={lineOverlay.close}
-												style={{
-													marginLeft: 'auto',
-													border: 'none',
-													background: 'none',
-													color: color.accent,
-													cursor: 'pointer',
-													fontSize: 13,
+												onClick={async () => {
+													await deleteCard(current.id);
+													await reload();
 												}}
+												style={{ fontSize: 12, marginLeft: 4 }}
 											>
-												Back to the game
+												Remove it
 											</button>
 										</div>
+									) : null}
+									<div style={{ fontSize: 15 }}>
+										<strong>Your move.</strong> {promptFor(current)}
+									</div>
+									{/*
+									  * THE CARD'S LABEL IS ABOVE THE BOARD NOW, not here.
+									  *
+									  * This div said "Scotch opening, move 3 · you played ♞Nxe4 ·
+									  * missed 4×", which is Will's example of what a board should
+									  * always be captioned with — so when the caption became
+									  * shared machinery, this became the second copy of it, six
+									  * inches lower. One of the two had to go, and the one that
+									  * goes is the one only this tab has.
+									  */}
+
+									{feedback && (
+										<div
+											style={{
+												marginTop: 8,
+												fontSize: 14,
+												color: feedback.ok ? color.good : color.bad,
+											}}
+										>
+											{feedback.text}
+										</div>
 									)}
-									<MoveList
-										region="quiz-move-list"
-										onAsk={lineOverlay.overlay?.onAsk}
-										// Index 0 is the starting position, not a move.
-										chips={
-											lineOverlay.chips ??
-											line.slice(1).map((m, i) => ({
-												san: m.san ?? '',
-												ply: i + 1,
-												mistake: false,
-												suboptimal: false,
-												white: i % 2 === 0,
-											}))
-										}
-										currentPly={
-											lineOverlay.overlay
-												? lineOverlay.overlay.at
-												: atCard
-													? lastPly
-													: (previewPly as number)
-										}
-										onJump={
-											lineOverlay.overlay
-												? lineOverlay.setAt
-												: (ply) => setPreviewPly(ply >= lastPly ? null : ply)
-										}
+								</>
+							}
+							moves={
+								<>
+									{/*
+									  * THE SAME TABLE TRAIN HAS. One row per move, with the tags
+									  * that say where it came from — the engine's picks, what
+									  * people play, and the card's own answer once revealed. Every
+									  * row has a `?`, which is the doorway §1 asked for.
+									  */}
+									{tableShown && (
+										<div>
+											<MoveTable
+												rows={moveRows}
+												mover={current.ourColour}
+												on={tableOn}
+												// All three, and the SAME three Train offers — a chip is
+												// how you switch a source back on, so it cannot vanish
+												// with its rows, and "book" has to mean the same thing on
+												// both tabs or the word is doing two jobs.
+												offers={['line', 'engine', 'popular']}
+												onToggle={(src) => tag(src, !tableOn.has(src))}
+												onAsk={(uci) =>
+													setAsking({
+														fen: current.fen,
+														uci,
+														alternatives: moveRows.map((r) => r.uci),
+													})
+												}
+												askedPopularity={table.askedPopularity}
+												marksBook
+												region="quiz-moves"
+											/>
+										</div>
+									)}
+								</>
+							}
+							wheels={
+								<>
+									<TrainingWheels
+										on={wheels.on}
+										onChange={wheels.setOn}
+										active={wheels.active}
+										onActiveChange={wheels.setActive}
+										notes={wheels.notes}
+										hasFocus={focus !== null}
+										working={wheels.working}
 									/>
-									{!lineOverlay.overlay && <MoveListLegend />}
-									{!lineOverlay.overlay && !atCard && (
-										<Panel tone="accent" style={{ marginTop: 8, fontSize: 13 }}>
-											Looking back at move {Math.ceil(((previewPly ?? 0) + 1) / 2)}. Step
-											forward to answer the card.
-										</Panel>
+								</>
+							}
+							commentary={
+								<>
+									{/* Only appears when the register says there is a page. Stepping
+										back through the run-up lands on the opening plies, which is
+										exactly where the book has something to say. */}
+									<Commentary state={commentary} region="quiz-commentary" />
+								</>
+							}
+							explain={
+								<>
+									{asking && (
+										<ExplainPanel
+											{...asking}
+											onShowLine={lineOverlay.show}
+											onClose={() => {
+												setAsking(null);
+												lineOverlay.close();
+											}}
+										/>
 									)}
-								</div>
-							)}
-						</div>
+								</>
+							}
+							history={
+								<>
+									{/* The run-up to the position. A mistake from a real game
+										without the moves that produced it is a puzzle with the
+										premise removed — and every card already stores the path,
+										so nothing is fetched to show this.
+
+										ONE MOVE LIST: while a line is borrowed it shows that
+										instead of the game, with a banner saying whose it is. */}
+									{(lastPly > 0 || lineOverlay.overlay) && (
+										<div>
+											{/* "How you got here" rather than "moves so far": on a
+												mistake card the list is the run-up to the position
+												being asked about, not a game in progress. */}
+											<MoveListHeader
+												title="How you got here"
+												borrowed={lineOverlay.overlay?.label}
+												onClose={lineOverlay.close}
+											/>
+											<MoveList
+												region="quiz-move-list"
+												onAsk={lineOverlay.overlay?.onAsk}
+												// Index 0 is the starting position, not a move.
+												chips={
+													lineOverlay.chips ??
+													line.slice(1).map((m, i) => ({
+														san: m.san ?? '',
+														ply: i + 1,
+														mistake: false,
+														suboptimal: false,
+														white: i % 2 === 0,
+													}))
+												}
+												currentPly={
+													lineOverlay.overlay
+														? lineOverlay.overlay.at
+														: atCard
+															? lastPly
+															: (previewPly as number)
+												}
+												onJump={
+													lineOverlay.overlay
+														? lineOverlay.setAt
+														: (ply) => setPreviewPly(ply >= lastPly ? null : ply)
+												}
+											/>
+											{!lineOverlay.overlay && <MoveListLegend />}
+											{!lineOverlay.overlay && !atCard && (
+												<Panel tone="accent" style={{ marginTop: 8, fontSize: 13 }}>
+													Looking back at move {Math.ceil(((previewPly ?? 0) + 1) / 2)}. Step
+													forward to answer the card.
+												</Panel>
+											)}
+										</div>
+									)}
+								</>
+							}
+						/>
 					</BoardPanel>
 				) : (
 					<p style={{ fontSize: 15 }}>
@@ -1048,11 +1117,12 @@ export function promptFor(c: MistakeCard): string {
  * game-mined cards get labelled too rather than only new book ones.
  */
 export function lineLabelFor(c: MistakeCard): string | null {
-	if (c.opening) return c.opening;
 	// Cards made before openings were recorded still carry their old line IDs.
-	if (c.lineIds?.length) return c.lineIds[0];
-	if (c.path?.length) return nameForPath(c.path)?.name ?? null;
-	return null;
+	// That fallback is this deck's and nobody else's, which is why it stays here
+	// — the explorer-then-table rule underneath it is `nameOf`'s, because three
+	// files were applying it independently.
+	if (c.lineIds?.length && !c.opening) return c.lineIds[0];
+	return nameOf({ path: c.path ?? [], opening: c.opening ?? null });
 }
 
 /**
@@ -1060,10 +1130,19 @@ export function lineLabelFor(c: MistakeCard): string | null {
  *
  * `path` holds the moves BEFORE it, so the mistake is ply `path.length` counting
  * from zero — one further on than the path is long.
+ *
+ * READS `ply` FIRST. It used to read `c.path?.length ?? c.ply`, and `?? ` never
+ * reaches the second term because an absent path gives length 0, not undefined
+ * — so every card old enough to have no path was reported as move 1. The two
+ * agree on every card that has both; `ply` is the one that is always recorded.
  */
+export function plyOf(c: MistakeCard): number {
+	return c.ply || c.path?.length || 0;
+}
+
 export function moveNumberFor(c: MistakeCard): { no: number; white: boolean } {
-	const ply = c.path?.length ?? c.ply ?? 0;
-	return { no: Math.floor(ply / 2) + 1, white: ply % 2 === 0 };
+	const ply = plyOf(c);
+	return { no: moveNumber(ply), white: ply % 2 === 0 };
 }
 
 /**
@@ -1080,19 +1159,38 @@ export function lastMoveOf(c: MistakeCard): { san: string; colour: 'w' | 'b' } |
 	return { san: path[ply], colour: ply % 2 === 0 ? 'w' : 'b' };
 }
 
+/**
+ * A card's label in a list.
+ *
+ * The first segment is `whereYouAre`'s, not a second copy of it. This file had
+ * its own `"<line>, move <n>"` and so did the line above the board, and the two
+ * described the SAME card a few hundred pixels apart — which is where a
+ * disagreement about the move number or the name would have shown up first, and
+ * where it would have looked like a bug in the app rather than a duplicated
+ * format string.
+ */
 export function namesFor(c: MistakeCard): string {
 	const parts: string[] = [];
 
-	const line = lineLabelFor(c);
-	const { no, white } = moveNumberFor(c);
-	// Spelled out rather than left to the reader: "7…" is only obviously Black's
-	// if you already know the convention, and the point is to be read, not decoded.
-	parts.push(line ? `${line}, move ${no}${white ? '' : '…'}` : `Move ${no}${white ? '' : '…'}`);
+	/*
+	 * The one fallback a ROW needs and a caption does not.
+	 *
+	 * `whereYouAre` is silent at ply 0, because a board showing the initial
+	 * position does not need telling where it is. A card AT ply 0 is a real
+	 * card — you played a bad first move — and a row in a list of your weak
+	 * spots still has to be identifiable, so it says which move it was.
+	 */
+	parts.push(
+		whereYouAre({ path: c.path ?? [], opening: lineLabelFor(c), ply: plyOf(c) }) ??
+			`move ${moveNumber(plyOf(c))}`,
+	);
 
-	if (c.phase === 'game' && c.origin) {
-		const when = new Date(c.origin.playedAt).toISOString().slice(0, 10);
-		parts.push(`${c.origin.platform} vs ${c.origin.opponent}, ${when}`);
-	}
+	if (c.phase === 'game' && c.origin) parts.push(gameLabel(c.origin));
 
 	return parts.join(' · ');
+}
+
+/** Which real game a card came out of. */
+export function gameLabel(o: NonNullable<MistakeCard['origin']>): string {
+	return `${o.platform} vs ${o.opponent}, ${new Date(o.playedAt).toISOString().slice(0, 10)}`;
 }

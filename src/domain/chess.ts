@@ -73,6 +73,41 @@ function standardUci(pos: Chess, move: Move): string {
 }
 
 /**
+ * The one spelling of this move, whoever wrote it.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "sometimes a move (castling) is listed in the top 5, but then appears
+ * in book without an eval score, and intersection of book and top 5 doesn't
+ * contain the move — so it appears it's been registered twice and once without
+ * an eval score."
+ *
+ * Twice is exactly right, and castling is exactly the move it would happen to.
+ * The move table keys its rows by the UCI STRING, and castling has two of them:
+ * `e8g8` and the king-takes-rook `e8h8` that survives Chess960. Two spellings
+ * of one move become two rows — one carrying the explorer's game counts and no
+ * evaluation, one carrying the engine's evaluation and no games — and the
+ * intersection of the two chips is empty, because no single row is in both.
+ *
+ * `sameMove` below already exists for this, and it is the wrong shape for a
+ * MAP: you cannot key a dictionary on an equality function. So the key itself
+ * has to be canonical, which is what this is.
+ *
+ * Falls back to the string it was given rather than throwing. A uci this
+ * position cannot parse is a caller's problem, and a table that renders it
+ * unmerged is a better failure than one that does not render at all.
+ */
+export function canonicalUci(fen: string, uci: string): string {
+	try {
+		const pos = positionFromFen(fen);
+		const move = parseUci(uci);
+		if (!move) return uci;
+		return standardUci(pos, normalizeMove(pos, move));
+	} catch {
+		return uci;
+	}
+}
+
+/**
  * Are these two UCI strings the same move in this position?
  *
  * String equality is not enough for castling — see above — and cards written

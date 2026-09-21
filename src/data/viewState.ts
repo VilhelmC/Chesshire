@@ -64,6 +64,30 @@ export type ViewState = {
 	 */
 	tableShown?: boolean;
 	tableOn?: string[];
+	/**
+	 * Whether the scoring panel is on screen.
+	 *
+	 * Shared between Play and Review for the same reason `tableShown` is shared
+	 * between Train and Mistakes: "do I want to see how this was played" is one
+	 * preference about how you want to be shown a game, not one per tab.
+	 */
+	statsShown?: boolean;
+	/**
+	 * Free play's engine strength, and whether anybody is answering.
+	 *
+	 * -------------------------------------------------------------------------
+	 * `botLevel` was `useState('auto')` in the trainer and persisted nowhere, so
+	 * choosing an opponent lasted exactly until the next reload — a setting that
+	 * silently resets is worse than one that is not offered, because you stop
+	 * trusting the ones that do stick.
+	 *
+	 * `number | 'auto'` as `string | number` for the same reason as the arrays
+	 * above: this module is the boundary with storage, and storage holds
+	 * whatever an older build wrote. The caller narrows on the way out.
+	 */
+	botLevel?: number | string;
+	/** 'engine' or 'none' — see `SessionConfig.opponent`. */
+	playOpponent?: string;
 };
 
 /**

@@ -75,6 +75,14 @@ const SOURCE_LABEL: Record<MoveSource, string> = {
 	engine: 'top 5',
 };
 
+/**
+ * The tags worth printing on a row.
+ *
+ * `popular` is deliberately absent — the played column says it, with a number.
+ * A row's tags are for the facts no column carries.
+ */
+const ROW_TAGS: MoveSource[] = ['line', 'engine'];
+
 /** What each tag means, said once, so the chips do not have to be guessed at. */
 const SOURCE_TITLE: Record<MoveSource, string> = {
 	line: 'Theory: a move real games play here',
@@ -148,9 +156,15 @@ export type MoveTableProps = {
 	/**
 	 * The board is marking book moves, so say what the mark means.
 	 *
-	 * The arrows carry `◆` on a move that is theory. A symbol on a board with
-	 * no key is a puzzle rather than a signal, and the table is where the
-	 * reader already is when they are looking at the arrows.
+	 * A book move gets a green ring round the square it lands on. A mark on a
+	 * board with no key is a puzzle rather than a signal, and the table is where
+	 * the reader already is when they are looking at the arrows.
+	 *
+	 * This sentence said `◆` for one pass after the mark stopped being a `◆` —
+	 * Will: "the table explanation text still references the ◆ symbol." The
+	 * marker moved off the arrow label because chessground shrinks a label
+	 * exponentially with its length; the prose describing it did not move with
+	 * it, which is the ordinary way a caption becomes a lie.
 	 */
 	marksBook?: boolean;
 };
@@ -278,11 +292,34 @@ export function MoveTable({
 									<td style={td}>{r.uci === marked ? '★' : ''}</td>
 									<td style={{ ...td, fontWeight: r.uci === marked ? 600 : 400 }}>
 										<Move san={r.san} colour={mover} size={14} />
-										{/* The tags, so a row says which lists it is in without the
-										    reader having to toggle the filters to find out. */}
-										{available.size > 1 && (
+										{/*
+										  * THE TAGS A COLUMN DOES NOT ALREADY SAY.
+										  *
+										  * Will: "moves in the show list are tagged 'played'
+										  * alongside 'book' or 'top 5' but doesn't it go without
+										  * saying that all moves are played? Perhaps it's
+										  * superfluous?"
+										  *
+										  * Superfluous here, yes — and it became so recently.
+										  * `played` means "the explorer has games for it", and
+										  * since every row gained a played column with a share
+										  * and a bar (and an explicit 0% for a move looked up and
+										  * never played), the tag repeats a number sitting four
+										  * columns to the right. `book` and `top 5` do not
+										  * repeat anything: neither is recoverable from any
+										  * column, because the eval ordering is over the rows
+										  * the filter happens to admit.
+										  *
+										  * It stays a CHIP. "Show me only moves people actually
+										  * play" is a question worth asking; "this row has a
+										  * number in it" is not worth saying.
+										  */}
+										{ROW_TAGS.some((t) => available.has(t)) && (
 											<span style={{ marginLeft: 6, fontSize: 10, color: color.ink3 }}>
-												{r.sources.map((s) => SOURCE_LABEL[s]).join(' · ')}
+												{r.sources
+													.filter((t) => ROW_TAGS.includes(t))
+													.map((t) => SOURCE_LABEL[t])
+													.join(' · ')}
 											</span>
 										)}
 									</td>
@@ -423,7 +460,7 @@ export function MoveTable({
 						expected score for {mover === 'w' ? 'White' : 'Black'} — a win is 100%, a draw 50%. Neither is
 						an evaluation. A blank cell is <em>not looked up</em>; <strong>0%</strong> means looked up and
 						never played.
-						{marksBook && ' On the board, ◆ marks a move that is in the book.'}
+						{marksBook && ' On the board, a green ring marks a move that is in the book.'}
 					</div>
 					)}
 				</div>

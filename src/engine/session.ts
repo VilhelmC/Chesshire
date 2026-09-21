@@ -58,7 +58,47 @@ const MAX_PUNISH_PLIES = 3;
 /** Evaluation at which the punishment is judged complete. */
 const WIN_CP = 250;
 
-export type Phase = 'book' | 'punish' | 'freeplay' | 'done';
+/**
+ * IS THIS A DRILL AT ALL?
+ *
+ * ---------------------------------------------------------------------------
+ * `Phase` used to be `'book' | 'punish' | 'freeplay' | 'done'` — one field
+ * answering two questions that have nothing to do with each other: WHERE IN
+ * THE DRILL am I, and IS THIS A DRILL. That conflation is why free play kept
+ * needing exceptions rather than behaving like a thing in its own right: it
+ * has no expected set, nothing is checked against a book, strictness does not
+ * apply, resign means something there and nothing in a drill. Each of those
+ * read as a special case of the drill instead of as the ordinary behaviour of
+ * a different mode.
+ *
+ * Splitting them is the measurement this change exists to take. Once `mode` is
+ * explicit, what is drill-specific stops being a matter of opinion and becomes
+ * something you can count — which is what has to be known before deciding
+ * whether free play is its own screen.
+ *
+ * (`'done'` is gone with it. It was declared, never assigned and never read.)
+ */
+export type Mode = 'drill' | 'free';
+
+/** Where in the drill. Only meaningful while `mode` is `'drill'`. */
+export type Phase = 'book' | 'punish';
+
+/**
+ * The label a stored answer or mistake card carries.
+ *
+ * ---------------------------------------------------------------------------
+ * THE STORAGE FORMAT DOES NOT CHANGE, and this is the boundary that keeps it
+ * that way. `db.answers` rows and `MistakeCard`s written by every previous
+ * build carry `'freeplay'` as a phase, and `progress.ts` reads it to decide
+ * which moves feed the rating estimate. Rewriting that would invalidate the
+ * one measurement in the app with real history behind it.
+ *
+ * So the in-memory model gets to be honest and the stored one stays as it is,
+ * with exactly one function translating between them.
+ */
+export function storedPhase(state: { mode: Mode; phase: Phase }): 'book' | 'punish' | 'freeplay' {
+	return state.mode === 'free' ? 'freeplay' : state.phase;
+}
 
 export type OpponentMove = {
 	uci: string;
@@ -81,6 +121,7 @@ export type OpponentMove = {
 export type RestorePoint = {
 	fen: string;
 	path: string[];
+	mode: Mode;
 	phase: Phase;
 	lastOpponent: OpponentMove | null;
 	evalNow: number | null;
@@ -106,6 +147,8 @@ export type RunState = {
 	/** SAN moves played so far. */
 	path: string[];
 	ourColour: 'w' | 'b';
+	/** Whether this is a drill or free play. See `Mode`. */
+	mode: Mode;
 	phase: Phase;
 	/**
 	 * What the explorer calls this position. Discovered by playing, not chosen
@@ -159,6 +202,27 @@ export type SessionConfig = {
 	now?: () => number;
 	/** Engine strength for free play. See domain/rating.ts. */
 	bot?: { window: number; movetimeMs: number };
+	/**
+	 * Who answers in free play.
+	 *
+	 * -------------------------------------------------------------------------
+	 * Will: "the same tab we use to play games against bot, perhaps explore
+	 * (just assign human player to both sides), and play against friends
+	 * online?"
+	 *
+	 * Explore is free play with NOBODY on the other side — you move both
+	 * colours and the app holds still. That is a property of the SESSION rather
+	 * than a third `Mode`, and deliberately so: a mode is a claim about what
+	 * kind of thing is happening, and exploring a position is the same kind of
+	 * thing as playing it, minus an opponent.
+	 *
+	 * It also decides whether the move is SCORED. In explore, `ourColour` is
+	 * whichever side is to move, so a loss measured against it would carry the
+	 * wrong sign half the time — and there is no one whose strength it could
+	 * describe anyway. Not computing it beats computing it and promising not to
+	 * look.
+	 */
+	opponent?: 'engine' | 'none';
 };
 
 export type MoveOutcome = {
@@ -293,6 +357,7 @@ export async function startRun(cfg: SessionConfig): Promise<RunState> {
 		fen: INITIAL_FEN,
 		path: [],
 		ourColour,
+		mode: 'drill',
 		phase: 'book',
 		opening: null,
 		bookHere: [],
@@ -357,7 +422,7 @@ function trySan(fen: string, san: string): { fen: string; uci: string } | null {
  * at this level — so the drill can hand over rather than just stopping.
  */
 export async function playOn(state: RunState, cfg: SessionConfig): Promise<RunState> {
-	let next: RunState = { ...state, phase: 'freeplay', finished: null, note: null };
+	let next: RunState = { ...state, mode: 'free', finished: null, note: null };
 	if (sideToMove(next.fen) !== next.ourColour) next = await freeplayReply(next, cfg);
 	return withExpected(next, cfg);
 }
@@ -393,7 +458,7 @@ async function withExpected(state: RunState, cfg: SessionConfig): Promise<RunSta
 	if (state.finished) return state;
 	if (sideToMove(state.fen) !== state.ourColour) return { ...state, expected: [] };
 
-	if (state.phase === 'freeplay') {
+	if (state.mode === 'free') {
 		// Anything legal goes; the engine will answer it.
 		const a = await analysePosition(state.fen, 14, 1);
 		return {
@@ -510,17 +575,21 @@ export async function submitMove(
 	}
 
 	// Free play: every legal move is allowed, and the engine simply answers.
-	if (state.phase === 'freeplay') {
+	if (state.mode === 'free') {
 		const after = applyUci(state.fen, uci).fen;
+
+		// NOBODY ON THE OTHER SIDE means nobody to measure, either — see
+		// `SessionConfig.opponent`.
+		const alone = cfg.opponent === 'none';
 
 		// Score the move against the engine's best. This is the only phase whose
 		// numbers mean anything about playing strength — see domain/rating.ts.
 		// Both evaluations come from one place with one budget; see engine/score.ts
 		// for why comparing a cached deep eval with a fresh shallow one is wrong.
-		const score = await scoreMove(state.fen, uci, state.ourColour);
+		const score = alone ? null : await scoreMove(state.fen, uci, state.ourColour);
 
 		let next: RunState = { ...state, fen: after, path: [...state.path, san], note: null };
-		next = await freeplayReply(next, cfg);
+		if (!alone) next = await freeplayReply(next, cfg);
 		next = await withExpected(next, cfg);
 		return {
 			state: next,
@@ -545,7 +614,7 @@ export async function submitMove(
 	let cpLoss = 0;
 
 	if (!accepted) {
-		if (state.phase === 'book') {
+		if (state.mode === 'drill' && state.phase === 'book') {
 			// Say what it costs, not just that it is off the line. A move can be
 			// off-book and fine, or off-book and losing a piece; "the line goes X"
 			// reads identically for both and teaches neither.
@@ -1066,6 +1135,7 @@ function snapshot(state: RunState, label: string): RestorePoint {
 	return {
 		fen: state.fen,
 		path: [...state.path],
+		mode: state.mode,
 		phase: state.phase,
 		lastOpponent: state.lastOpponent,
 		evalNow: state.evalNow,
@@ -1084,6 +1154,7 @@ export async function resumeFrom(
 		...previous,
 		fen: point.fen,
 		path: [...point.path],
+		mode: point.mode,
 		phase: point.phase,
 		lastOpponent: point.lastOpponent,
 		evalNow: point.evalNow,
@@ -1259,7 +1330,7 @@ export async function playFrom(
 	ply: number,
 	ourColour: 'w' | 'b',
 	cfg: SessionConfig,
-	phase: 'freeplay' | 'book' = 'freeplay',
+	mode: Mode = 'free',
 ): Promise<RunState> {
 	let fen = INITIAL_FEN;
 	const path: string[] = [];
@@ -1277,7 +1348,10 @@ export async function playFrom(
 		fen,
 		path,
 		ourColour,
-		phase,
+		mode,
+		// A resumed position starts at the head of the drill. When `mode` is
+		// 'free' nothing reads this — which is the point of the split.
+		phase: 'book',
 		opening: null,
 		bookHere: [],
 		expected: [],
@@ -1296,7 +1370,7 @@ export async function playFrom(
 	// Whose reply it is depends on what we are resuming into: the engine in free
 	// play, the book when training.
 	if (sideToMove(state.fen) !== ourColour) {
-		state = phase === 'book' ? await opponentMove(state, cfg) : await freeplayReply(state, cfg);
+		state = mode === 'drill' ? await opponentMove(state, cfg) : await freeplayReply(state, cfg);
 	}
 	return withExpected(state, cfg);
 }

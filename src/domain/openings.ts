@@ -156,10 +156,36 @@ function startsWith(path: string[], prefix: string[]): boolean {
 	return prefix.every((s, i) => path[i] === s);
 }
 
+/**
+ * Openings by their exact move sequence.
+ *
+ * Built because `nameForPath` went from "asked when you pin an opening" to
+ * "asked on every render of every board" when the caption above the board
+ * became shared machinery — see `domain/caption.ts`. The old form joined 1821
+ * paths into strings per call, which was free at a few calls a session and is
+ * not at a few calls a frame.
+ *
+ * FIRST WINS on a duplicate key. Two names for one move sequence exist in the
+ * table (a line reached by transposition is listed under both), and the file is
+ * in ECO order, so the first is the lower code — the more general name, which
+ * is the one a caption wants.
+ */
+let byPath: Map<string, Opening> | null = null;
+
+function index(): Map<string, Opening> {
+	if (!byPath) {
+		byPath = new Map();
+		for (const o of allOpenings()) {
+			const key = o.path.join(' ');
+			if (!byPath.has(key)) byPath.set(key, o);
+		}
+	}
+	return byPath;
+}
+
 /** The opening whose moves are exactly this path, if one is named. */
 export function openingForPath(path: string[]): Opening | null {
-	const key = path.join(' ');
-	return allOpenings().find((o) => o.path.join(' ') === key) ?? null;
+	return index().get(path.join(' ')) ?? null;
 }
 
 /**
@@ -167,18 +193,18 @@ export function openingForPath(path: string[]): Opening | null {
  *
  * Used to label a position the explorer did not name: an opening name is
  * inherited until something more specific replaces it.
+ *
+ * Walks prefixes from the longest down and stops at the first hit, which is the
+ * same answer the scan gave — "the longest named prefix" — reached in as many
+ * map lookups as there are plies instead of a pass over the whole table.
  */
 export function nameForPath(path: string[]): Opening | null {
-	const key = path.join(' ');
-	let best: Opening | null = null;
-	for (const o of allOpenings()) {
-		const p = o.path.join(' ');
-		if (p.length > key.length) continue;
-		if (key === p || key.startsWith(p + ' ')) {
-			if (!best || o.path.length > best.path.length) best = o;
-		}
+	const table = index();
+	for (let n = path.length; n > 0; n--) {
+		const hit = table.get(path.slice(0, n).join(' '));
+		if (hit) return hit;
 	}
-	return best;
+	return null;
 }
 
 /** Whose move it is at the end of a line. */

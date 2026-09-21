@@ -30,6 +30,7 @@
 // which is a claim, and this has no basis for it.
 // ---------------------------------------------------------------------------
 
+import { canonicalUci } from './chess';
 import type { Candidate } from '../engine/candidates';
 import type { MoveShare } from './distribution';
 
@@ -55,6 +56,23 @@ export type MoveRow = {
 };
 
 export type MoveSources = {
+	/**
+	 * The position these moves are in.
+	 *
+	 * -------------------------------------------------------------------------
+	 * ONLY NEEDED TO SPELL A MOVE THE SAME WAY TWICE.
+	 *
+	 * Rows are keyed by the UCI string, and castling has two spellings — `e8g8`
+	 * and the king-takes-rook `e8h8` that survives Chess960. Sources that
+	 * disagree therefore produce TWO rows for one move: one with the explorer's
+	 * game counts and no evaluation, one with the engine's evaluation and no
+	 * games, and an empty intersection between the chips. Will hit exactly that.
+	 *
+	 * Optional because a caller with one source cannot have the problem, and
+	 * making every test position-aware to fix a collision it cannot have would
+	 * be a cost with no payer.
+	 */
+	fen?: string;
 	/** The moves the opening line allows here. */
 	line?: { uci: string; san: string }[];
 	/**
@@ -99,8 +117,11 @@ export type MoveSources = {
  */
 export function mergeMoves(sources: MoveSources): MoveRow[] {
 	const rows = new Map<string, MoveRow>();
+	// One spelling per move, when the position is known. See `fen` above.
+	const key = (uci: string) => (sources.fen ? canonicalUci(sources.fen, uci) : uci);
 
-	const touch = (uci: string, san: string, source: MoveSource): MoveRow => {
+	const touch = (raw: string, san: string, source: MoveSource): MoveRow => {
+		const uci = key(raw);
 		let row = rows.get(uci);
 		if (!row) {
 			row = { uci, san, sources: [], cp: null, loss: null, mate: null, games: null, share: null, score: null };
@@ -133,7 +154,7 @@ export function mergeMoves(sources: MoveSources): MoveRow[] {
 	// Evaluations for rows that already exist, and only for those. `touch` is
 	// deliberately not called here: this fills columns, it does not admit moves.
 	for (const sc of sources.scores ?? []) {
-		const row = rows.get(sc.uci);
+		const row = rows.get(key(sc.uci));
 		if (!row || row.cp !== null) continue;
 		row.cp = sc.cp;
 		row.loss = sc.loss ?? null;

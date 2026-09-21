@@ -30,6 +30,7 @@
 
 import { accuracyPercent } from './review';
 import { annotate, lossesOf, punishTally } from './annotate';
+import { scoringNote } from './scored';
 
 export type ReviewSource = 'run' | 'game';
 
@@ -165,6 +166,16 @@ export type ReviewSummary = {
 	/** How many of our moves the accuracy is computed from. */
 	scored: number;
 	plies: number;
+	/**
+	 * How much of the GAME carries an evaluation, and what to say when it is not
+	 * all of it.
+	 *
+	 * Different from `scored`, which counts only our own measured moves — a game
+	 * can be fully analysed and still have `scored` be half its plies, because
+	 * half of them were the opponent's. This is the one that answers "why does
+	 * the graph stop". See `domain/scored.ts`.
+	 */
+	incomplete: string | null;
 	/** Chances they gave us, and the ones we let go. */
 	offered: number;
 	missed: number;
@@ -194,6 +205,7 @@ export function summarise(r: Reviewable): ReviewSummary {
 		opponentAccuracy: accuracyPercent(lossesOf(a, 'them')),
 		scored: ours.length,
 		plies: r.moves.length,
+		incomplete: scoringNote(r.evals, r.moves.length),
 		offered: tally.offered,
 		missed: tally.missed,
 		result: r.result,

@@ -68,47 +68,123 @@ describe('the board panel', () => {
 	});
 });
 
+describe('the stack that holds everything under the board', () => {
+	const src = read('src/components/PositionStack.tsx');
+
+	it('renders its slots in the one order', () => {
+		// The order is structural now rather than conventional: a caller names a
+		// slot and cannot say where it goes. This asserts the slots come out in
+		// the documented sequence — what just happened, then the analysis of the
+		// position in front of you, then the history.
+		inOrder(src, 'PositionStack.tsx', [
+			'{popover}',
+			'{verdict}',
+			'{moves}',
+			'{lines}',
+			'{wheels}',
+			'{commentary}',
+			'{explain}',
+			'{stats}',
+			'{history}',
+			'{footer}',
+		]);
+	});
+});
+
+describe('the board panel says where you are first', () => {
+	const src = read('src/components/BoardPanel.tsx');
+
+	it('renders the caption above the board', () => {
+		// Step 0 of the order. It is above the evaluation bar and the board
+		// because it is context FOR the position — Train used to write it by
+		// hand here and the other three boards wrote nothing.
+		inOrder(src, 'BoardPanel.tsx', ['<PositionCaption', '<EvalBar', '<Board', '<Toolbar']);
+	});
+});
+
+describe('every board in the app says which line it is in', () => {
+	// Will: "perhaps that message should be part of the standard machinery
+	// everything consumes, so a board is always displayed with the line it
+	// belongs to if such a line exists."
+	//
+	// Review is in this list and does NOT go through `BoardPanel`, so it is
+	// checked for the component directly. That is the remaining divergence: it
+	// is the fourth board and the only one outside the shared geometry.
+	const boards: [string, string][] = [
+		['src/views/Train.tsx', 'caption={'],
+		['src/views/Quiz.tsx', 'caption={'],
+		['src/views/Play.tsx', 'caption={'],
+		['src/views/Review.tsx', '<PositionCaption'],
+	];
+
+	for (const [file, marker] of boards) {
+		it(`${file} supplies one`, () => {
+			expect(read(file), `${file} should contain ${JSON.stringify(marker)}`).toContain(marker);
+		});
+	}
+
+	it('and none of them spells the line out by hand', () => {
+		// Not "must not call `whereYouAre`" — calling it is the point, and
+		// Mistakes does, for the rows in its deck list. The thing to keep out is
+		// a SECOND FORMAT: Quiz built `${line}, move ${no}` itself and so did the
+		// paragraph above Train's board, which is how the same card ended up
+		// described twice on one screen with two chances to disagree.
+		for (const [file] of boards) {
+			expect(read(file), `${file} should not build the line's wording itself`).not.toMatch(
+				/, move \$\{/,
+			);
+		}
+	});
+});
+
+describe('the scoring panel is for games, not drills', () => {
+	// Will: "the statistics shown in review could be togglable since they really
+	// apply to any game?" — and "any game" is the operative word.
+	//
+	// Train and Mistakes are DRILLS. Their centipawn losses measure recall of a
+	// line you are trying to memorise, and averaging them into an accuracy would
+	// answer "how well do you remember the Italian" with a number that reads as
+	// "how well do you play chess". The app is careful about that difference
+	// everywhere else — `storedPhase` exists so that only free play feeds the
+	// rating estimate — and a panel is an easy place to lose it again.
+	for (const file of ['src/views/Play.tsx', 'src/views/Review.tsx']) {
+		it(`${file} shows it`, () => {
+			expect(read(file)).toContain('<GameStats');
+		});
+	}
+	for (const file of ['src/views/Train.tsx', 'src/views/Quiz.tsx']) {
+		it(`${file} does not`, () => {
+			expect(read(file), `${file} is a drill — see components/GameStats`).not.toContain(
+				'<GameStats',
+			);
+		});
+	}
+});
+
 describe('a tab that shows a position', () => {
-	const tabs: { file: string; src: string; moves: string; wheels: string; commentary: string; history: string }[] = [
-		{
-			file: 'src/views/Train.tsx',
-			src: read('src/views/Train.tsx'),
-			moves: 'region="train-moves"',
-			wheels: '<TrainingWheels',
-			commentary: 'region="train-commentary"',
-			history: 'region="train-move-list"',
-		},
-		{
-			file: 'src/views/Quiz.tsx',
-			src: read('src/views/Quiz.tsx'),
-			moves: 'region="quiz-moves"',
-			wheels: '<TrainingWheels',
-			commentary: 'region="quiz-commentary"',
-			history: 'region="quiz-move-list"',
-		},
+	const tabs = [
+		{ file: 'src/views/Train.tsx', src: read('src/views/Train.tsx') },
+		{ file: 'src/views/Quiz.tsx', src: read('src/views/Quiz.tsx') },
 	];
 
 	for (const tab of tabs) {
 		describe(tab.file, () => {
-			it('analyses the position before recounting how you got here', () => {
-				// Will: "I think the past move list (history) is not really important
-				// — it should be after analytical content (but before options and
-				// preferences)." Train had it first and Mistakes had it last.
-				inOrder(tab.src, tab.file, [tab.moves, tab.history]);
+			it('hands its blocks to the shared stack rather than ordering them', () => {
+				// The check that actually holds the line. Reading source order in each
+				// view caught a violation AFTER someone wrote it, and could not catch
+				// a third view nobody had added to the list. A view that goes through
+				// `PositionStack` cannot express a wrong order at all.
+				expect(tab.src, `${tab.file} should render <PositionStack>`).toContain(
+					'<PositionStack',
+				);
 			});
 
-			it('leads the analysis with the move table', () => {
-				inOrder(tab.src, tab.file, [tab.moves, tab.wheels, tab.commentary]);
-			});
-
-			it('keeps the training wheels above the history', () => {
-				// The one Will named directly: "in Train training wheels are displayed
-				// below past move list, in Mistakes above."
-				inOrder(tab.src, tab.file, [tab.wheels, tab.history]);
-			});
-
-			it('says what just happened before analysing what is there now', () => {
-				inOrder(tab.src, tab.file, ['{feedback && (', tab.moves]);
+			it('names the slots rather than passing children', () => {
+				// `children` would put the order back in the caller's hands, which is
+				// the thing being taken away.
+				for (const slot of ['verdict=', 'moves=', 'history=']) {
+					expect(tab.src, `${tab.file} should fill ${slot}`).toContain(slot);
+				}
 			});
 		});
 	}

@@ -19,6 +19,7 @@
 // ---------------------------------------------------------------------------
 
 import { db } from './db';
+import { describeBuild } from '../buildInfo';
 import { positionFromFen, chessgroundDests, sideToMove } from '../domain/chess';
 
 type Snapshot = () => unknown;
@@ -123,6 +124,11 @@ export async function collect(): Promise<Record<string, unknown>> {
 
 	return {
 		app: 'schackal',
+		// WHICH BUILD, FIRST. Every report that begins "this is broken" is really
+		// two questions, and the second one — "on what?" — used to have to be
+		// asked back. A cached shell from last week produces bug reports about
+		// bugs that were fixed on Monday.
+		build: describeBuild(),
 		at: new Date().toISOString(),
 		url: location.href,
 		userAgent: navigator.userAgent,

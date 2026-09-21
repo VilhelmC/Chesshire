@@ -23,17 +23,35 @@ const OWNED: Record<string, string> = {
 	'ply-statement': 'src/views/Lab.tsx',
 	'training-wheels': 'src/components/TrainingWheels.tsx',
 	'explain-panel': 'src/components/ExplainPanel.tsx',
+	'position-stack': 'src/components/PositionStack.tsx',
+	'position-caption': 'src/components/PositionCaption.tsx',
+	'eval-graph': 'src/components/EvalGraph.tsx',
+	/*
+	 * `line-banner` WAS HERE, AND IS NOT A THING ANY MORE.
+	 *
+	 * It named a strip that said whose line the list was showing, improvised
+	 * separately in Train and in Mistakes. The list has a header now — Will:
+	 * "maybe the history should have a small label / header so user know what
+	 * they're looking at?" — and while a line is borrowed the label IS that
+	 * header, so the banner had nothing left to be. Renamed rather than kept as
+	 * an alias: two names for one strip is what let the two copies drift.
+	 */
+	'move-list-header': 'src/components/MoveList.tsx',
 };
 
 /** Passed as a `region` prop rather than written as an attribute. */
 const PASSED: Record<string, string> = {
 	'mate-proof': 'src/components/MateProof.tsx',
 	'explain-numbers': 'src/components/ExplainPanel.tsx',
-	'line-banner': 'src/views/Train.tsx',
 	'train-move-list': 'src/views/Train.tsx',
 	'lab-line': 'src/views/Lab.tsx',
 	'quiz-move-list': 'src/views/Quiz.tsx',
 	'quiz-moves': 'src/views/Quiz.tsx',
+	'play-moves': 'src/views/Play.tsx',
+	'play-move-list': 'src/views/Play.tsx',
+	'play-commentary': 'src/views/Play.tsx',
+	'play-stats': 'src/views/Play.tsx',
+	'review-stats': 'src/views/Review.tsx',
 	'train-commentary': 'src/views/Train.tsx',
 	'quiz-commentary': 'src/views/Quiz.tsx',
 	'lab-commentary': 'src/views/Lab.tsx',
@@ -78,6 +96,7 @@ describe('the doc lists what the code emits', () => {
 			'src/views/Lab.tsx',
 			'src/views/Train.tsx',
 			'src/views/Quiz.tsx',
+			'src/views/Play.tsx',
 			'src/components/TrainingWheels.tsx',
 			'src/components/MateProof.tsx',
 			'src/components/ExplainPanel.tsx',
@@ -85,6 +104,7 @@ describe('the doc lists what the code emits', () => {
 			'src/components/MoveTable.tsx',
 			'src/components/MoveList.tsx',
 			'src/components/CommentaryPanel.tsx',
+			'src/components/BuildStamp.tsx',
 			'src/hooks/useTrainingWheels.ts',
 		];
 		const found = new Set<string>();

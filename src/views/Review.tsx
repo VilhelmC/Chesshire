@@ -19,16 +19,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Board } from '../components/Board';
 import { MoveList, type MoveChip } from '../components/MoveList';
 import { EvalBar } from '../components/EvalBar';
+import { PositionCaption } from '../components/PositionCaption';
+import { EvalGraph } from '../components/EvalGraph';
 import { loadProgress } from '../data/progress';
 import { applySan, INITIAL_FEN } from '../domain/chess';
-import {
-	distribution,
-	accuracyPercent,
-	QUALITY_COLOUR,
-	QUALITY_LABEL,
-	QUALITY_ORDER,
-	type Quality,
-} from '../domain/review';
+import { QUALITY_COLOUR, QUALITY_LABEL } from '../domain/review';
+import { GameStats } from '../components/GameStats';
 import {
 	annotate,
 	lossesOf,
@@ -40,14 +36,12 @@ import type { AnswerRow } from '../domain/progress';
 import { reviewables, summarise, type Reviewable, type ReviewSource } from '../domain/reviewable';
 import { db, type ImportedGameRow } from '../data/db';
 import { color, space, radius, text, TOUCH } from '../ui/theme';
-import { Button, Empty, Note, Segmented } from '../ui/primitives';
+import { Button, Empty, Segmented } from '../ui/primitives';
+import { recall, remember } from '../data/viewState';
 
 const INK = color.ink;
 const INK_2 = color.ink2;
 const GRID = color.line;
-// The accent, for the same reason as Progress's: the chrome stopped being blue
-// and a single-series chart has no business choosing its own hue.
-const SERIES = color.accent;
 
 export function Review({
 	onPlayFrom,
@@ -62,9 +56,43 @@ export function Review({
 	// Null means the list. Nothing is opened for you: which game to look at is
 	// the choice this screen exists to offer.
 	const [selected, setSelected] = useState<string | null>(null);
-	const [filter, setFilter] = useState<ReviewSource | 'all'>('all');
+	/*
+	 * YOUR GAMES FIRST, and runs only if you ask.
+	 *
+	 * Will: "I don't know why training runs are even included in the list — what
+	 * would user need to review there?"
+	 *
+	 * Mostly nothing, and the reason they are here is history: Review was built
+	 * on runs, before games could be imported at all. A run is a DRILL. Its
+	 * opening plies are a book line you were reciting, so replaying them tells
+	 * you what you already knew; its evaluations are written only at your own
+	 * turns, so the graph of one is half gaps by construction; and the one part
+	 * that is real play — the punish phase, where you were off book and looking
+	 * for the strongest move — has already become a card in Mistakes if you got
+	 * it wrong. So the list opens on games.
+	 *
+	 * Kept rather than deleted, because a run IS the record of a session and
+	 * "how did that go" is a fair question to ask of one. It is just not the
+	 * question this screen is mostly for.
+	 */
+	const [filter, setFilter] = useState<ReviewSource | 'all'>('game');
 	const [ply, setPly] = useState(0);
 	const [loaded, setLoaded] = useState(false);
+	/*
+	 * WHETHER THE SCORING IS ON SCREEN.
+	 *
+	 * Stored under the same key Play uses, deliberately: "do I want to see how
+	 * this was played" is one preference about how you want to be shown a game,
+	 * not one per tab. Same reasoning as `tableShown`, which Train and Mistakes
+	 * already share.
+	 */
+	const [statsShown, setStatsShownState] = useState<boolean>(
+		() => recall('statsShown', (v) => typeof v === 'boolean') ?? true,
+	);
+	const setStatsShown = (next: boolean) => {
+		setStatsShownState(next);
+		remember({ statsShown: next });
+	};
 
 	useEffect(() => {
 		void (async () => {
@@ -191,6 +219,20 @@ export function Review({
 
 			<div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start' }}>
 				<div>
+					{/*
+					  * THE SAME LINE THE OTHER THREE BOARDS SHOW.
+					  *
+					  * Rendered directly rather than through `BoardPanel`'s `caption`
+					  * prop, because this board does not go through `BoardPanel` at all
+					  * — its own 380px square, its own evaluation bar, its own stepper.
+					  * That is the remaining divergence and it is worth naming: this is
+					  * the fourth board in the app and the only one outside the shared
+					  * geometry. One component with two call sites is fine; one
+					  * component and a hand-built copy of it is what this whole file
+					  * exists to stop.
+					  */}
+					<PositionCaption path={(run.moves ?? []).slice(0, ply)} ply={ply} />
+
 					<div style={{ display: 'flex', gap: 10 }}>
 						<EvalBar
 							cp={run.evals?.[ply] ?? null}
@@ -263,43 +305,27 @@ export function Review({
 						a review that grades one of them cannot show you the moment
 						they went wrong — which in this app is the moment that
 						matters most. */}
-					<h3 style={{ marginTop: 0 }}>How it was played</h3>
-					{!ourLosses.length && !theirLosses.length ? (
-						<p style={{ fontSize: text.body, color: INK_2 }}>
-							Nothing in this game was evaluated, so there is nothing to score.
-						</p>
-					) : (
-						<>
-							<Scoreline
-								ours={accuracyPercent(ourLosses)}
-								theirs={accuracyPercent(theirLosses)}
-								ourMoves={ourLosses.length}
-								theirMoves={theirLosses.length}
+					{/*
+					  * THE PANEL IS SHARED NOW, and toggleable — Will: "the statistics
+					  * shown in review could be togglable since they really apply to any
+					  * game?" They do; every number in it is computed from a list of
+					  * centipawn losses, and a game being played right now produces the
+					  * same list one entry at a time. See `components/GameStats`.
+					  */}
+					<div style={{ display: 'flex', alignItems: 'baseline', gap: space.card }}>
+						<Button onClick={() => setStatsShown(!statsShown)} title={statsShown ? 'Hide the scoring' : 'Show how the game was played'}>
+							{statsShown ? 'Hide scoring' : 'Show scoring'}
+						</Button>
+					</div>
+					{statsShown && (
+						<div style={{ marginTop: space.card }}>
+							<GameStats
+								ours={ourLosses}
+								theirs={theirLosses}
+								tally={tally}
+								region="review-stats"
 							/>
-							<QualityTable
-								ours={distribution(ourLosses)}
-								theirs={distribution(theirLosses)}
-								ourTotal={ourLosses.length}
-								theirTotal={theirLosses.length}
-							/>
-							{tally.offered > 0 && (
-								// The app's whole thesis, as one line: they went wrong
-								// this many times, and this is how often it was taken.
-								<Note style={{ marginTop: space.snug }}>
-									They gave you {tally.offered} chance
-									{tally.offered === 1 ? '' : 's'} to punish
-									{tally.missed > 0 ? (
-										<>
-											{' '}
-											— <strong>{tally.missed}</strong> went by. Importing a
-											game turns those into cards in your Mistakes deck.
-										</>
-									) : (
-										<> and you took every one.</>
-									)}
-								</Note>
-							)}
-						</>
+						</div>
 					)}
 
 					<h3>Evaluation</h3>
@@ -432,6 +458,20 @@ function GameList({
 									>
 										{new Date(s.ts).toLocaleDateString()} · {s.detail} ·{' '}
 										{s.plies} plies
+										{s.incomplete && (
+											/*
+											 * SAID ON THE ROW, not discovered in the graph.
+											 *
+											 * Will: "many of the games in my review list are
+											 * incompletely scored — often only a handful of plies
+											 * at the beginning." Nothing was saying so: the row
+											 * showed an accuracy computed from eight moves with
+											 * the same confidence as one computed from forty.
+											 * The cause is in `domain/scored.ts`; this is the
+											 * part that stops it being a surprise.
+											 */
+											<span style={{ color: color.warn }}> · {s.incomplete}</span>
+										)}
 									</span>
 								</span>
 
@@ -528,225 +568,10 @@ function MoveNote({ note, assisted }: { note: Annotation; assisted?: boolean }) 
 	);
 }
 
-/** The two accuracies, next to each other, because that is the comparison. */
-function Scoreline({
-	ours,
-	theirs,
-	ourMoves,
-	theirMoves,
-}: {
-	ours: number | null;
-	theirs: number | null;
-	ourMoves: number;
-	theirMoves: number;
-}) {
-	return (
-		<div style={{ display: 'flex', gap: space.page, marginBottom: space.card }}>
-			<Score label="You" value={ours} moves={ourMoves} strong />
-			<Score label="Opponent" value={theirs} moves={theirMoves} />
-		</div>
-	);
-}
 
-function Score({
-	label,
-	value,
-	moves,
-	strong,
-}: {
-	label: string;
-	value: number | null;
-	moves: number;
-	strong?: boolean;
-}) {
-	return (
-		<div>
-			<div style={{ fontSize: text.note, color: INK_2 }}>{label}</div>
-			<div
-				style={{
-					fontSize: strong ? 30 : 24,
-					fontWeight: 700,
-					color: value === null ? INK_2 : INK,
-					lineHeight: 1.1,
-				}}
-			>
-				{value === null ? '—' : `${value}%`}
-			</div>
-			<div style={{ fontSize: text.note, color: INK_2 }}>
-				{value === null ? 'not scored' : `${moves} moves`}
-			</div>
-		</div>
-	);
-}
 
-/**
- * The judgement counts for both players.
- *
- * A table rather than two sets of bars: the interesting reading is across a row
- * — three blunders to their one — and bars put that comparison in two different
- * places on the page.
- */
-function QualityTable({
-	ours,
-	theirs,
-	ourTotal,
-	theirTotal,
-}: {
-	ours: Record<Quality, number>;
-	theirs: Record<Quality, number>;
-	ourTotal: number;
-	theirTotal: number;
-}) {
-	const rows = QUALITY_ORDER.filter((q) => ours[q] || theirs[q]);
-	if (!rows.length) return null;
 
-	return (
-		<table style={{ borderCollapse: 'collapse', fontSize: text.body }}>
-			<thead>
-				<tr style={{ color: INK_2, fontSize: text.note, textAlign: 'left' }}>
-					<th style={{ fontWeight: 400, padding: '2px 10px 4px 0' }}>Move</th>
-					<th style={{ fontWeight: 400, padding: '2px 10px 4px 0' }}>You</th>
-					<th style={{ fontWeight: 400, padding: '2px 0 4px 0' }}>Opponent</th>
-				</tr>
-			</thead>
-			<tbody>
-				{rows.map((q) => (
-					<tr key={q}>
-						<td style={{ padding: '2px 10px 2px 0', color: QUALITY_COLOUR[q] }}>
-							{QUALITY_LABEL[q]}
-						</td>
-						<Cell n={ours[q]} total={ourTotal} q={q} />
-						<Cell n={theirs[q]} total={theirTotal} q={q} last />
-					</tr>
-				))}
-			</tbody>
-		</table>
-	);
-}
 
-function Cell({
-	n,
-	total,
-	q,
-	last,
-}: {
-	n: number;
-	total: number;
-	q: Quality;
-	last?: boolean;
-}) {
-	return (
-		<td style={{ padding: `2px ${last ? 0 : 10}px 2px 0` }}>
-			<span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-				<span style={{ minWidth: 16, color: n ? INK : INK_2 }}>{n}</span>
-				<span
-					style={{
-						height: 8,
-						width: total ? `${Math.round((n / total) * 90)}px` : 0,
-						background: QUALITY_COLOUR[q],
-						borderRadius: 4,
-						opacity: n ? 1 : 0,
-					}}
-				/>
-			</span>
-		</td>
-	);
-}
-
-/**
- * Evaluation through the game.
- *
- * One series, so no legend — the heading names it. The zero line is the thing
- * being read against, so it is drawn properly rather than left to the grid.
- *
- * The dots carry the second story: a point is filled in a judgement colour when
- * the move that reached it was bad, whoever played it, and ringed where they
- * gave us something. A graph that marked only our own errors would show a line
- * dropping for reasons it never explains.
- */
-function EvalGraph({
-	evals,
-	notes,
-	ply,
-	plies,
-	onSelect,
-}: {
-	evals: (number | null)[];
-	notes: Annotation[];
-	ply: number;
-	plies: number;
-	onSelect: (p: number) => void;
-}) {
-	const W = 360;
-	const H = 96;
-	const PAD = 6;
-	const pts: { x: number; y: number; p: number; cp: number }[] = [];
-	const clamp = (cp: number) => Math.max(-600, Math.min(600, cp));
-
-	for (let i = 0; i <= plies; i++) {
-		const cp = evals[i];
-		if (cp === null || cp === undefined) continue;
-		const x = PAD + (plies ? (i / plies) * (W - PAD * 2) : 0);
-		const y = H / 2 - (clamp(cp) / 600) * (H / 2 - PAD);
-		pts.push({ x, y, p: i, cp });
-	}
-
-	if (pts.length < 2) {
-		return <p style={{ fontSize: text.note, color: INK_2 }}>Not enough evaluations recorded.</p>;
-	}
-
-	const d = pts.map((pt, i) => `${i ? 'L' : 'M'}${pt.x.toFixed(1)} ${pt.y.toFixed(1)}`).join(' ');
-	const here = pts.find((pt) => pt.p === ply);
-
-	return (
-		<svg width={W} height={H} role="img" aria-label="Evaluation through the game">
-			<line x1={PAD} x2={W - PAD} y1={H / 2} y2={H / 2} stroke={GRID} strokeWidth={1} />
-			<path d={d} fill="none" stroke={SERIES} strokeWidth={2} strokeLinejoin="round" />
-			{pts.map((pt) => {
-				const n = notes[pt.p - 1];
-				const marked = n && n.quality && WORTH_MARKING.has(n.quality);
-				const fill = pt.p === ply
-					? SERIES
-					: marked
-						? QUALITY_COLOUR[n!.quality as Quality]
-						: color.surface;
-				return (
-					<circle
-						key={pt.p}
-						cx={pt.x}
-						cy={pt.y}
-						r={pt.p === ply ? 5 : marked || n?.opportunity ? 4 : 3}
-						fill={fill}
-						stroke={n?.opportunity ? color.good : SERIES}
-						strokeWidth={n?.opportunity ? 2.5 : 1.5}
-						style={{ cursor: 'pointer' }}
-						onClick={() => onSelect(pt.p)}
-					>
-						<title>
-							{n ? `${n.side === 'us' ? 'you' : 'them'}, ` : ''}ply {pt.p}:{' '}
-							{signed(pt.cp)}
-							{n?.opportunity ? ' — chance to punish' : ''}
-							{n?.missedPunish ? ' — chance missed' : ''}
-						</title>
-					</circle>
-				);
-			})}
-			{here && (
-				<text
-					x={Math.min(W - 34, here.x + 6)}
-					y={here.y < H / 2 ? here.y + 14 : here.y - 6}
-					fontSize={11}
-					fill={INK}
-				>
-					{signed(here.cp)}
-				</text>
-			)}
-		</svg>
-	);
-}
-
-/** Judgements bad enough that the graph should point at them. */
-const WORTH_MARKING = new Set<Quality>(['inaccuracy', 'mistake', 'blunder']);
 
 function lastMoveOf(
 	positions: string[],

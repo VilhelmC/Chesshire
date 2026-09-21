@@ -60,20 +60,25 @@ The Lab, top to bottom:
 | `lab-counts` | the archived detector's per-puzzle results, used as a filter |
 | `lab-board` | the board column, including the caption under it |
 | `lab-solution` | the solution's moves, as clickable plies |
-| `move-list` | the played moves under the board — `train-move-list` in Train, `quiz-move-list` in Mistakes |
+| `move-list` | the played moves under the board — `train-move-list` in Train, `quiz-move-list` in Mistakes, `play-move-list` in Play |
 | `explain-numbers` | the move's own eval and the one baseline the verdict rests on |
-| `line-banner` | says whose line the move list is currently showing |
+| `position-caption` | the one line above every board: which line this is, which move, and why you are looking at it |
+| `position-stack` | everything under the board, in the one order every tab uses |
+| `eval-graph` | the evaluation through a game: one point per ply, move bands, unmeasured stretches shaded |
+| `review-stats` / `play-stats` | how the game was played — two accuracies, the judgement counts, the chances they offered |
+| `move-list-header` | titles the move list, and says whose line it is showing when one is borrowed |
 | `lab-line` | a borrowed line in the Lab, whose own list belongs to the puzzle |
 | `lab-ply` | the right-hand column for the ply being looked at |
 | `ply-statement` | whose move it is and what was played — no judgement |
-| `lab-moves` / `train-moves` / `train-moves-head` / `quiz-moves` | the shared move table — one row per move, filter chips for line / engine / played, a `?` per row |
+| `lab-moves` / `train-moves` / `train-moves-head` / `quiz-moves` / `play-moves` | the shared move table — one row per move, filter chips for line / engine / played, a `?` per row |
 | `training-wheels` | the overlay checkboxes and what they found |
-| `train-commentary` / `quiz-commentary` / `lab-commentary` | what Wikibooks says about this position, when there is a page — `…-prose` is the text itself |
+| `train-commentary` / `quiz-commentary` / `lab-commentary` / `play-commentary` | what Wikibooks says about this position, when there is a page — `…-prose` is the text itself |
 | `mate-proof` | the ladder's surviving rung, computed on demand |
 | `mate-proof-line` / `mate-proof-tree` | the walkable line, and the certificate |
 | `explain-panel` | an open explanation |
 | `line-player` | the line under the board, in Train and Mistakes |
 | `lab-notes` | the per-ply note box |
+| `build-stamp` | which build is running, and whether the server has a newer one |
 
 ## Checking
 

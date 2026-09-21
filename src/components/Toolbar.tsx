@@ -25,8 +25,10 @@ export type ToolbarAction = {
 		| 'branch'
 		| 'reveal'
 		| 'playon'
+		| 'skip'
 		| 'options'
 		| 'share'
+		| 'stats'
 		| 'resign';
 	onClick: () => void;
 	disabled?: boolean;
@@ -45,13 +47,19 @@ export type ToolbarAction = {
 };
 
 /*
- * `mistake` and `stats` USED TO BE HERE.
+ * `mistake` USED TO BE HERE, and is gone.
  *
- * `stats` went when the three filter buttons collapsed into the move table.
- * `mistake` went with the button it drew — Will: "maybe we don't need a 'replay
- * same mistake' button since user can just step backwards?" They are deleted
- * rather than left available, because an icon nothing draws is a vocabulary
- * entry a reader has to check before concluding it is unused.
+ * It went with the button it drew — Will: "maybe we don't need a 'replay same
+ * mistake' button since user can just step backwards?" Deleted rather than left
+ * available, because an icon nothing draws is a vocabulary entry a reader has to
+ * check before concluding it is unused.
+ *
+ * `stats` was deleted alongside it, when the three filter buttons collapsed into
+ * the move table, and it is BACK — for a different control. It used to fetch the
+ * explorer's numbers for this position; it now shows how the game has been
+ * played, which is `components/GameStats`. The name survived the change of
+ * meaning because it is the honest word for both, but nothing else about the old
+ * button did.
  */
 
 /** One fixed word per control, for when there is no hover to reveal the title. */
@@ -70,8 +78,10 @@ const CAPTION: Record<ToolbarAction['icon'], string> = {
 	branch: 'new reply',
 	reveal: 'show moves',
 	playon: 'play on',
+	skip: 'skip',
 	options: 'options',
 	share: 'share',
+	stats: 'scoring',
 	resign: 'resign',
 };
 
@@ -135,6 +145,20 @@ export function Toolbar({
 			{actions.map((a) => (
 				<button
 					key={a.id}
+					/*
+					 * A HANDLE FOR THE THING A CONTROL OPENS.
+					 *
+					 * A pop-over that closes on an outside press has to be able to
+					 * recognise its own toggle: `pointerdown` fires before `click`, so
+					 * pressing the open button again would close the panel and then
+					 * immediately reopen it — a flicker that leaves the menu up and the
+					 * button looking broken in a way that is very hard to see.
+					 *
+					 * Emitted for every action rather than just `share`, because the
+					 * next pop-over will need it too and a one-off attribute is how the
+					 * last several one-offs started.
+					 */
+					data-action={a.id}
 					title={a.title}
 					aria-label={a.title}
 					onClick={a.onClick}
@@ -215,6 +239,20 @@ function Icon({ name }: { name: ToolbarAction['icon'] }) {
 					<path d="M8 5l8 7-8 7z" fill="currentColor" stroke="none" />
 				</svg>
 			);
+		case 'stats':
+			/*
+			 * THREE BARS OF DIFFERENT HEIGHTS, which is what the panel is: counts
+			 * per verdict with a bar beside each. Drawn as strokes rather than
+			 * filled rectangles so it stays legible at 18px next to `reveal`'s eye
+			 * and `share`'s dots, neither of which has any solid mass.
+			 */
+			return (
+				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
+					<line x1="5" y1="19" x2="5" y2="11" />
+					<line x1="12" y1="19" x2="12" y2="5" />
+					<line x1="19" y1="19" x2="19" y2="14" />
+				</svg>
+			);
 		case 'branch':
 			/*
 			 * A DIE, BECAUSE THE ACTION IS A RE-ROLL.
@@ -278,6 +316,30 @@ function Icon({ name }: { name: ToolbarAction['icon'] }) {
 					<circle cx="18" cy="19" r="2.6" />
 					<line x1="8.3" y1="10.8" x2="15.7" y2="6.2" />
 					<line x1="8.3" y1="13.2" x2="15.7" y2="17.8" />
+				</svg>
+			);
+		case 'skip':
+			/*
+			 * PAST THIS ONE, TO THE NEXT.
+			 *
+			 * Will: "in Mistakes there is a 'skip' button, that has the same icon
+			 * as 'free play' button in Train."
+			 *
+			 * It borrowed `playon` — a play triangle in a circle — because skipping
+			 * had no icon of its own. Captioning it "skip" fixed the word and left
+			 * the picture saying something else, and now that Mistakes has a real
+			 * free-play button the two would have sat in the same strip wearing the
+			 * same face.
+			 *
+			 * Two chevrons and a bar: the "next track" glyph, which means exactly
+			 * this everywhere it appears and is distinct from the single triangle
+			 * of `playon` at any size.
+			 */
+			return (
+				<svg width="18" height="18" viewBox="0 0 24 24" {...s}>
+					<path d="M5 6l6 6-6 6z" fill="currentColor" stroke="none" />
+					<path d="M12 6l6 6-6 6z" fill="currentColor" stroke="none" />
+					<line x1="20" y1="5" x2="20" y2="19" />
 				</svg>
 			);
 		case 'playon':
