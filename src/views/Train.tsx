@@ -304,7 +304,7 @@ export function Train({
 		setAttempts(0);
 		// Starting fresh discards the saved game deliberately; persistRun writes a
 		// new one on the first move.
-		void clearSession();
+		void clearSession('train');
 		setResumed(false);
 		try {
 			setHistory([]);
@@ -416,7 +416,7 @@ export function Train({
 	 * game played out after the punishment — was never recorded at all.
 	 */
 	function persistRun(next: RunState, losses: Record<number, number>) {
-		void saveSession({
+		void saveSession('train', {
 			runId: runId.current,
 			state: next,
 			lossByPly: losses,
@@ -461,11 +461,11 @@ export function Train({
 		if (!memoryReady) return;
 		void (async () => {
 			// Pick the game back up rather than throwing it away.
-			const saved = await loadSession();
+			const saved = await loadSession('train');
 			if (saved?.state) {
 				const s = saved.state as RunState;
 				runId.current = saved.runId;
-				sawMistake.current = saved.sawMistake;
+				sawMistake.current = saved.sawMistake ?? false;
 				evalsRef.current = saved.evals ?? [];
 				setLossByPly(saved.lossByPly ?? {});
 				// Sessions saved before markers were keyed by move hold bare ply

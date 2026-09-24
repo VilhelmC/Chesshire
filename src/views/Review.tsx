@@ -15,7 +15,7 @@
 // the honest answer to "what have I played?" is a list you can look at.
 // ---------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Board } from '../components/Board';
 import { MoveList, type MoveChip } from '../components/MoveList';
 import { EvalBar } from '../components/EvalBar';
@@ -55,7 +55,26 @@ export function Review({
 	const [answers, setAnswers] = useState<AnswerRow[]>([]);
 	// Null means the list. Nothing is opened for you: which game to look at is
 	// the choice this screen exists to offer.
-	const [selected, setSelected] = useState<string | null>(null);
+	/*
+	 * WHICH GAME, AND WHERE IN IT — kept across leaving the tab.
+	 *
+	 * Will: "review should also persist." Same cause as Mistakes and Play: `App`
+	 * unmounts a tab when you leave it, so a game you were twenty plies into was
+	 * closed by glancing at Progress, and the list you had scrolled to came back
+	 * from the top.
+	 *
+	 * The empty string means the LIST, which is a real place and the one you get
+	 * on a first visit. Stored rather than inferred because "no game open" and
+	 * "never opened one" look identical from here and only one of them should
+	 * survive pressing "All games".
+	 */
+	const [selected, setSelectedState] = useState<string | null>(
+		() => (recall('reviewSelected', (v) => typeof v === 'string') as string) || null,
+	);
+	const setSelected = useCallback((id: string | null) => {
+		setSelectedState(id);
+		remember({ reviewSelected: id ?? '' });
+	}, []);
 	/*
 	 * YOUR GAMES FIRST, and runs only if you ask.
 	 *
@@ -76,7 +95,16 @@ export function Review({
 	 * question this screen is mostly for.
 	 */
 	const [filter, setFilter] = useState<ReviewSource | 'all'>('game');
-	const [ply, setPly] = useState(0);
+	const [ply, setPlyState] = useState(
+		() => recall('reviewPly', (v) => typeof v === 'number' && v >= 0) ?? 0,
+	);
+	const setPly = useCallback((next: number | ((p: number) => number)) => {
+		setPlyState((cur) => {
+			const v = typeof next === 'function' ? next(cur) : next;
+			remember({ reviewPly: v });
+			return v;
+		});
+	}, []);
 	const [loaded, setLoaded] = useState(false);
 	/*
 	 * WHETHER THE SCORING IS ON SCREEN.
@@ -136,7 +164,21 @@ export function Review({
 		[run],
 	);
 
-	useEffect(() => setPly(0), [selected]);
+	/*
+	 * A DIFFERENT GAME STARTS AT THE BEGINNING — but returning to the SAME one
+	 * does not.
+	 *
+	 * Keyed on the id it last ran for rather than on `selected` alone, because
+	 * `selected` is restored on mount and an effect watching it fires then too —
+	 * which would reset the ply to 0 on every visit and undo the thing being
+	 * fixed one line after doing it.
+	 */
+	const lastGame = useRef<string | null>(selected);
+	useEffect(() => {
+		if (lastGame.current === selected) return;
+		lastGame.current = selected;
+		setPly(0);
+	}, [selected, setPly]);
 
 	if (!loaded) return <p style={{ opacity: 0.6 }}>Loading…</p>;
 	if (!items.length) {

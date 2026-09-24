@@ -227,20 +227,68 @@ export function Quiz({
 			) as MistakeCard['phase'][] | undefined) ?? [],
 	);
 
-	async function reload(cats: MistakeCard['phase'][] = categories) {
+	async function reload(cats: MistakeCard['phase'][] = categories, keepPlace = true) {
 		const all = await loadMistakes();
 		setCards(all);
 		const q = due(inCategories(all, cats), Date.now());
-		setQueue(q);
-		setCurrent(q[0] ?? null);
+
+		/*
+		 * PICK THE DECK BACK UP WHERE YOU LEFT IT.
+		 *
+		 * ---------------------------------------------------------------------
+		 * Will: "mistakes … currently it starts over same sequence every time
+		 * user leaves tab."
+		 *
+		 * `App` unmounts a tab the moment you leave it, so this ran fresh on every
+		 * visit — and `due()` is deterministic, so the first card was always the
+		 * same one.
+		 *
+		 * ONLY THE CURRENT CARD IS REMEMBERED, and that is the whole fix. The
+		 * obvious-looking alternative — recording which cards you have answered so
+		 * they do not come back — is both unnecessary and a slow bug: `answer()`
+		 * already pushes a correct card's `dueAt` into the future, so `due()`
+		 * excludes it by itself, and a list of answered ids would keep growing
+		 * with nothing to clear it until the deck read as empty on a day when it
+		 * was full.
+		 *
+		 * A card answered WITH HELP is deliberately still due — it is recorded as
+		 * incorrect, so it comes straight back. Remembering it as "done" would
+		 * have quietly undone that.
+		 * ---------------------------------------------------------------------
+		 */
+		const wasOn = keepPlace
+			? (recall('quizCurrentId', (v) => typeof v === 'string') as string | undefined)
+			: undefined;
+		const at = wasOn ? q.findIndex((c) => c.id === wasOn) : -1;
+		const ordered = at > 0 ? [q[at], ...q.slice(0, at), ...q.slice(at + 1)] : q;
+
+		setQueue(ordered);
+		setCurrent(ordered[0] ?? null);
 		setLoaded(true);
 	}
+
+	/**
+	 * Remember which card is in front of you, so leaving the tab does not lose it.
+	 *
+	 * GUARDED ON `loaded`, and that guard is the whole thing working. An effect
+	 * watching `current` also fires on MOUNT, when `current` is still null — so
+	 * without this it wrote an empty id and erased the stored one a moment before
+	 * `reload` got round to reading it. The restore then found nothing and the
+	 * deck started over, which is precisely the symptom being fixed, caused by
+	 * the fix for it.
+	 */
+	useEffect(() => {
+		if (!loaded) return;
+		remember({ quizCurrentId: current?.id ?? '' });
+	}, [current, loaded]);
 
 	/** One place to change the selection, so nothing can set it without storing it. */
 	function chooseCategories(next: MistakeCard['phase'][]) {
 		setCategories(next);
 		remember({ quizCategories: next });
-		void reload(next);
+		// Changing what you are drilling starts that drill, rather than resuming
+		// one through a filter the remembered card may not even pass.
+		void reload(next, false);
 	}
 
 	function toggleCategory(id: MistakeCard['phase']) {

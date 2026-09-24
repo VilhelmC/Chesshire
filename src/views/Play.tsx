@@ -68,6 +68,7 @@ import { BOT_LEVELS, levelFor, estimate } from '../domain/rating';
 import { freeplayLosses } from '../domain/progress';
 import { loadProgress } from '../data/progress';
 import { recall, remember } from '../data/viewState';
+import { loadSession, saveSession } from '../data/session';
 import { colourOfFen, other } from '../domain/notation';
 import { Note, Segmented, Select } from '../ui/primitives';
 import { color, space, text } from '../ui/theme';
@@ -173,7 +174,11 @@ export function Play({
 			try {
 				runId.current = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 				setLosses([]);
-				setState(await playFrom(moves, ply, ourColour, cfg, 'free'));
+				const started = await playFrom(moves, ply, ourColour, cfg, 'free');
+				setState(started);
+				// Written immediately, not on the first move: a new game you switch
+				// away from before playing anything is still the game you want back.
+				void saveSession('play', { runId: runId.current, state: started, losses: [] });
 			} catch (e) {
 				setError((e as Error).message);
 			} finally {
@@ -192,10 +197,57 @@ export function Play({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [handoff]);
 
+	/*
+	 * ---------------------------------------------------------------------------
+	 * THE GAME SURVIVES LEAVING THE TAB.
+	 *
+	 * Will: "we've had an issue with play not persisting board state when
+	 * switching between tabs or reloading app."
+	 *
+	 * `App` renders every tab as `{tab === 'x' && <X/>}`, so this whole component
+	 * is UNMOUNTED the moment you switch away and every `useState` in it goes
+	 * with it. Train survives that by writing to `db.session` on each move and
+	 * reading back on mount. Play did not write anything, so the effect below
+	 * dutifully started a fresh game every time — which looks exactly like the
+	 * board being reset, because it was.
+	 *
+	 * ORDER MATTERS HERE, and getting it wrong is how this would half-work: the
+	 * restore has to settle BEFORE "start a new game if there is none" is allowed
+	 * to fire, or the new game wins the race on a slow read and the saved one is
+	 * overwritten by it. Hence `restored`, and the new-game effect waiting on it.
+	 *
+	 * A handoff outranks a saved game: arriving from Review or Mistakes with a
+	 * position in hand is an explicit request for THAT position, and it is read
+	 * at mount so a later arrival cannot be mistaken for one.
+	 * ---------------------------------------------------------------------------
+	 */
+	const [restored, setRestored] = useState(false);
 	useEffect(() => {
-		if (!state && !handoff) void start([], 0, 'w');
+		let live = true;
+		void (async () => {
+			if (handoff) {
+				if (live) setRestored(true);
+				return;
+			}
+			const saved = await loadSession('play');
+			if (live && saved?.state) {
+				runId.current = saved.runId;
+				setLosses(saved.losses ?? []);
+				setState(saved.state as RunState);
+			}
+			if (live) setRestored(true);
+		})();
+		return () => {
+			live = false;
+		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
+
+	useEffect(() => {
+		if (!restored) return;
+		if (!state && !handoff) void start([], 0, 'w');
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [restored]);
 
 	const [focus, setFocus] = useState<number | null>(null);
 	const [asking, setAsking] = useState<Ask | null>(null);
@@ -334,10 +386,10 @@ export function Play({
 				opponent === 'none' && !back.live && back.at !== null
 					? await playFrom(state.path, back.at, state.ourColour, cfg, 'free')
 					: null;
-			if (rewound) {
-				setLosses([]);
-				back.toLive();
-			}
+			// `setLosses([])` was here and is not needed: `nextLosses` below starts
+			// from `[]` when `rewound` is set, and doing it twice meant one render
+			// with an empty list under a board that already had the new move on it.
+			if (rewound) back.toLive();
 			const before = rewound ?? state;
 			const out = await submitMove(before, cfg, uci);
 			setState(out.state);
@@ -383,7 +435,27 @@ export function Play({
 			 * Nothing here scores the ENGINE's moves, and that is deliberate: see
 			 * `components/GameStats`.
 			 */
-			if (opponent === 'engine' && out.cpLoss >= 0) setLosses((l) => [...l, out.cpLoss]);
+			/*
+			 * THE NEXT LOSSES, COMPUTED ONCE.
+			 *
+			 * Needed twice — by the scoring panel's state and by the autosave — and
+			 * reading the updater's result back out of `setLosses` is not something
+			 * React offers. Rebuilding it from `rewound` matters: an explore take
+			 * back throws away the plies after the rewind point, and the losses
+			 * belonging to them with it.
+			 */
+			const base = rewound ? [] : losses;
+			const nextLosses =
+				opponent === 'engine' && out.cpLoss >= 0 ? [...base, out.cpLoss] : base;
+			setLosses(nextLosses);
+			// Every move, like Train — see the restore block above for why the tab
+			// being unmounted makes this the only thing standing between a game and
+			// oblivion.
+			void saveSession('play', {
+				runId: runId.current,
+				state: out.state,
+				losses: nextLosses,
+			});
 			moveTable.played();
 			if (!out.correct) setBoardVersion((v) => v + 1);
 		} catch (e) {
@@ -537,7 +609,14 @@ export function Play({
 						id: 'resign',
 						title: 'Resign — end this game',
 						icon: 'resign' as const,
-						onClick: () => state && setState(resign(state)),
+						onClick: () => {
+							if (!state) return;
+							const ended = resign(state);
+							setState(ended);
+							// A resigned game is still the game you left; coming back to a
+							// fresh board would lose the result you just took.
+							void saveSession('play', { runId: runId.current, state: ended, losses });
+						},
 						disabled: busy || !state?.path.length,
 					},
 		];

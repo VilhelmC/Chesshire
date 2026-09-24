@@ -30,21 +30,65 @@ export type EvalCacheRow = {
  * A single row, replaced on every move. Leaving the tab used to discard the
  * game entirely — including free play, which is the part most worth keeping.
  */
+/**
+ * Which screen's game in progress this row is.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "we've had an issue with play not persisting board state when switching
+ * between tabs or reloading app."
+ *
+ * There was, and the cause is that `App` renders each tab as `{tab === 'x' &&
+ * <X/>}` — so every view is UNMOUNTED when you leave it and its `useState` goes
+ * with it. Train survives that because it writes here on every move and reads
+ * back on mount; Play wrote nothing, so leaving the tab silently abandoned the
+ * game and coming back started a fresh one.
+ *
+ * It was `'current'` — a name from when there was only one — and it is `'train'`
+ * now. Will: "just use the 'train' identifier, no one is using the app yet."
+ * Right: the only cost of renaming is that a run already in progress is not
+ * found on the next load, and weighing one stale row against a key that says
+ * which screen it belongs to is not a close call while nobody is holding one.
+ */
+export type SessionKey = 'train' | 'play';
+
 export type SavedSession = {
-	id: 'current';
+	id: SessionKey;
 	ts: number;
 	runId: string;
 	/** RunState, stored opaquely: the shape belongs to engine/session.ts. */
 	state: unknown;
-	lossByPly: Record<number, number>;
+	/*
+	 * ------------------------------------------------------------------------
+	 * THE TAB-SPECIFIC FIELDS ARE OPTIONAL, and which ones are filled follows
+	 * from `id`.
+	 *
+	 * A discriminated union would say that better, and it would also mean a
+	 * migration: rows already on disk have no discriminator narrow enough to
+	 * satisfy one. Optional fields with a reader that defaults them — which is
+	 * what Train's loader already did for `evals` and `lossByPly`, having been
+	 * bitten once — costs nothing and breaks nobody.
+	 * ------------------------------------------------------------------------
+	 */
+	/** Train: centipawns given up, by ply. */
+	lossByPly?: Record<number, number>;
 	/**
-	 * Opponent mistakes, keyed `ply|san`. Older rows hold bare ply numbers and
-	 * are discarded on load — a ply number cannot be checked against the move
+	 * Train: opponent mistakes, keyed `ply|san`. Older rows hold bare ply numbers
+	 * and are discarded on load — a ply number cannot be checked against the move
 	 * actually played there, and marking the wrong move is worse than none.
 	 */
-	mistakePlies: (string | number)[];
-	evals: (number | null)[];
-	sawMistake: boolean;
+	mistakePlies?: (string | number)[];
+	/** Train: evaluation after each ply, for the review page. */
+	evals?: (number | null)[];
+	/** Train: whether the opponent went wrong at any point in this run. */
+	sawMistake?: boolean;
+	/**
+	 * Play: what each of OUR moves gave up, in order.
+	 *
+	 * The scoring panel's only input — see `components/GameStats`. Kept with the
+	 * game rather than recomputed, because recomputing means re-searching every
+	 * position of a game that has already been measured once.
+	 */
+	losses?: number[];
 };
 
 export type GameRow = {

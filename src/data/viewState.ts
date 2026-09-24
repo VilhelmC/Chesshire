@@ -82,6 +82,38 @@ export type ViewState = {
 	 */
 	quizStrictness?: string;
 	/**
+	 * WHERE YOU WERE IN THE DECK.
+	 *
+	 * ------------------------------------------------------------------------
+	 * Will: "I also think the other tabs should persist state — for example
+	 * mistakes because currently it starts over same sequence every time user
+	 * leaves tab."
+	 *
+	 * `App` unmounts a tab the moment you leave it, so Mistakes rebuilt its queue
+	 * from `due()` on every visit — which is deterministic, so you met the same
+	 * card first every time and the three you had just answered came back in the
+	 * same order behind it.
+	 *
+	 * ONE ID, not the queue. The deck changes underneath this — cards are
+	 * answered, rescheduled and retired — so a stored queue would be a snapshot
+	 * of a list that no longer exists. The queue is rebuilt from the live deck
+	 * and this card brought to the front of it, which cannot go stale.
+	 *
+	 * And deliberately NOT a record of what has been answered: `answer()` already
+	 * pushes a correct card's `dueAt` into the future, so `due()` drops it
+	 * without help, while a list of answered ids would grow with nothing to clear
+	 * it until the deck read as empty on a day it was full.
+	 *
+	 * In `viewState` rather than `db.session`, because that store holds a whole
+	 * `RunState` and this is one string. A screen's PLACE is a view preference;
+	 * a game in progress is not.
+	 * ------------------------------------------------------------------------
+	 */
+	quizCurrentId?: string;
+	/** Review: the game being looked at, and the ply within it. */
+	reviewSelected?: string;
+	reviewPly?: number;
+	/**
 	 * The signed-out "training from the bundled book" notice has been dismissed.
 	 *
 	 * A notice you cannot silence becomes furniture, and furniture is not read —
