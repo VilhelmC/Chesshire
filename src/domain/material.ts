@@ -21,8 +21,24 @@ export const VALUE: Record<Role, number> = {
 	king: 0,
 };
 
-/** Order pieces are listed in: cheapest first, as on every board readout. */
-export const ORDER: Role[] = ['pawn', 'knight', 'bishop', 'rook', 'queen'];
+/**
+ * Order pieces are listed in, DEAREST FIRST.
+ *
+ * Will: "change sort order of taken pieces array: should read high to low so
+ * that most important pieces appear first."
+ *
+ * Right, and the old comment's justification — "as on every board readout" —
+ * was the reason it was wrong. Lichess and chess.com list captures cheapest
+ * first because they draw a compact glyph run you read as a set. This app draws
+ * a labelled row you read LEFT TO RIGHT, and the first thing in it should be
+ * the thing that matters: a queen buried at the end of six pawns is the one
+ * fact on the row that changes how you play, arriving last.
+ *
+ * Used for iteration everywhere in this file, including the balance sum and the
+ * promotion count, where order is immaterial — so there is one order and it is
+ * the one that shows.
+ */
+export const ORDER: Role[] = ['queen', 'rook', 'bishop', 'knight', 'pawn'];
 
 const INITIAL: Record<Role, number> = {
 	pawn: 8,
@@ -59,7 +75,7 @@ export function census(fen: string): { w: Counts; b: Counts } {
 }
 
 export type MaterialReport = {
-	/** Their pieces we have taken, cheapest first, as roles repeated by count. */
+	/** Their pieces we have taken, dearest first, as roles repeated by count. */
 	weTook: Role[];
 	/** Ours they have taken. */
 	theyTook: Role[];

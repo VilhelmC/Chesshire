@@ -70,3 +70,39 @@ export function walkBackTo(
 	for (let i = cursor - 1; i >= 0; i--) through.push(linePositions[i]);
 	return { to: destination, through };
 }
+
+/**
+ * The walk back to an earlier ply of THIS game, landing on a different position.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "I asked you before that whenever we rewind the animation is a single
+ * move at a time. That is not happening when user clicks 'new reply'."
+ *
+ * It was not, and the reason is that "new reply" is not a rewind — it is a
+ * rewind FOLLOWED BY a different move. The board ends up somewhere the current
+ * game's positions do not contain, so neither `walkThrough`, which travels
+ * between two plies of one line, nor `walkBackTo`, which leaves a borrowed line
+ * for the game, described it. Nothing did, so nothing animated, so the one
+ * control whose whole point is "same position, different outcome" teleported
+ * to the outcome.
+ *
+ * `from` and `to` are ply counts into `fens`. The walk starts one ply back from
+ * `from` — the board is already showing `from` — runs down to and INCLUDING
+ * `to`, which is the position being returned to, and then lands on
+ * `destination`, which is what was played from it instead.
+ */
+export function walkBack(
+	fens: readonly string[],
+	from: number,
+	to: number,
+	destination: string,
+): { to: string; through: string[] } | null {
+	if (from <= to || to < 0 || from >= fens.length) return null;
+	const through: string[] = [];
+	for (let i = from - 1; i >= to; i--) through.push(fens[i]);
+	// The destination can BE the position returned to, when nothing has been
+	// played from it yet. Showing it twice in a row is a dropped frame that reads
+	// as a stutter.
+	while (through.length && through[through.length - 1] === destination) through.pop();
+	return through.length ? { to: destination, through } : null;
+}

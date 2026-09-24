@@ -85,6 +85,7 @@ describe('the stack that holds everything under the board', () => {
 			'{commentary}',
 			'{explain}',
 			'{stats}',
+			'{controls}',
 			'{history}',
 			'{footer}',
 		]);

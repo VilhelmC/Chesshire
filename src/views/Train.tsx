@@ -47,12 +47,14 @@ import { useLineOverlay } from '../hooks/useLineOverlay';
 import { useCommentary } from '../hooks/useCommentary';
 import { Commentary } from '../components/CommentaryPanel';
 import { lineFromUci, stepAt, type Line } from '../domain/line';
-import { walkBackTo, walkThrough } from '../domain/walk';
+import { walkBack, walkBackTo, walkThrough } from '../domain/walk';
 import { color, space, text } from '../ui/theme';
 import { markTraining } from '../data/autoImport';
-import { Empty, Button, Select, Toggle } from '../ui/primitives';
+import { Button, Note, Select, Toggle } from '../ui/primitives';
 import type { ToolbarAction } from '../components/Toolbar';
 import { BoardPanel } from '../components/BoardPanel';
+import { Thinking } from '../components/Thinking';
+import { useMoveTableToggle } from '../hooks/useMoveTableToggle';
 import { PositionStack } from '../components/PositionStack';
 import type { Shape } from '../components/Board';
 import { Move, MoveLine } from '../components/Move';
@@ -130,6 +132,34 @@ export function Train({
 	 */
 	type Arrow = Shape;
 	const [hint, setHint] = useState<Arrow[]>([]);
+	/*
+	 * THE RUN IS WAITING FOR YOU TO SAY YOU HAVE READ IT.
+	 *
+	 * A resolver, not a boolean: the thing being paused is a point inside
+	 * `onMove`, and the natural way to express "carry on from here when told" is
+	 * to hand the continuation out and hold it. A flag would need the handler
+	 * split in two around it, with the half after the pause re-entering from an
+	 * effect — the same state reachable two ways, which is how this repo's
+	 * bugs start.
+	 *
+	 * Stored wrapped (`setHolding(() => resolve)`) because React treats a bare
+	 * function argument to a setter as an updater and would CALL it.
+	 */
+	const [holding, setHolding] = useState<null | (() => void)>(null);
+
+	/*
+	 * Read ONCE, at mount. `getToken()` reads localStorage, and calling it in
+	 * the render path would make every frame of a run touch storage to answer a
+	 * question that changes at most once a session.
+	 */
+	const [signedIn] = useState(() => !!getToken());
+	const [hushed, setHushed] = useState(
+		() => recallView('bookNoticeHushed', (v) => typeof v === 'boolean') === true,
+	);
+	const hush = useCallback(() => {
+		setHushed(true);
+		rememberView({ bookNoticeHushed: true });
+	}, []);
 	const [attempts, setAttempts] = useState(0);
 	/** Bumped on a rejected move, to pull the piece back to where it started. */
 	const [boardVersion, setBoardVersion] = useState(0);
@@ -314,6 +344,24 @@ export function Train({
 			// by ply alone is stale from here on.
 			setLossByPly({});
 			const resumed = await resumeFrom(point, cfg, state);
+			/*
+			 * REWIND ONE MOVE AT A TIME, here too.
+			 *
+			 * Will: "I asked you before that whenever we rewind the animation is a
+			 * single move at a time. That is not happening when user clicks 'new
+			 * reply'." It was not: this set the state and nothing else, so the
+			 * board jumped — and a jump slides every piece to its destination at
+			 * once, which is exactly what the walk exists to stop. See
+			 * `domain/walk`'s `walkBack` for why neither existing helper fitted.
+			 */
+			setVia(
+				walkBack(
+					replayLine(state.path).map((p) => p.fen),
+					state.path.length,
+					point.path.length,
+					resumed.fen,
+				),
+			);
 			setState(resumed);
 			remember(resumed);
 			setStats((s) => ({ ...s, runs: s.runs + 1 }));
@@ -611,14 +659,18 @@ export function Train({
 		[],
 	);
 
-	/** …and whether it is on screen at all. A separate fact — see `viewState`. */
-	const [tableShown, setTableShownState] = useState<boolean>(
-		() => recallView('tableShown', (v) => typeof v === 'boolean') === true,
-	);
-	const setTableShown = useCallback((next: boolean) => {
-		setTableShownState(next);
-		rememberView({ tableShown: next });
-	}, []);
+	/*
+	 * THE MOVE TABLE'S BUTTON, from the shared hook.
+	 *
+	 * Three tabs held their own `tableShown` boolean with their own setter
+	 * writing the same stored key, and all three were about to need the same two
+	 * new behaviours — closing after a move, and a double press that pins. See
+	 * `hooks/useMoveTableToggle`, and `domain/tableToggle` for why closing is the
+	 * default: the table being up counts as HELP, so a toggle that lingers
+	 * silently marks every later move as assisted.
+	 */
+	const moveTable = useMoveTableToggle();
+	const tableShown = moveTable.shown;
 	const [sharing, setSharing] = useState(false);
 	/**
 	 * Positions the board should pass through on its way to the next one.
@@ -693,6 +745,21 @@ export function Train({
 		if (!state.expected.length && state.mode !== 'free') return;
 		busyRef.current = true;
 		setBusy(true);
+		/*
+		 * THE LAST MOVE'S VERDICT GOES NOW, not when the next one arrives.
+		 *
+		 * Will: "after submitting a move the commentary on the past move should be
+		 * immediately hidden so user doesn't think that's the new commentary while
+		 * the app is thinking. Display the thinking or loading animation there in
+		 * place of the old text."
+		 *
+		 * Exactly the failure: an engine search takes a second or two, and for the
+		 * whole of it the panel headed "Your move" held the verdict on the PREVIOUS
+		 * move — in the same place, in the same words, with no sign it was stale.
+		 * A verdict that survives the move it was about is worse than no verdict,
+		 * because it is read as an answer.
+		 */
+		setFeedback(null);
 
 		// Put our move on the board now, before any thinking. It is cleared in
 		// `finally`, by which point the real state has replaced it — or, if the
@@ -728,21 +795,35 @@ export function Train({
 			// spelled out in notation and a move drawn on the board are not the same
 			// thing to a beginner — the whole point of the trainer is to attach
 			// recall to the position rather than to a string.
+			/*
+			 * A REFUSED MOVE IS MARKED; THE ANSWER IS NOT DRAWN.
+			 *
+			 * Will: "when a mistake is made, or a better or equivalent move is not
+			 * accepted because the current strictness is book for example, we
+			 * shouldn't write out the correct move and show the arrow. User should
+			 * just get to guess again after being informed why their move wasn't
+			 * accepted."
+			 *
+			 * There used to be a green arrow to `expected[0]` here, and the old
+			 * comment justified it — "whenever the message NAMES a move, the board
+			 * should show it". That premise was sound and the conclusion followed
+			 * from it; what changed is that the message no longer names the move.
+			 * The run does not advance on a refusal, so drawing the answer left the
+			 * next attempt with nothing to retrieve.
+			 *
+			 * The arrow on YOUR OWN move stays: it says which move was refused,
+			 * which you already know, and on a board where nothing moved it is the
+			 * only thing connecting the sentence to a square. Blue for a novelty,
+			 * red for a mistake — the colour is read before the words.
+			 */
 			const arrows: Arrow[] = [...explained.arrows];
-			if (!out.correct && before.mode === 'drill' && before.phase === 'book' && before.expected[0]) {
-				// The run does not advance on a wrong book move, so the position on
-				// screen is still the one the arrow refers to.
+			if (!out.correct && before.mode === 'drill' && before.phase === 'book') {
 				arrows.length = 0;
-				// A NOVELTY IS DRAWN IN BLUE, NOT RED. It is off the line, so the line's
-				// move is still shown — but it is not a mistake, and the colour is the
-				// first thing read. Blue is already the trainer's "accepted, something
-				// was better" hue, which is the nearest existing meaning.
 				arrows.push({
 					orig: uci.slice(0, 2),
 					dest: uci.slice(2, 4),
 					brush: out.novelty ? 'blue' : 'red',
 				});
-				arrows.push(arrowFor(before.expected[0].uci, 'green'));
 			}
 
 			setFeedback({
@@ -769,16 +850,33 @@ export function Train({
 				setLossByPly((m) => ({ ...m, [before.path.length + 1]: out.cpLoss }));
 			}
 
-			// Accepted, but something was better. The run is about to move on, so
-			// hold the position for a beat with the better move drawn — otherwise
-			// the arrow would appear over a board two plies further along.
+			/*
+			 * ACCEPTED, BUT SOMETHING WAS BETTER — the one case that DOES show the
+			 * move, and the one that waits.
+			 *
+			 * Will: "the one case we should show the move is when move is accepted
+			 * but there was a better allowed one … we should probably show the
+			 * better move with an arrow. Prompt user before continuing so user has
+			 * a chance to actually read and consider."
+			 *
+			 * It used to hold for 1200ms and move on. A fixed beat is the wrong
+			 * shape for this: it is too long when you have already seen it and far
+			 * too short to read a sentence, compare two moves on the board and
+			 * decide what you think — which is the entire point of showing it. So
+			 * the run waits for a gesture instead.
+			 *
+			 * Safe to block here: `busyRef` is still held, so the board takes no
+			 * move, and the position on screen is still the one the arrows refer to
+			 * because `setState(out.state)` is further down.
+			 */
 			const wasExact = before.expected.some((e) => e.uci === uci);
 			if (out.correct && !wasExact && out.cpLoss > 10 && before.expected[0]) {
 				setHint([
 					{ orig: uci.slice(0, 2), dest: uci.slice(2, 4), brush: 'blue' },
 					arrowFor(before.expected[0].uci, 'green'),
 				]);
-				await new Promise((r) => setTimeout(r, 1200));
+				await new Promise<void>((resolve) => setHolding(() => resolve));
+				setHolding(null);
 				setHint([]);
 			}
 
@@ -829,6 +927,10 @@ export function Train({
 				loggedMistake.current = false;
 			}
 			setState(out.state);
+			// THE TABLE CLOSES UNLESS IT WAS PINNED. Here rather than at the top of
+			// the handler so it stays up through the verdict and the held arrows —
+			// it is the thing you would be reading them against.
+			if (!out.novelty) moveTable.played();
 			setStats((s) => ({
 				...s,
 				// The run did not advance on a novelty, so it is not a move played.
@@ -868,18 +970,28 @@ export function Train({
 		}
 	}
 
-	if (!getToken()) {
-		return (
-			<Empty>
-				<p style={{ margin: '0 0 10px', maxWidth: 460, display: 'inline-block' }}>
-					<strong>Sign in with Lichess to train.</strong> The opponent&apos;s moves — and their
-					mistakes — come from what players at your rating band actually play, and the opening
-					explorer refuses anonymous requests.
-				</p>
-				<div>{onNeedsToken && <Button kind="primary" onClick={onNeedsToken}>Sign in</Button>}</div>
-			</Empty>
-		);
-	}
+	/*
+	 * ---------------------------------------------------------------------------
+	 * THERE WAS A SIGN-IN WALL HERE, AND IT WAS THE WHOLE APP'S FRONT DOOR.
+	 *
+	 * Will: "when user navigates to site they can't access anything without
+	 * logging in to lichess. But most of our functionality does not require
+	 * lichess so I think that gating is really unnecessary."
+	 *
+	 * The gating was one `return` in this file, and it was the only one that
+	 * mattered, because Train is the landing tab. Everything else — Play,
+	 * Mistakes, Review, Progress, the engine, cloud evaluation, and game import
+	 * from BOTH sites — already worked signed out. The app looked locked and was
+	 * not.
+	 *
+	 * Taking the wall down alone would have produced a trainer that says "the
+	 * explorer has no games from this position" on move one, so the book comes
+	 * from `domain/localBook` instead when there is no token. What signing in
+	 * adds is real, and it is now offered as a reason rather than imposed as a
+	 * condition — see the banner below, which says what you gain, not what you
+	 * are being refused.
+	 * ---------------------------------------------------------------------------
+	 */
 
 	// The whole line's positions, from the moves themselves.
 	const line = useMemo(() => replayLine(state?.path ?? []), [state?.path.join(' ')]);
@@ -1198,12 +1310,12 @@ export function Train({
 				 * icon should name the effect you are looking at, not the panel that
 				 * happens to carry the controls.
 				 */
-				title: tableShown
-					? 'Hide the moves — arrows and table'
-					: 'Show the moves on the board — book, engine and what people play',
+				// The title says what a second press does, because a double press is
+				// a gesture nobody finds without being told. See `domain/tableToggle`.
+				title: moveTable.title,
 				icon: 'reveal',
 				accent: tableShown,
-				onClick: () => setTableShown(!tableShown),
+				onClick: moveTable.press,
 				disabled: !canInspect || busy,
 			},
 			{
@@ -1348,6 +1460,32 @@ export function Train({
 			  * nothing on screen saying so.
 			  */}
 
+			{/*
+			  * WHAT SIGNING IN ADDS, offered rather than demanded.
+			  *
+			  * This replaces a full-page wall. The difference is not politeness: a
+			  * wall says "you may not", which was false, and this says "here is what
+			  * you are missing", which is true and specific. Dismissible, and it
+			  * stays dismissed — a notice you cannot silence becomes furniture, and
+			  * furniture is not read.
+			  */}
+			{!signedIn && !hushed && (
+				<Note style={{ marginBottom: space.card }}>
+					<strong>Training from the bundled opening book.</strong> 1821 named lines, no
+					account needed. Signing in to Lichess swaps it for the live explorer: real
+					frequencies from players at your rating band, and an opponent whose mistakes are
+					the ones people actually make.{' '}
+					{onNeedsToken && (
+						<button onClick={onNeedsToken} style={{ fontSize: 13 }}>
+							Sign in
+						</button>
+					)}{' '}
+					<button onClick={() => hush()} style={{ fontSize: 13 }}>
+						Not now
+					</button>
+				</Note>
+			)}
+
 			<BoardPanel
 				fen={shownFen}
 				ourColour={state?.ourColour ?? 'w'}
@@ -1465,6 +1603,33 @@ export function Train({
 									they happened — your move, then their reply. Chronology is the
 									only ordering a reader does not have to be taught.
 								--------------------------------------------------------------- */}
+								{/* Thinking, in the slot the verdict will land in — so the
+									block does not appear from nowhere, and nothing stale is
+									left standing in for it. */}
+								{!feedback && busy && (
+									<div
+										style={{
+											marginTop: 8,
+											fontSize: 14,
+											color: color.ink2,
+											borderLeft: `3px solid ${color.line}`,
+											paddingLeft: 8,
+										}}
+									>
+										<div
+											style={{
+												fontSize: 11,
+												textTransform: 'uppercase',
+												letterSpacing: '0.06em',
+												opacity: 0.7,
+												marginBottom: 1,
+											}}
+										>
+											Your move
+										</div>
+										<Thinking show />
+									</div>
+								)}
 								{feedback && (
 									<div
 										style={{
@@ -1489,6 +1654,23 @@ export function Train({
 										{feedback.message}
 										{!feedback.correct && feedback.explanation && (
 											<div style={{ opacity: 0.9, marginTop: 2 }}>{feedback.explanation}</div>
+										)}
+										{/*
+										  * THE RUN IS HELD HERE, waiting to be told to carry on.
+										  *
+										  * Will: "prompt user before continuing so user has a chance
+										  * to actually read and consider." The two arrows are on the
+										  * board while this is up — yours in blue, the better move in
+										  * green — and the board is still the position they refer to.
+										  *
+										  * Deliberately NOT disabled by `busy`: `busy` is true for
+										  * exactly as long as this is waiting, so a control that
+										  * respected it could never be pressed.
+										  */}
+										{holding && (
+											<div style={{ marginTop: space.tight }}>
+												<Button onClick={() => holding()}>Got it — play on</Button>
+											</div>
 										)}
 									{/* A sequence in prose asks the reader to replay it in their head
 										before they can check the claim — which is the work they are
@@ -1923,8 +2105,19 @@ export function Train({
 					any rung, so hiding it only made the opponent's behaviour unexplainable
 					on exactly the setting where you notice it most. */}
 				<label style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+					{/*
+					  * "OF GAMES" IS ONLY TRUE SIGNED IN.
+					  *
+					  * The bar is a share, and what it is a share OF depends on which
+					  * book is answering: games at your band from the explorer, named
+					  * variations from the bundled table. Printing "of games" over the
+					  * offline book is the same small lie as quoting a played-percentage
+					  * off it — see `domain/localBook`. The control does the same job
+					  * either way; only the unit changes, so only the unit is swapped.
+					  */}
 					Opponent plays replies above{' '}
-					<strong>{(practice.minFreq * 100).toFixed(0)}%</strong> of games
+					<strong>{(practice.minFreq * 100).toFixed(0)}%</strong>{' '}
+					{signedIn ? 'of games' : 'of the named lines here'}
 					<input
 						type="range"
 						min={1}

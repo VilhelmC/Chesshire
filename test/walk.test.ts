@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect } from 'vitest';
-import { walkThrough, walkBackTo } from '../src/domain/walk';
+import { walkBack, walkBackTo, walkThrough } from '../src/domain/walk';
 import { lineFromSan, positionsOf, stepAt } from '../src/domain/line';
 import { INITIAL_FEN } from '../src/domain/chess';
 
@@ -102,5 +102,42 @@ describe('the positions a line passes through', () => {
 		const p = positionsOf(line);
 		const walk = walkThrough(p, 2 + 1, -1 + 1);
 		expect(walk).toEqual({ to: p[0], through: [p[2], p[1]] });
+	});
+});
+
+describe('the walk back to an earlier ply and off down a different move', () => {
+	// Will: "I asked you before that whenever we rewind the animation is a single
+	// move at a time. That is not happening when user clicks 'new reply'."
+	//
+	// "New reply" is a rewind FOLLOWED BY a different move, so the board ends up
+	// somewhere this game's positions do not contain — which is why neither
+	// `walkThrough` nor `walkBackTo` described it, and why nothing animated.
+	const fens = ['p0', 'p1', 'p2', 'p3', 'p4'];
+
+	it('steps back through every ply, including the one being returned to', () => {
+		// From ply 4 back to ply 1, then off to a position that is not in the game.
+		expect(walkBack(fens, 4, 1, 'other')).toEqual({
+			to: 'other',
+			through: ['p3', 'p2', 'p1'],
+		});
+	});
+
+	it('handles a branch from the position one ply back', () => {
+		expect(walkBack(fens, 2, 1, 'other')).toEqual({ to: 'other', through: ['p1'] });
+	});
+
+	it('does not show the same position twice running', () => {
+		// The destination can BE the ply returned to, when nothing has been played
+		// from it yet. Repeating it is a dropped frame that reads as a stutter.
+		expect(walkBack(fens, 3, 1, 'p1')).toEqual({ to: 'p1', through: ['p2'] });
+		// …and with nothing left in between, there is no walk at all.
+		expect(walkBack(fens, 2, 1, 'p1')).toBe(null);
+	});
+
+	it('refuses a walk that is not backwards, or is out of range', () => {
+		expect(walkBack(fens, 1, 3, 'other')).toBe(null);
+		expect(walkBack(fens, 2, 2, 'other')).toBe(null);
+		expect(walkBack(fens, 9, 1, 'other')).toBe(null);
+		expect(walkBack(fens, 3, -1, 'other')).toBe(null);
 	});
 });

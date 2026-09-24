@@ -184,9 +184,23 @@ describe('a run without any hardcoded lines', () => {
 		// exercise; the engine is the judge of harm.
 		expect(wrong.novelty).toBeDefined();
 		expect(wrong.message).toMatch(/not canon/i);
-		// And it names what the repertoire actually is, which is the point of saying
-		// anything at all.
-		expect(wrong.message).toMatch(/e4/);
+		/*
+		 * AND IT DOES NOT NAME THE LINE'S MOVE.
+		 *
+		 * This used to assert the opposite — "it names what the repertoire
+		 * actually is, which is the point of saying anything at all". Will:
+		 * "we shouldn't write out the correct move and show the arrow. User
+		 * should just get to guess again after being informed why their move
+		 * wasn't accepted."
+		 *
+		 * The position does not advance on a novelty, so printing the line's move
+		 * meant the very next thing asked for was a move that had just been spelled
+		 * out on screen. The REASON is still there in full — that is what the
+		 * `not canon` check above is for — and the answer is still reachable
+		 * through the move table, which teaches the position rather than handing
+		 * over one move.
+		 */
+		expect(wrong.message).not.toMatch(/e4/);
 	});
 
 	it('accepts a sound move whether or not anyone else plays it', async () => {

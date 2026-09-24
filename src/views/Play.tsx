@@ -39,6 +39,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	playFrom,
+	resign,
 	submitMove,
 	type RunState,
 	type SessionConfig,
@@ -47,7 +48,7 @@ import { applyUci, INITIAL_FEN, parseSquare } from '../domain/chess';
 import { BoardPanel } from '../components/BoardPanel';
 import { PositionStack } from '../components/PositionStack';
 import { MoveTable } from '../components/MoveTable';
-import { MoveList, MoveListHeader, type MoveChip } from '../components/MoveList';
+import { MoveList, MoveListHeader, MoveListLegend, type MoveChip } from '../components/MoveList';
 import { TrainingWheels } from '../components/TrainingWheels';
 import { Commentary } from '../components/CommentaryPanel';
 import { GameStats } from '../components/GameStats';
@@ -57,6 +58,7 @@ import { useMoveTable } from '../hooks/useMoveTable';
 import { useTrainingWheels } from '../hooks/useTrainingWheels';
 import { useLineOverlay } from '../hooks/useLineOverlay';
 import { useStepBack } from '../hooks/useStepBack';
+import { useMoveTableToggle } from '../hooks/useMoveTableToggle';
 import { useCommentary } from '../hooks/useCommentary';
 import { filterMoves, effectiveSources, type MoveSource } from '../domain/moveTable';
 import { arrowForRow } from './Train';
@@ -67,7 +69,7 @@ import { freeplayLosses } from '../domain/progress';
 import { loadProgress } from '../data/progress';
 import { recall, remember } from '../data/viewState';
 import { colourOfFen, other } from '../domain/notation';
-import { Button, Note, Segmented, Select } from '../ui/primitives';
+import { Note, Segmented, Select } from '../ui/primitives';
 import { color, space, text } from '../ui/theme';
 import type { ToolbarAction } from '../components/Toolbar';
 import type { Shape } from '../components/Board';
@@ -198,13 +200,18 @@ export function Play({
 	const [focus, setFocus] = useState<number | null>(null);
 	const [asking, setAsking] = useState<Ask | null>(null);
 	const [boardVersion, setBoardVersion] = useState(0);
-	const [tableShown, setTableShownState] = useState<boolean>(
-		() => recall('tableShown', (v) => typeof v === 'boolean') === true,
-	);
-	const setTableShown = useCallback((next: boolean) => {
-		setTableShownState(next);
-		remember({ tableShown: next });
-	}, []);
+	/*
+	 * THE MOVE TABLE'S BUTTON, from the shared hook.
+	 *
+	 * Three tabs held their own `tableShown` boolean with their own setter
+	 * writing the same stored key, and all three were about to need the same two
+	 * new behaviours — closing after a move, and a double press that pins. See
+	 * `hooks/useMoveTableToggle`, and `domain/tableToggle` for why closing is the
+	 * default: the table being up counts as HELP, so a toggle that lingers
+	 * silently marks every later move as assisted.
+	 */
+	const moveTable = useMoveTableToggle();
+	const tableShown = moveTable.shown;
 	/*
 	 * THE SCORING PANEL, under the same key Review uses.
 	 *
@@ -276,7 +283,19 @@ export function Play({
 	 * started as, which is what an evaluation is reported from.
 	 */
 	const mover = colourOfFen(shownFen, state?.ourColour ?? 'w');
-	const table = useMoveTable(tableShown ? (state?.fen ?? null) : null, mover, tableShown);
+	/*
+	 * THE TABLE IS ABOUT THE POSITION ON THE BOARD, not the one the game is in.
+	 *
+	 * Will: "in play when I step forward and backward and restart the overlays
+	 * don't update correctly."
+	 *
+	 * This read `state.fen` while everything else on the screen read `shownFen`,
+	 * so stepping back moved the board and left the move table — and therefore
+	 * the arrows drawn from it — describing a position several plies later. The
+	 * exact failure `shownFen` was introduced to prevent, in the one place that
+	 * did not use it.
+	 */
+	const table = useMoveTable(tableShown ? shownFen : null, mover, tableShown);
 
 	const arrows = useMemo<Shape[]>(() => {
 		if (lineOverlay.board) return lineOverlay.board.arrows;
@@ -291,9 +310,36 @@ export function Play({
 		if (!state || busyRef.current) return;
 		busyRef.current = true;
 		setBusy(true);
-		const before = state;
 		try {
-			const out = await submitMove(state, cfg, uci);
+			/*
+			 * EXPLORING, A STEP BACK IS A TAKE BACK. Against the engine it is not.
+			 *
+			 * Will: "in Play:explore stepping back or resetting doesn't let player
+			 * play a different move from that position, which makes explore really
+			 * annoying."
+			 *
+			 * Right, and the rule that produced it was right too — see
+			 * `hooks/useStepBack`: a game against an opponent must not be editable,
+			 * or the score stops meaning anything. Explore has NO opponent and
+			 * records nothing (`SessionConfig.opponent`), so there is no score to
+			 * protect and nothing to concede to. Trying a different move from an
+			 * earlier position IS what exploring is; refusing it left the board
+			 * read-only for the one use the mode exists for.
+			 *
+			 * So the game is rebuilt at the ply being looked at and the move played
+			 * into that. The plies after it are gone, which is what a take back
+			 * means and what was wanted.
+			 */
+			const rewound =
+				opponent === 'none' && !back.live && back.at !== null
+					? await playFrom(state.path, back.at, state.ourColour, cfg, 'free')
+					: null;
+			if (rewound) {
+				setLosses([]);
+				back.toLive();
+			}
+			const before = rewound ?? state;
+			const out = await submitMove(before, cfg, uci);
 			setState(out.state);
 			/*
 			 * EXPLORING WRITES NOTHING DOWN.
@@ -338,6 +384,7 @@ export function Play({
 			 * `components/GameStats`.
 			 */
 			if (opponent === 'engine' && out.cpLoss >= 0) setLosses((l) => [...l, out.cpLoss]);
+			moveTable.played();
 			if (!out.correct) setBoardVersion((v) => v + 1);
 		} catch (e) {
 			setError((e as Error).message);
@@ -348,14 +395,37 @@ export function Play({
 		}
 	}
 
-	const chips = (): MoveChip[] =>
-		(state?.path ?? []).map((san, i) => ({
-			san,
-			ply: i + 1,
-			mistake: false,
-			suboptimal: false,
-			white: i % 2 === 0,
-		}));
+	/*
+	 * THE SAME LIST THE OTHER TABS SHOW, marked the same way.
+	 *
+	 * Will: "Play's 'Moves so far' seems not to be exactly the same component as
+	 * in mistakes or train?" It was the same component with two things left off —
+	 * the legend below it, and any MARKS in it. Every chip was `suboptimal:
+	 * false`, so the list was a bare transcript where the other tabs' lists point
+	 * at the moves worth going back to, and a list that never marks anything
+	 * teaches a reader that it never will.
+	 *
+	 * The marks come from the same `losses` the scoring panel averages, which is
+	 * why they cost nothing: one source, two readings.
+	 */
+	const chips = (): MoveChip[] => {
+		let ours = 0;
+		return (state?.path ?? []).map((san, i) => {
+			// Our plies alternate with theirs, and `losses` holds one entry per
+			// measured move of OURS in order — so it is indexed by that count, not
+			// by the ply.
+			const mine = (i % 2 === 0 ? 'w' : 'b') === (state?.ourColour ?? 'w');
+			const cpLoss = mine ? losses[ours++] : undefined;
+			return {
+				san,
+				ply: i + 1,
+				mistake: false,
+				suboptimal: cpLoss !== undefined && cpLoss > 10,
+				...(cpLoss !== undefined && cpLoss > 10 ? { cpLoss } : {}),
+				white: i % 2 === 0,
+			};
+		});
+	};
 
 	function actions(): ToolbarAction[] {
 		if (lineOverlay.overlay)
@@ -406,10 +476,10 @@ export function Play({
 			},
 			{
 				id: 'options',
-				title: tableShown ? 'Hide the moves' : 'Show the moves on the board',
+				title: moveTable.title,
 				icon: 'reveal',
 				accent: tableShown,
-				onClick: () => setTableShown(!tableShown),
+				onClick: moveTable.press,
 				disabled: busy,
 			},
 			/*
@@ -437,6 +507,39 @@ export function Play({
 				accent: sharing,
 				disabled: !state?.path.length,
 			},
+			/*
+			 * HOW YOU LEAVE THIS GAME, and it is not the same act in both modes.
+			 *
+			 * Will: "in explore reset is the same as new game. If user is playing
+			 * against bot restart should be replaced by resign. There is no reason
+			 * I can see for the 'New game' button at the bottom."
+			 *
+			 * Right on all three. Resigning is conceding a game to an opponent —
+			 * the same argument that took the resign button out of the drill's book
+			 * phase — so exploring, where nobody is answering, has nothing to
+			 * concede and the honest control is "start again". And once a game
+			 * against the engine IS over, resigning it a second time means nothing,
+			 * so the cell becomes the way back to a fresh board. One cell, three
+			 * states, each of them the only sensible thing to offer there — which
+			 * is why the button at the bottom of the right-hand column is gone
+			 * rather than moved.
+			 */
+			opponent === 'none' || state?.finished
+				? {
+						id: 'newgame',
+						title: 'Start a new game from the initial position',
+						caption: 'new game',
+						icon: 'resign' as const,
+						onClick: () => void start([], 0, 'w'),
+						disabled: busy,
+					}
+				: {
+						id: 'resign',
+						title: 'Resign — end this game',
+						icon: 'resign' as const,
+						onClick: () => state && setState(resign(state)),
+						disabled: busy || !state?.path.length,
+					},
 		];
 	}
 
@@ -446,7 +549,10 @@ export function Play({
 				<BoardPanel
 					fen={shownFen}
 					ourColour={state?.ourColour ?? 'w'}
-					evalCp={state?.evalNow ?? null}
+					// NULL WHILE LOOKING BACK. `evalNow` is the live position's, and an
+					// evaluation bar that keeps showing it beside an earlier board is
+					// the same stale-overlay bug as the move table's.
+					evalCp={back.live && !lineOverlay.overlay ? (state?.evalNow ?? null) : null}
 					caption={{
 						// Follows the board, not the game — see Train, same slice.
 						path: back.live ? (state?.path ?? []) : (state?.path ?? []).slice(0, back.at ?? 0),
@@ -471,7 +577,18 @@ export function Play({
 					 * run-up. Without it, stepping back and playing would silently be a
 					 * take back — the thing this is deliberately not.
 					 */
-					interactive={!busy && !lineOverlay.overlay && back.live}
+					/*
+					 * ONLY THE LIVE POSITION TAKES A MOVE — AGAINST AN OPPONENT.
+					 *
+					 * Will: "game remains in current position and user can only play on
+					 * from that position", and then, of explore: "stepping back or
+					 * resetting doesn't let player play a different move from that
+					 * position, which makes explore really annoying."
+					 *
+					 * Both hold, because they are about different things. A game has a
+					 * score to protect; a sandbox does not. See `onMove`.
+					 */
+					interactive={!busy && !lineOverlay.overlay && (back.live || opponent === 'none')}
 					// EXPLORING MOVES BOTH COLOURS. The board already had this — it is
 					// what the Lab's sandbox uses — so it needed no new machinery.
 					movableColor={opponent === 'none' ? 'both' : 'auto'}
@@ -583,6 +700,9 @@ export function Play({
 									 */
 									onJump={lineOverlay.overlay ? lineOverlay.setAt : (ply) => back.step(ply - (back.at ?? (state?.path.length ?? 0)))}
 								/>
+								{/* The legend Train and Mistakes both show. Its absence here is
+									half of what made this list look like a different component. */}
+								{!lineOverlay.overlay && <MoveListLegend />}
 							</>
 						}
 					/>
@@ -657,11 +777,14 @@ export function Play({
 								}`
 							: 'Looking back through the game. Step forward to play on.'}
 				</Note>
-				<div style={{ marginTop: space.card }}>
-					<Button onClick={() => void start([], 0, 'w')} disabled={busy}>
-						New game
-					</Button>
-				</div>
+				{/*
+				  * THE "NEW GAME" BUTTON WAS HERE. Will: "there is no reason I can see
+				  * for the 'New game' button at the bottom." There was not: starting
+				  * over is an act on the game, and every other act on the game is a
+				  * cell in the strip beside the board. Having one of them alone at the
+				  * foot of the other column meant the one control you need after
+				  * resigning was the furthest thing on the screen from the board.
+				  */}
 			</div>
 		</div>
 	);

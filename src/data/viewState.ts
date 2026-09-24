@@ -63,7 +63,31 @@ export type ViewState = {
 	 * rather than as an empty one.
 	 */
 	tableShown?: boolean;
+	/**
+	 * …and whether it was asked to STAY up between moves.
+	 *
+	 * Will: "let's make 'show moves' untoggle when move is made by default.
+	 * Persistent toggled state can be gated behind double click?" So `tableShown`
+	 * is now "is it up right now" and this is "was that asked for deliberately".
+	 * Both are stored because the answer to the second should survive a reload
+	 * and the first should not — see `hooks/useMoveTableToggle`.
+	 */
+	tablePinned?: boolean;
 	tableOn?: string[];
+	/**
+	 * The strictness the Mistakes deck judges by.
+	 *
+	 * Its own, not the trainer's — see `views/Quiz`. Absent means "whatever the
+	 * trainer is set to", which is where the cards came from.
+	 */
+	quizStrictness?: string;
+	/**
+	 * The signed-out "training from the bundled book" notice has been dismissed.
+	 *
+	 * A notice you cannot silence becomes furniture, and furniture is not read —
+	 * which would make the one time it matters the time it is ignored.
+	 */
+	bookNoticeHushed?: boolean;
 	/**
 	 * Whether the scoring panel is on screen.
 	 *

@@ -25,6 +25,7 @@ const OWNED: Record<string, string> = {
 	'explain-panel': 'src/components/ExplainPanel.tsx',
 	'position-stack': 'src/components/PositionStack.tsx',
 	'position-caption': 'src/components/PositionCaption.tsx',
+	'quiz-deck': 'src/views/Quiz.tsx',
 	'eval-graph': 'src/components/EvalGraph.tsx',
 	/*
 	 * `line-banner` WAS HERE, AND IS NOT A THING ANY MORE.

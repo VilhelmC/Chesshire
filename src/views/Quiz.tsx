@@ -5,7 +5,7 @@
 // move. Getting it wrong puts the card straight back in the queue rather than
 // moving on, which is what "repeat until correct" means.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BoardPanel } from '../components/BoardPanel';
 import { PositionStack } from '../components/PositionStack';
 import type { ToolbarAction } from '../components/Toolbar';
@@ -22,11 +22,15 @@ import {
 	type MistakeCard,
 } from '../domain/mistakes';
 import { applyUci, sameMove, replayLine, parseSquare } from '../domain/chess';
-import { Chip, Empty, Button, Panel } from '../ui/primitives';
+import { Chip, Empty, Button, Panel, Select } from '../ui/primitives';
 import { ExplainPanel, type Ask } from '../components/ExplainPanel';
 import { TrainingWheels } from '../components/TrainingWheels';
 import { useTrainingWheels } from '../hooks/useTrainingWheels';
 import { useLineOverlay } from '../hooks/useLineOverlay';
+import { useMoveTableToggle } from '../hooks/useMoveTableToggle';
+import { acceptedAt } from '../engine/session';
+import { STRICTNESS, type Strictness } from '../domain/book';
+import { loadPractice } from '../domain/practice';
 import { useCommentary } from '../hooks/useCommentary';
 import { Commentary } from '../components/CommentaryPanel';
 import { MoveList, MoveListHeader, MoveListLegend } from '../components/MoveList';
@@ -112,13 +116,93 @@ export function Quiz({
 	 * having it reset when you crossed a tab boundary was itself a small lie
 	 * about the two screens being different things.
 	 */
-	const [tableShown, setTableShownState] = useState<boolean>(
-		() => recall('tableShown', (v) => typeof v === 'boolean') === true,
+	/*
+	 * THE MOVE TABLE'S BUTTON, from the shared hook.
+	 *
+	 * Three tabs held their own `tableShown` boolean with their own setter
+	 * writing the same stored key, and all three were about to need the same two
+	 * new behaviours — closing after a move, and a double press that pins. See
+	 * `hooks/useMoveTableToggle`, and `domain/tableToggle` for why closing is the
+	 * default: the table being up counts as HELP, so a toggle that lingers
+	 * silently marks every later move as assisted.
+	 */
+	const moveTable = useMoveTableToggle();
+	const tableShown = moveTable.shown;
+
+	/*
+	 * THE DECK'S OWN STRICTNESS.
+	 *
+	 * Will: "user needs to know the repertoire and strictness for the mistake
+	 * card to make sense, or the Mistakes tab needs its own strictness and
+	 * repertoire settings and card solutions are not saved with the card but
+	 * dynamic."
+	 *
+	 * Its own, and dynamic. Defaulting to whatever the trainer is set to, because
+	 * that is where the cards came from and a deck that judged differently from
+	 * the drill on day one would be its own puzzle — but a SEPARATE setting after
+	 * that, because reviewing is not drilling. Wanting to be held to the best
+	 * book move while practising and to accept anything sound while clearing a
+	 * backlog is a coherent pair of wishes, and one knob could not express it.
+	 *
+	 * Repertoire is deliberately NOT here: a card is a position, and a pinned
+	 * root is a filter over which positions a RUN visits. It has nothing to say
+	 * about a position already in front of you.
+	 */
+	const [strictness, setStrictnessState] = useState<Strictness>(
+		() =>
+			(recall('quizStrictness', (v) => STRICTNESS.some((s) => s.id === v)) as
+				| Strictness
+				| undefined) ?? loadPractice().strictness,
 	);
-	const setTableShown = useCallback((next: boolean) => {
-		setTableShownState(next);
-		remember({ tableShown: next });
+	const setStrictness = useCallback((next: Strictness) => {
+		setStrictnessState(next);
+		remember({ quizStrictness: next });
 	}, []);
+
+	/**
+	 * Every move that counts as right for the card in hand.
+	 *
+	 * Null while it is being worked out. `onMove` awaits the same promise rather
+	 * than reading this, so an answer played before it lands is still judged
+	 * against the full set — a race here would mark a correct move wrong, which
+	 * is the exact failure being fixed.
+	 */
+	const [accepted, setAccepted] = useState<{ uci: string; san: string }[] | null>(null);
+	const acceptedFor = useRef<{ id: string; strictness: Strictness; moves: Promise<{ uci: string; san: string }[]> } | null>(null);
+
+	const acceptedNow = useCallback(
+		(card: MistakeCard): Promise<{ uci: string; san: string }[]> => {
+			const hit = acceptedFor.current;
+			if (hit && hit.id === card.id && hit.strictness === strictness) return hit.moves;
+			const moves = acceptedAt({
+				fen: card.fen,
+				mover: card.ourColour,
+				minFreq: loadPractice().minFreq,
+				strictness,
+				// See `acceptedAt`: the card's own answer was accepted once, and a
+				// later search deciding it is 31cp short must not make the card
+				// unanswerable.
+				alwaysUci: card.expectedUci,
+			});
+			acceptedFor.current = { id: card.id, strictness, moves };
+			return moves;
+		},
+		[strictness],
+	);
+
+	// Fetched for display as well as for judging — the card says how many moves
+	// would be accepted, which is the fact Will could not see.
+	useEffect(() => {
+		let live = true;
+		setAccepted(null);
+		if (!current) return;
+		void acceptedNow(current).then((m) => {
+			if (live) setAccepted(m);
+		});
+		return () => {
+			live = false;
+		};
+	}, [current, acceptedNow]);
 	const vp = useViewport();
 	/**
 	 * Categories to draw from. Empty means all of them, not none.
@@ -464,12 +548,10 @@ export function Quiz({
 				 * and its arrows are up.
 				 */
 				id: 'options',
-				title: tableShown
-					? 'Hide the moves — arrows and table'
-					: 'Show the moves on the board — the engine, and what people play (stops this card counting)',
+				title: moveTable.title,
 				icon: 'reveal',
 				accent: tableShown,
-				onClick: () => setTableShown(!tableShown),
+				onClick: moveTable.press,
 				disabled: !current,
 			},
 			/*
@@ -536,10 +618,28 @@ export function Quiz({
 
 	async function onMove(uci: string) {
 		if (!current) return;
+		// The last answer's verdict goes NOW rather than when the next one lands —
+		// see Train's `onMove` for the failure that is. Here the gap is short, but
+		// "correct" left standing under a board you have just played a second move
+		// on is the same lie for however long it lasts.
+		setFeedback(null);
 
-		// Not string equality — a card whose answer is castling was stored with
-		// chessops' king-takes-rook spelling and could never be answered.
-		const correct = sameMove(current.fen, uci, current.expectedUci);
+		/*
+		 * JUDGED AGAINST THE POSITION, not against one stored string.
+		 *
+		 * `sameMove` rather than string equality is still needed — a card whose
+		 * answer is castling was stored with chessops' king-takes-rook spelling —
+		 * but it is now applied to every accepted move rather than to one. See
+		 * `acceptedAt`.
+		 *
+		 * Awaited rather than read off `accepted`: answering before the lookup
+		 * lands is normal on a fast connection with an obvious card, and judging
+		 * that against a half-built set would mark a correct move wrong, which is
+		 * the whole bug.
+		 */
+		const allowed = await acceptedNow(current);
+		const correct = allowed.some((m) => sameMove(current.fen, uci, m.uci));
+		const wasRecorded = sameMove(current.fen, uci, current.expectedUci);
 		// ANY help, not only a named answer — the table of evaluations names the
 		// move too, which is why `helped` is set by the table being up rather than
 		// by a button that promises the answer.
@@ -578,14 +678,25 @@ export function Quiz({
 			/* keep the uci */
 		}
 
+		// Closes unless pinned — and only on a CORRECT answer. A wrong one leaves
+		// the card in front of you to try again, and pulling the table away at the
+		// moment you most need it would be the opposite of help.
+		if (correct) moveTable.played();
+
 		if (correct) {
+			// A card can have several answers now, so "correct" sometimes means a
+			// move other than the one that was missed on the day. Saying so is the
+			// difference between a deck that feels arbitrary and one that does not.
+			const also = wasRecorded
+				? ''
+				: ` (${withGlyph(current.expectedSan, current.ourColour)} was the one you missed)`;
 			setFeedback({
 				ok: true,
 				text: helped
-					? `${san} — correct, but you used help. The card stays in the deck.`
+					? `${san} — correct${also}, but you used help. The card stays in the deck.`
 					: updated.retired
-						? `${san} — correct ${RETIRE_STREAK} times running. Retired.`
-						: `${san} — correct. ${RETIRE_STREAK - updated.streak} more to retire it.`,
+						? `${san} — correct${also} ${RETIRE_STREAK} times running. Retired.`
+						: `${san} — correct${also}. ${RETIRE_STREAK - updated.streak} more to retire it.`,
 			});
 			setDone((d) => d + 1);
 			// Correct answers leave the queue; a shown one goes to the back.
@@ -634,6 +745,167 @@ export function Quiz({
 			</Empty>
 		);
 	}
+
+	/*
+	 * THE DECK PANEL, built once and placed by the layout.
+	 *
+	 * Two columns when there is room; one when there is not, and then it goes
+	 * INTO the stack under the board rather than after it — above the history,
+	 * per Will. Written as a value rather than duplicated into both branches
+	 * because a panel rendered twice is a panel that drifts.
+	 */
+	const deckPanel = (
+		<div data-region="quiz-deck">
+				<h3 style={{ marginTop: 0 }}>Deck</h3>
+
+				{/*
+				  * WHAT COUNTS AS RIGHT, said out loud and changeable.
+				  *
+				  * Will: "user needs to know the repertoire and strictness for the
+				  * mistake card to make sense". Both halves are here: the rung is
+				  * named rather than inherited invisibly from the other tab, and the
+				  * line under it says how many moves that makes acceptable in the card
+				  * in front of you — which is the fact that was missing while four
+				  * right answers out of five were being marked wrong.
+				  */}
+				<div style={{ marginBottom: space.card }}>
+					<Select
+						label="What counts as right"
+						value={strictness}
+						onChange={setStrictness}
+						options={STRICTNESS.map((r) => ({ id: r.id, label: r.label }))}
+					/>
+					<p style={{ fontSize: text.note, color: INK_2, margin: `${space.tight}px 0 0` }}>
+						{STRICTNESS.find((r) => r.id === strictness)?.note}
+					</p>
+					{current && (
+						<p style={{ fontSize: text.note, color: INK_2, margin: `${space.tight}px 0 0` }}>
+							{accepted === null
+								? 'Working out what is accepted here…'
+								: accepted.length === 1
+									? 'One move is accepted in this position.'
+									: `${accepted.length} moves are accepted in this position.`}
+						</p>
+					)}
+				</div>
+
+				{/* Four different exercises share one deck; drilling one of them is a
+					reasonable thing to want. Nothing selected means everything, so an
+					empty filter never looks like an empty deck. */}
+				<div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+					{CATEGORIES.map((cat) => {
+						const n = counts[cat.id] ?? { total: 0, due: 0 };
+						const on = categories.includes(cat.id);
+						return (
+							<Chip
+								key={cat.id}
+								on={on}
+								onClick={() => toggleCategory(cat.id)}
+								disabled={n.total === 0}
+								title={`${cat.note} ${n.due} due of ${n.total}.`}
+							>
+								{cat.label}{' '}
+								<span style={{ opacity: 0.7 }}>
+									{n.due}/{n.total}
+								</span>
+							</Chip>
+						);
+					})}
+				</div>
+				{categories.length > 0 && (
+					<div style={{ marginBottom: 8 }}>
+						<Button kind="quiet" onClick={() => chooseCategories([])}>
+							Show all categories
+						</Button>
+					</div>
+				)}
+				<div style={{ fontSize: 14 }}>
+					<strong>{stats.due}</strong> due · {stats.learning} in the deck · {stats.retired}{' '}
+					retired
+				</div>
+				<p style={{ fontSize: 12, color: INK_2 }}>
+					A card retires after {RETIRE_STREAK} correct answers in a row on separate occasions.
+					Being shown the move does not count towards that — answering right after seeing the
+					answer is not evidence you knew it.
+				</p>
+
+				<h3>Hardest</h3>
+				{/*
+				  * WHAT THE POSITION WAS, AND A WAY INTO IT.
+				  *
+				  * Will: "the annotation is useless. Just says a move and variation,
+				  * but that tells user nothing about what the position was. Also user
+				  * needs to be able to click to display the problem on the board."
+				  *
+				  * Right on both counts, and they are the same fault. The row led with
+				  * the ANSWER — a bare `d5` — which is meaningless without the position
+				  * and is also the one thing a list of your weak spots should not be
+				  * shouting at you. What identifies a card is where it happened and
+				  * what you were answering, so that is what it leads with now, and the
+				  * answer is not shown at all: the row is a door to the card, and the
+				  * card is where you get to try it.
+				  */}
+				<ul style={{ listStyle: 'none', padding: 0, margin: 0, fontSize: text.note }}>
+					{[...inCategories(cards, categories)]
+						.sort((a, b) => b.lapses - a.lapses)
+						.slice(0, 8)
+						.map((c) => {
+							const last = lastMoveOf(c);
+							return (
+								<li key={c.id} style={{ borderBottom: `1px solid ${color.line}` }}>
+									<button
+										onClick={() =>
+											next([c, ...queue.filter((q) => q.id !== c.id)])
+										}
+										title="Put this position on the board"
+										style={{
+											display: 'block',
+											width: '100%',
+											textAlign: 'left',
+											background:
+												current?.id === c.id ? color.accentSoft : 'transparent',
+											border: 'none',
+											borderLeft: `3px solid ${
+												current?.id === c.id ? color.accent : 'transparent'
+											}`,
+											padding: `${space.snug}px ${space.snug}px`,
+											font: 'inherit',
+											color: color.ink,
+											cursor: 'pointer',
+											touchAction: 'manipulation',
+										}}
+									>
+										<div style={{ color: color.ink }}>{namesFor(c)}</div>
+										<div style={{ color: color.ink2, marginTop: 2 }}>
+											{last ? (
+												<>
+													after <Move san={last.san} colour={last.colour} size={12} />{' '}
+													·{' '}
+												</>
+											) : null}
+											you played <Move san={c.playedSan} colour={c.ourColour} size={12} />
+											{' · '}
+											missed {c.lapses}×{c.retired && ' · retired'}
+										</div>
+									</button>
+								</li>
+							);
+						})}
+				</ul>
+
+				{/* The debug handle now lives in the screen corner on every tab
+					(components/DebugCorner.tsx) — a bug is not always on this one. */}
+				<button
+					onClick={async () => {
+						await clearMistakes();
+						await reload();
+					}}
+					style={{ fontSize: 13, marginTop: 8 }}
+				>
+					Clear deck
+				</button>
+		</div>
+	);
 
 	return (
 		<div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
@@ -842,6 +1114,9 @@ export function Quiz({
 									)}
 								</>
 							}
+							// Stacked, the deck comes in here — above the history, because on
+							// this tab the run-up is the least important thing on the screen.
+							controls={vp.stacked ? deckPanel : null}
 							history={
 								<>
 									{/* The run-up to the position. A mistake from a real game
@@ -926,125 +1201,9 @@ export function Quiz({
 				)}
 			</div>
 
-			<div style={{ flex: vp.stacked ? '1 1 100%' : '1 1 260px', minWidth: 0 }}>
-				<h3 style={{ marginTop: 0 }}>Deck</h3>
-
-				{/* Four different exercises share one deck; drilling one of them is a
-					reasonable thing to want. Nothing selected means everything, so an
-					empty filter never looks like an empty deck. */}
-				<div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-					{CATEGORIES.map((cat) => {
-						const n = counts[cat.id] ?? { total: 0, due: 0 };
-						const on = categories.includes(cat.id);
-						return (
-							<Chip
-								key={cat.id}
-								on={on}
-								onClick={() => toggleCategory(cat.id)}
-								disabled={n.total === 0}
-								title={`${cat.note} ${n.due} due of ${n.total}.`}
-							>
-								{cat.label}{' '}
-								<span style={{ opacity: 0.7 }}>
-									{n.due}/{n.total}
-								</span>
-							</Chip>
-						);
-					})}
-				</div>
-				{categories.length > 0 && (
-					<div style={{ marginBottom: 8 }}>
-						<Button kind="quiet" onClick={() => chooseCategories([])}>
-							Show all categories
-						</Button>
-					</div>
-				)}
-				<div style={{ fontSize: 14 }}>
-					<strong>{stats.due}</strong> due · {stats.learning} in the deck · {stats.retired}{' '}
-					retired
-				</div>
-				<p style={{ fontSize: 12, color: INK_2 }}>
-					A card retires after {RETIRE_STREAK} correct answers in a row on separate occasions.
-					Being shown the move does not count towards that — answering right after seeing the
-					answer is not evidence you knew it.
-				</p>
-
-				<h3>Hardest</h3>
-				{/*
-				  * WHAT THE POSITION WAS, AND A WAY INTO IT.
-				  *
-				  * Will: "the annotation is useless. Just says a move and variation,
-				  * but that tells user nothing about what the position was. Also user
-				  * needs to be able to click to display the problem on the board."
-				  *
-				  * Right on both counts, and they are the same fault. The row led with
-				  * the ANSWER — a bare `d5` — which is meaningless without the position
-				  * and is also the one thing a list of your weak spots should not be
-				  * shouting at you. What identifies a card is where it happened and
-				  * what you were answering, so that is what it leads with now, and the
-				  * answer is not shown at all: the row is a door to the card, and the
-				  * card is where you get to try it.
-				  */}
-				<ul style={{ listStyle: 'none', padding: 0, margin: 0, fontSize: text.note }}>
-					{[...inCategories(cards, categories)]
-						.sort((a, b) => b.lapses - a.lapses)
-						.slice(0, 8)
-						.map((c) => {
-							const last = lastMoveOf(c);
-							return (
-								<li key={c.id} style={{ borderBottom: `1px solid ${color.line}` }}>
-									<button
-										onClick={() =>
-											next([c, ...queue.filter((q) => q.id !== c.id)])
-										}
-										title="Put this position on the board"
-										style={{
-											display: 'block',
-											width: '100%',
-											textAlign: 'left',
-											background:
-												current?.id === c.id ? color.accentSoft : 'transparent',
-											border: 'none',
-											borderLeft: `3px solid ${
-												current?.id === c.id ? color.accent : 'transparent'
-											}`,
-											padding: `${space.snug}px ${space.snug}px`,
-											font: 'inherit',
-											color: color.ink,
-											cursor: 'pointer',
-											touchAction: 'manipulation',
-										}}
-									>
-										<div style={{ color: color.ink }}>{namesFor(c)}</div>
-										<div style={{ color: color.ink2, marginTop: 2 }}>
-											{last ? (
-												<>
-													after <Move san={last.san} colour={last.colour} size={12} />{' '}
-													·{' '}
-												</>
-											) : null}
-											you played <Move san={c.playedSan} colour={c.ourColour} size={12} />
-											{' · '}
-											missed {c.lapses}×{c.retired && ' · retired'}
-										</div>
-									</button>
-								</li>
-							);
-						})}
-				</ul>
-
-				{/* The debug handle now lives in the screen corner on every tab
-					(components/DebugCorner.tsx) — a bug is not always on this one. */}
-				<button
-					onClick={async () => {
-						await clearMistakes();
-						await reload();
-					}}
-					style={{ fontSize: 13, marginTop: 8 }}
-				>
-					Clear deck
-				</button>
-			</div>
+			{!vp.stacked && (
+				<div style={{ flex: '1 1 260px', minWidth: 0 }}>{deckPanel}</div>
+			)}
 
 		</div>
 	);

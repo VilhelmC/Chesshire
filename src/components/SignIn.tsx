@@ -81,10 +81,26 @@ export function SignIn({ onChange }: { onChange?: () => void }) {
 			) : (
 				<Row
 					text={
+						/*
+						 * NOT "TO START". Nothing here needs starting.
+						 *
+						 * Will: "most of our functionality does not require lichess so I
+						 * think that gating is really unnecessary." The old sentence was
+						 * the wall's sentence, and it outlived the wall — Train runs on
+						 * the bundled book now (see `domain/localBook`), so "without this
+						 * the Train tab has no book" had become false.
+						 *
+						 * What it buys is worth saying exactly, because it IS worth
+						 * having: frequencies from real games, which is what makes the
+						 * opponent's mistakes the ones people actually make rather than
+						 * ones the engine picked.
+						 */
 						<>
-							<strong>Sign in with Lichess to start.</strong> The opening explorer refuses
-							anonymous requests, so without this the Train tab has no book to check you
-							against.
+							<strong>Optional.</strong> Everything works signed out — Train uses the
+							bundled book of 1821 named lines, and game import needs only a username.
+							Signing in swaps the book for Lichess&apos;s live explorer: real frequencies
+							from players at your rating band, and an opponent that goes wrong the way
+							they do.
 						</>
 					}
 					action={

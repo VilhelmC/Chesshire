@@ -64,6 +64,7 @@ The Lab, top to bottom:
 | `explain-numbers` | the move's own eval and the one baseline the verdict rests on |
 | `position-caption` | the one line above every board: which line this is, which move, and why you are looking at it |
 | `position-stack` | everything under the board, in the one order every tab uses |
+| `quiz-deck` | the Mistakes deck: which categories are drawn from, what is due, and the hardest cards |
 | `eval-graph` | the evaluation through a game: one point per ply, move bands, unmeasured stretches shaded |
 | `review-stats` / `play-stats` | how the game was played — two accuracies, the judgement counts, the chances they offered |
 | `move-list-header` | titles the move list, and says whose line it is showing when one is borrowed |

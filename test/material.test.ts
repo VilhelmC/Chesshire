@@ -23,11 +23,14 @@ describe('materialReport', () => {
 		expect(r.balance).toBe(0);
 	});
 
-	it('lists the pieces actually missing, cheapest first', () => {
+	it('lists the pieces actually missing, dearest first', () => {
+		// Will: "should read high to low so that most important pieces appear
+		// first." The row is read left to right, so a queen behind six pawns is
+		// the one fact on it that changes how you play, arriving last.
 		// Black is missing both knights and one pawn; White is intact.
 		const fen = 'r1bqkb1r/ppp1pppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 		const r = materialReport(fen, 'w');
-		expect(r.weTook).toEqual(['pawn', 'knight', 'knight']);
+		expect(r.weTook).toEqual(['knight', 'knight', 'pawn']);
 		expect(r.theyTook).toEqual([]);
 		expect(r.balance).toBe(7);
 	});
@@ -36,7 +39,7 @@ describe('materialReport', () => {
 		const fen = 'r1bqkb1r/ppp1pppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 		const asBlack = materialReport(fen, 'b');
 		expect(asBlack.balance).toBe(-7);
-		expect(asBlack.theyTook).toEqual(['pawn', 'knight', 'knight']);
+		expect(asBlack.theyTook).toEqual(['knight', 'knight', 'pawn']);
 		expect(asBlack.weTook).toEqual([]);
 	});
 
@@ -109,7 +112,7 @@ describe('who owns the men in each row', () => {
 	it('puts the OPPONENT’s men in "you have taken"', () => {
 		const asWhite = materialReport(FEN, 'w');
 		// White has taken Black's men, so `weTook` must be Black's missing pieces.
-		expect(asWhite.weTook).toEqual(['knight', 'bishop']);
+		expect(asWhite.weTook).toEqual(['bishop', 'knight']);
 		expect(asWhite.theyTook).toEqual(['rook']);
 
 		// And the same board read from the other side is the exact mirror. A bug

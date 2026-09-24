@@ -49,6 +49,7 @@ export function PositionStack({
 	commentary,
 	explain,
 	stats,
+	controls,
 	history,
 	footer,
 }: {
@@ -79,6 +80,18 @@ export function PositionStack({
 	 * they really apply to any game?"
 	 */
 	stats?: React.ReactNode;
+	/**
+	 * The tab's own panel, when the layout has stacked it under the board.
+	 *
+	 * Wide enough and this sits in a column of its own, beside everything here;
+	 * narrow enough and there is only one column, so it has to go SOMEWHERE in
+	 * this order. Above the history, because Will: "Deck options perhaps should
+	 * be above the 'How you got here' history — since the history is rather
+	 * unimportant in the Mistakes tab." He is right about that tab specifically:
+	 * the run-up to a card is context you glance at once, and which cards you are
+	 * being asked is the thing you came to change.
+	 */
+	controls?: React.ReactNode;
 	/** Step 5. Last of the things about chess, because it is the least urgent. */
 	history?: React.ReactNode;
 	/** Anything that belongs after all of it: a status line, an error. */
@@ -112,6 +125,7 @@ export function PositionStack({
 			{commentary}
 			{explain}
 			{stats}
+			{controls}
 			{history}
 			{footer}
 		</div>

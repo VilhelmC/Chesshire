@@ -145,6 +145,18 @@ export type BookMove = {
 	/** ECO name this move leads into, when the explorer knows one. */
 	name: string | null;
 	verdict: Verdict;
+	/**
+	 * WHERE `freq` CAME FROM.
+	 *
+	 * Absent means games, which is what it has always meant. `'variations'` means
+	 * the bundled offline book, where it is the share of NAMED VARIATIONS that
+	 * branch this way — a different claim, and one no screen may quote as "played
+	 * X% here". See `domain/localBook`.
+	 *
+	 * Optional so every existing construction keeps its meaning without being
+	 * touched, and so the default is the honest one.
+	 */
+	source?: 'games' | 'variations';
 };
 
 export type ClassifyOptions = {

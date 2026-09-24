@@ -10,7 +10,7 @@
 // they may choose differently, so the variations interleave naturally instead
 // of being blocked one at a time.
 
-import { fetchExplorer } from '../data/explorer';
+import { fetchExplorer, getToken } from '../data/explorer';
 import { analysePosition, toColourPov } from '../data/cloudEval';
 import { applyUci, applySan, positionKey, sideToMove, sameMove, INITIAL_FEN } from '../domain/chess';
 import { weightFor, itemKey, type MemoryStore } from '../domain/scheduler';
@@ -25,8 +25,11 @@ import {
 	movesTowardRoots,
 	liveRoots,
 	SOUND_CP,
+	EQUAL_CP,
 	type BookMove,
+	type Strictness,
 } from '../domain/book';
+import { localBook } from '../domain/localBook';
 import { activeRoots } from '../domain/practice';
 import type { PracticeConfig } from '../domain/practice';
 import { nameForPath } from '../domain/openings';
@@ -303,30 +306,113 @@ async function classifyAt(
 	const naming = { name: openingName(data), eco: data.opening?.eco ?? null };
 	if (!total) return { moves: [], ...naming };
 
-	const losses = new Map<string, number>();
-
-	if (opts.withEvals) {
-		const top = [...data.moves]
-			.sort((a, b) => b.white + b.draws + b.black - (a.white + a.draws + a.black))
-			.slice(0, CLASSIFY_TOP);
-
-		const base = await evalOf(fen, mover);
-		if (base !== null) {
-			// Concurrently: these are independent questions, and asking them one
-			// after another was most of the wait.
-			const scored = await Promise.all(
-				top.map(async (m) => {
-					const after = safePlay(fen, m.uci);
-					if (!after) return null;
-					const cp = await evalOf(after, mover);
-					return cp === null ? null : ([m.uci, Math.max(0, base - cp)] as const);
-				}),
-			);
-			for (const row of scored) if (row) losses.set(row[0], row[1]);
-		}
-	}
+	const top = [...data.moves]
+		.sort((a, b) => b.white + b.draws + b.black - (a.white + a.draws + a.black))
+		.slice(0, CLASSIFY_TOP)
+		.map((m) => m.uci);
+	const losses = opts.withEvals ? await costOf(fen, mover, top) : new Map<string, number>();
 
 	return { moves: classifyBook(data, { losses, minFreq }), ...naming };
+}
+
+/**
+ * What each of these moves gives up, from the mover's side.
+ *
+ * Extracted because the OFFLINE book needs exactly this and nothing else. Two
+ * copies of "score a handful of candidates against the position's own
+ * evaluation" is two chances to measure them differently, and this file's
+ * neighbour `engine/score.ts` exists because of what happened the last time two
+ * evaluations came from different places.
+ */
+async function costOf(
+	fen: string,
+	mover: 'w' | 'b',
+	ucis: string[],
+): Promise<Map<string, number>> {
+	const losses = new Map<string, number>();
+	const base = await evalOf(fen, mover);
+	if (base === null) return losses;
+	// Concurrently: these are independent questions, and asking them one after
+	// another was most of the wait.
+	const scored = await Promise.all(
+		ucis.map(async (uci) => {
+			const after = safePlay(fen, uci);
+			if (!after) return null;
+			const cp = await evalOf(after, mover);
+			return cp === null ? null : ([uci, Math.max(0, base - cp)] as const);
+		}),
+	);
+	for (const row of scored) if (row) losses.set(row[0], row[1]);
+	return losses;
+}
+
+/**
+ * The same question, asked of the bundled book instead of the explorer.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "most of our functionality does not require lichess so I think that
+ * gating is really unnecessary."
+ *
+ * The explorer is the one thing that does, and this is what stands in for it.
+ * See `domain/localBook` for what the bundled table can and cannot say — the
+ * short version is that it knows WHICH moves are theory and knows nothing about
+ * how often they are played, so soundness is measured here exactly as it is for
+ * the explorer's rows and the frequency is labelled rather than quoted.
+ */
+async function classifyLocally(
+	fen: string,
+	mover: 'w' | 'b',
+	minFreq: number,
+	opts: ClassifyAtOptions = {},
+): Promise<{ moves: BookMove[]; name: string | null; eco: string | null }> {
+	const local = localBook(fen, minFreq);
+	if (!local.moves.length || !opts.withEvals) return local;
+
+	const losses = await costOf(
+		fen,
+		mover,
+		local.moves.slice(0, CLASSIFY_TOP).map((m) => m.uci),
+	);
+	return {
+		...local,
+		moves: local.moves.map((m) => {
+			const cpLoss = losses.get(m.uci) ?? null;
+			if (cpLoss === null) return m;
+			// The verdict was frequency-only until now — see `localBook`. A measured
+			// cost outranks it, by the same thresholds `classifyBook` uses, so a
+			// popular blunder is called one in both modes.
+			return {
+				...m,
+				cpLoss,
+				verdict:
+					cpLoss >= BLUNDER_CP ? 'blunder' : cpLoss > SOUND_CP ? 'inaccuracy' : m.verdict,
+			};
+		}),
+	};
+}
+
+/**
+ * The book, from wherever there is one.
+ *
+ * Signed in, the explorer — real games at your band, which is the thing that
+ * makes the opponent's mistakes the ones people actually make. Signed out, or
+ * when the explorer refuses, the bundled table. Deliberately NOT a fallback on
+ * an empty-but-successful response: the explorer running out of games is the
+ * opening ENDING, which is the premise of this whole app, and resurrecting a
+ * shallower book there would talk over the one answer that matters.
+ */
+async function bookAt(
+	fen: string,
+	mover: 'w' | 'b',
+	minFreq: number,
+	opts: ClassifyAtOptions = {},
+): Promise<{ moves: BookMove[]; name: string | null; eco: string | null }> {
+	if (!getToken()) return classifyLocally(fen, mover, minFreq, opts);
+	try {
+		return await classifyAt(fen, mover, minFreq, opts);
+	} catch {
+		return classifyLocally(fen, mover, minFreq, opts);
+	}
 }
 
 /** A bounded evaluation from the mover's side, or null if it could not be had. */
@@ -493,7 +579,7 @@ async function withExpected(state: RunState, cfg: SessionConfig): Promise<RunSta
 	let book: BookMove[] = [];
 	let naming: { name: string | null; eco: string | null } = { name: null, eco: null };
 	try {
-		const c = await (cfg.classify ?? classifyAt)(state.fen, state.ourColour, cfg.practice.minFreq, {
+		const c = await (cfg.classify ?? bookAt)(state.fen, state.ourColour, cfg.practice.minFreq, {
 			withEvals: true,
 		});
 		book = c.moves;
@@ -621,6 +707,8 @@ export async function submitMove(
 			const after = applyUci(state.fen, uci).fen;
 			let refutation: string[] = [];
 			let loss = 0;
+			/** Set once the best ACCEPTED move has been searched at the same budget. */
+			let lineCp: number | null = null;
 			try {
 				const mine = await analysePosition(after, EVAL_DEPTH, 1);
 				const theirs = toColourPov(mine.pvs[0]?.cpWhite ?? 0, state.ourColour);
@@ -652,7 +740,6 @@ export async function submitMove(
 				// pinned line while walking into it".
 				const towardsRoot = movesTowardRoots(state.path, activeRoots(cfg.practice)).length > 0;
 				const bestLine = towardsRoot ? undefined : state.expected[0];
-				let lineCp: number | null = null;
 				if (bestLine) {
 					try {
 						const b = await analysePosition(applyUci(state.fen, bestLine.uci).fen, EVAL_DEPTH, 1);
@@ -669,6 +756,23 @@ export async function submitMove(
 					// the whole value — silently accepting it would teach nothing, and
 					// marking it wrong would teach something false.
 					const edge = Math.round(theirs - lineCp);
+					/*
+					 * IT NO LONGER SAYS WHAT THE LINE IS.
+					 *
+					 * Will: "when a mistake is made, or a better or equivalent move is
+					 * not accepted because the current strictness is book for example,
+					 * we shouldn't write out the correct move and show the arrow. User
+					 * should just get to guess again after being informed why their
+					 * move wasn't accepted."
+					 *
+					 * The old text ended "The line goes ♗Bc4", which is the answer, and
+					 * the position does not advance — so the next thing asked for was a
+					 * move that had just been printed on the screen. That is not a
+					 * retrieval attempt. The REASON stays, in full, because the reason
+					 * is the teaching; the answer is still reachable through the move
+					 * table, which shows the whole position rather than handing over
+					 * one move.
+					 */
 					return {
 						state,
 						correct: false,
@@ -676,8 +780,8 @@ export async function submitMove(
 						cpLoss: 0,
 						message:
 							edge > NOVELTY_TOLERANCE
-								? `${withGlyph(san, state.ourColour)} is better than the line by ${(edge / 100).toFixed(2)} — but it is not canon. The line goes ${withGlyph(bestLine!.san, state.ourColour)}.`
-								: `${withGlyph(san, state.ourColour)} is as good as the line, but it is not canon. The line goes ${withGlyph(bestLine!.san, state.ourColour)}.`,
+								? `${withGlyph(san, state.ourColour)} is better than the line by ${(edge / 100).toFixed(2)} — but it is not canon. Play the line.`
+								: `${withGlyph(san, state.ourColour)} is as good as the line, but it is not canon. Play the line.`,
 						refutation: [],
 						played: san,
 					};
@@ -693,7 +797,18 @@ export async function submitMove(
 				state,
 				correct: false,
 				cpLoss: loss,
-				message: await describeBookMistake(state, cfg, uci, san, loss),
+				// WHICH BASELINE the cost was measured against, so the sentence can
+				// say. `lineCp` is the best accepted move searched at the same budget;
+				// without it the fallback is the position before the move, and those
+				// are different claims. See `describeBookMistake`.
+				message: await describeBookMistake(
+					state,
+					cfg,
+					uci,
+					san,
+					loss,
+					lineCp !== null ? 'allowed' : 'position',
+				),
 				refutation,
 				played: san,
 			};
@@ -809,14 +924,40 @@ async function describeBookMistake(
 	uci: string,
 	san: string,
 	cpLoss = 0,
+	/** What the cost was measured against — see the caller. */
+	baseline: 'allowed' | 'position' = 'position',
 ): Promise<string> {
-	const want = state.expected.map((e) => withGlyph(e.san, state.ourColour)).join(' or ');
 	const move = withGlyph(san, state.ourColour);
+
+	/*
+	 * ------------------------------------------------------------------------
+	 * THE COST SENTENCE SAYS WHAT IT IS A COST AGAINST.
+	 *
+	 * Will: "the 'It also loses XXcp' formulation is pretty confusing. More
+	 * clear would be for example 'Move loses XX cp compared to best book move.'"
+	 *
+	 * Right, and "also" was the worst word in it: it implied a second, separate
+	 * complaint on top of being off the line, when it is the SAME complaint
+	 * measured. The number was always a difference against something and the
+	 * sentence never said what.
+	 *
+	 * "The best move allowed here" rather than "the best book move", because
+	 * which moves are allowed is the strictness ladder's business and changes
+	 * with the rung — at `bestEngine` the baseline is not a book move at all.
+	 * And when the baseline search did not happen — walking into a pinned root,
+	 * or the search failed — the fallback is the position before the move, which
+	 * is a DIFFERENT claim and is named as one rather than quietly reported as
+	 * the same thing.
+	 *
+	 * It does NOT name the move. See the novelty branch above for why.
+	 * ------------------------------------------------------------------------
+	 */
+	const against = baseline === 'allowed' ? 'the best move allowed here' : 'the position before it';
 	const cost =
 		cpLoss >= 200
-			? ` It also costs ${(cpLoss / 100).toFixed(1)} — this is a real mistake, not just a different move.`
+			? ` It loses ${(cpLoss / 100).toFixed(1)} against ${against} — a real mistake, not just a different move.`
 			: cpLoss >= MISTAKE_CP
-				? ` It also gives up ${cpLoss}cp.`
+				? ` It loses ${cpLoss}cp against ${against}.`
 				: '';
 
 	// Leaving the pinned filter is a different kind of wrong from a bad move: the
@@ -824,7 +965,7 @@ async function describeBookMistake(
 	const roots = activeRoots(cfg.practice);
 	if (roots.length && !liveRoots([...state.path, san], roots).length) {
 		const names = roots.map((r) => r.name).join(' or ');
-		return `${move} leaves ${names}, which is what you pinned. Play ${want}.`;
+		return `${move} leaves ${names}, which is what you pinned. Try again.`;
 	}
 
 	// Already classified this position for the expected set, so the reason a move
@@ -840,26 +981,37 @@ async function describeBookMistake(
 				? 'sound, but you are drilling the strongest book move here'
 				: cfg.practice.strictness === 'bestEngine'
 					? 'sound, but you are looking for the best move here'
-				: here.verdict === 'sound'
+				: here.verdict === 'sound' && here.source !== 'variations'
 					? `sound, but only played ${(here.freq * 100).toFixed(1)}% here`
-					: 'sound, but outside what you are practising';
-		return `${move}${named} — ${why}. Play ${want}.`;
+					/*
+					 * NO PERCENTAGE OFF THE BUNDLED BOOK.
+					 *
+					 * Its `freq` is the share of named VARIATIONS branching this way,
+					 * not the share of games — see `domain/localBook`. "Only played
+					 * 4.2% here" is a claim about other players, and offline there is
+					 * nothing to make it from. The rarity itself is still worth
+					 * saying; the number is not.
+					 */
+					: here.verdict === 'sound'
+						? 'sound, but a side line rather than main theory'
+						: 'sound, but outside what you are practising';
+		return `${move}${named} — ${why}. Try again.`;
 	}
 
 	try {
 		const data = await fetchExplorer(state.fen);
 		const row = data.moves.find((m) => m.uci === uci);
 		if (row?.opening?.name && cpLoss < MISTAKE_CP) {
-			return `${move} is the ${row.opening.name} — sound, but out of scope here. Play ${want}.`;
+			return `${move} is the ${row.opening.name} — sound, but out of scope here. Try again.`;
 		}
 		if (row?.opening?.name) {
-			return `${move} is the ${row.opening.name}. Play ${want}.${cost}`;
+			return `${move} is the ${row.opening.name}.${cost} Try again.`;
 		}
 	} catch {
 		/* naming is a nicety */
 	}
 
-	return `The line goes ${want}.${cost}`;
+	return `${move} is not the line here.${cost} Try again.`;
 }
 
 /** Their move: continue a variation, or make a genuine mistake. */
@@ -897,7 +1049,7 @@ async function opponentMove(
 
 	let book: BookMove[] = [];
 	try {
-		const c = await (cfg.classify ?? classifyAt)(
+		const c = await (cfg.classify ?? bookAt)(
 			state.fen,
 			other(state.ourColour),
 			cfg.practice.minFreq,
@@ -1374,3 +1526,89 @@ export async function playFrom(
 	}
 	return withExpected(state, cfg);
 }
+
+/**
+ * Every move that counts as right in a position, under a given strictness.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS EXISTS: A MISTAKE CARD HAD EXACTLY ONE ANSWER.
+ *
+ * Will: "there is a bug in how Mistakes are implemented. It seems only one
+ * solution is allowed although the card was formed with specific repertoire and
+ * strictness settings that often have more than one possible solution. User
+ * needs to know the repertoire and strictness for the mistake card to make
+ * sense, or the Mistakes tab needs its own strictness and repertoire settings
+ * and card solutions are not saved with the card but dynamic."
+ *
+ * He is right and the second half is the fix. A card stores `expectedUci` — ONE
+ * move, the one that happened to be first in the accepted set on the day the
+ * card was made — and the deck then tested equality against it. Under
+ * `bookSound` or `free` a position routinely has four acceptable moves, so
+ * three correct answers out of four were marked wrong, and no amount of
+ * knowing about it would have helped: the card was asking a question it had not
+ * recorded.
+ *
+ * So the deck asks the SAME question the drill asks, through the same ladder,
+ * against the position rather than against a stored string. `expectedUci`
+ * survives as what you missed that day — which is worth keeping and is not an
+ * answer key.
+ *
+ * ---------------------------------------------------------------------------
+ * THE FALLBACK IS THE POINT, NOT AN EDGE CASE.
+ *
+ * Half the deck is cards mined from real games, thirty plies deep, where the
+ * explorer has nothing at all. `acceptable` on an empty book is empty, and a
+ * card nothing can answer is worse than a card with one answer. So when the
+ * book is silent the engine speaks: everything within `EQUAL_CP` of its best.
+ *
+ * And `alwaysUci` — the card's own recorded answer — is unioned in regardless.
+ * It was accepted once; a later search at a different depth deciding it is 31cp
+ * short must not turn a card into one that cannot be solved.
+ */
+export async function acceptedAt(opts: {
+	fen: string;
+	mover: 'w' | 'b';
+	minFreq: number;
+	strictness: Strictness;
+	/** Accepted whatever else is, because it was accepted once. */
+	alwaysUci?: string;
+	/** Test seam, matching `SessionConfig.classify`. */
+	classify?: BookAt;
+}): Promise<{ uci: string; san: string }[]> {
+	const out = new Map<string, string>();
+	const add = (uci: string) => {
+		if (!uci || out.has(uci)) return;
+		const san = sanOf(opts.fen, uci);
+		if (san) out.set(uci, san);
+	};
+
+	try {
+		const c = await (opts.classify ?? bookAt)(opts.fen, opts.mover, opts.minFreq, {
+			withEvals: true,
+		});
+		for (const m of acceptable(c.moves, opts.strictness)) add(m.uci);
+	} catch {
+		// No explorer is not a failure here — see the header.
+	}
+
+	if (!out.size) {
+		try {
+			const a = await analysePosition(opts.fen, EVAL_DEPTH, ENGINE_ANSWERS);
+			const scored = a.pvs
+				.map((p) => ({ uci: p.pv[0], cp: toColourPov(p.cpWhite, opts.mover) }))
+				.filter((p) => p.uci);
+			if (scored.length) {
+				const best = Math.max(...scored.map((p) => p.cp));
+				for (const p of scored) if (best - p.cp <= EQUAL_CP) add(p.uci);
+			}
+		} catch {
+			/* nothing measurable — the recorded answer below is all there is */
+		}
+	}
+
+	if (opts.alwaysUci) add(opts.alwaysUci);
+	return [...out].map(([uci, san]) => ({ uci, san }));
+}
+
+/** How many engine lines to consider when the book has nothing to say. */
+const ENGINE_ANSWERS = 5;
