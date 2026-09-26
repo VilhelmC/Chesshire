@@ -45,7 +45,7 @@ export type MistakeCard = {
 	/** Line IDs, on cards made before paths were recorded. Never written now. */
 	lineIds?: string[];
 	ply: number;
-	phase: 'book' | 'punish' | 'freeplay' | 'game';
+	phase: 'book' | 'punish' | 'freeplay' | 'game' | 'puzzle';
 	/**
 	 * What kind of position this is, when it is a particular kind.
 	 *
@@ -80,7 +80,7 @@ export function makeCard(opts: {
 	path: string[];
 	opening?: string | null;
 	ply: number;
-	phase: 'book' | 'punish' | 'freeplay' | 'game';
+	phase: 'book' | 'punish' | 'freeplay' | 'game' | 'puzzle';
 	motif?: 'missed-punish';
 	origin?: CardOrigin;
 	now: number;
@@ -150,6 +150,17 @@ export const CATEGORIES: { id: MistakeCard['phase']; label: string; note: string
 		note: 'Mined from your Lichess and Chess.com games — your errors, and the chances you let go.',
 	},
 	{ id: 'freeplay', label: 'Free play', note: 'Moves that cost material after the book ran out.' },
+	{
+		id: 'puzzle',
+		label: 'Puzzles',
+		/*
+		 * Will: "failed puzzles into the Mistakes deck". The argument is the
+		 * deck's own: a puzzle you got wrong and then never saw again was a
+		 * measurement, not a lesson. On the schedule it comes back when you are
+		 * about to forget it rather than when the shuffle happens to reach it.
+		 */
+		note: 'Puzzles you did not solve. They come back on the schedule rather than at random.',
+	},
 ];
 
 /** Cards in the chosen categories. An empty selection means everything. */

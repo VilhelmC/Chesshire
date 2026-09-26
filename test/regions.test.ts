@@ -52,6 +52,8 @@ const PASSED: Record<string, string> = {
 	'play-move-list': 'src/views/Play.tsx',
 	'play-commentary': 'src/views/Play.tsx',
 	'play-stats': 'src/views/Play.tsx',
+	'puzzle-moves': 'src/views/Puzzles.tsx',
+	'puzzle-move-list': 'src/views/Puzzles.tsx',
 	'review-stats': 'src/views/Review.tsx',
 	'train-commentary': 'src/views/Train.tsx',
 	'quiz-commentary': 'src/views/Quiz.tsx',

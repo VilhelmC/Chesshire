@@ -91,6 +91,49 @@ export type SavedSession = {
 	losses?: number[];
 };
 
+/**
+ * How much the app was helping when a puzzle was attempted.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "needs to be able to use our existing assistance machinery (like show
+ * moves and training wheels overlay), but of course doesn't count puzzle as
+ * solved if assistance were used (alternatively we reserve a separate rating
+ * for different assistance classes so user can track how they perform with
+ * help)."
+ *
+ * The RATING only moves on `'none'` — a solve you were shown is not evidence of
+ * sight, and a rating that counted it would drift upwards exactly as the
+ * cp-loss estimate once did. But the class is RECORDED on every attempt, not
+ * just thrown away, so "how do I do with the arrows on" is an answerable
+ * question rather than one that needs a schema change to ask.
+ * ---------------------------------------------------------------------------
+ */
+export type AssistLevel = 'none' | 'wheels' | 'moves';
+
+export type PuzzleAttempt = {
+	/** `${puzzleId}:${at}` — the same puzzle can be met more than once. */
+	id: string;
+	at: number;
+	puzzleId: string;
+	/** Lichess's rating for it, copied so history survives a corpus change. */
+	puzzleRating: number;
+	themes: string[];
+	solved: 0 | 1;
+	assist: AssistLevel;
+	/** The rating after this attempt, so the graph needs no replay. */
+	ratingAfter: number;
+	ratingDeviationAfter: number;
+	/** Solver moves made before it ended, for "how far did I get". */
+	movesMade: number;
+};
+
+export type PuzzleRatingRow = {
+	id: 'current';
+	r: number;
+	rd: number;
+	at: number;
+};
+
 export type GameRow = {
 	id: string; // platform:gameId
 	platform: 'lichess' | 'chesscom' | 'pgn';
@@ -223,6 +266,8 @@ export class OffbookDb extends Dexie {
 	imported!: Table<ImportedGameRow, string>;
 	labNotes!: Table<LabNote, string>;
 	handles!: Table<LinkedHandle, string>;
+	puzzleAttempts!: Table<PuzzleAttempt, string>;
+	puzzleRating!: Table<PuzzleRatingRow, string>;
 	commentaryRegister!: Table<CommentaryRegisterRow, string>;
 	commentaryPages!: Table<CommentaryPageRow, string>;
 
@@ -272,6 +317,24 @@ export class OffbookDb extends Dexie {
 			// so far each time the register is refreshed.
 			commentaryRegister: 'id, builtAt',
 			commentaryPages: 'page, fetchedAt',
+		});
+		this.version(10).stores({
+			/*
+			 * PUZZLES: one row per attempt, plus one row holding the rating.
+			 *
+			 * Attempts rather than a per-puzzle record, because the same puzzle can
+			 * be met again and the interesting questions — how your rating moved,
+			 * how you do with help against without — are about the sequence, not
+			 * about the latest state of each puzzle. Indexed on `at` because every
+			 * read of it is "recently, in order".
+			 *
+			 * The rating lives in `puzzleRating` as a single row rather than being
+			 * recomputed from the attempts on every load: `decayed` depends on the
+			 * clock, so replaying history would give a different answer each time
+			 * it ran, which is not what a stored rating should do.
+			 */
+			puzzleAttempts: 'id, at, puzzleId, solved',
+			puzzleRating: 'id',
 		});
 		// AnswerRow gained `path` (the move sequence, replacing `lineIds`) without
 		// a version bump: it is not an index, and Dexie stores undeclared fields

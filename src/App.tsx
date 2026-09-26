@@ -1,16 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Settings } from './views/Settings';
 import { Train } from './views/Train';
 import { Progress } from './views/Progress';
 import { Review } from './views/Review';
 import { Quiz } from './views/Quiz';
-import { Lab } from './views/Lab';
+import { Puzzles } from './views/Puzzles';
 import { Play, type PlayHandoff } from './views/Play';
 import { DebugCorner } from './components/DebugCorner';
 import { BugReport } from './components/BugReport';
 import { InstallBar } from './components/InstallBar';
 import { Footer } from './components/Footer';
 import { completeSignIn, type SignInResult } from './data/lichessAuth';
+import { isWorking, subscribeWorking } from './data/working';
 import { startBackgroundImport } from './data/autoImport';
 import { useViewport } from './components/useViewport';
 import { color, sans } from './ui/theme';
@@ -38,7 +39,7 @@ import { Mark } from './ui/Mark';
  * game from this morning" is a reason to open the app, not a footnote to a
  * chart. Hidden behind a button, it read as absent.
  */
-type Tab = 'train' | 'play' | 'quiz' | 'review' | 'progress' | 'lab' | 'settings';
+type Tab = 'train' | 'play' | 'puzzles' | 'quiz' | 'review' | 'progress' | 'settings';
 
 export default function App() {
 	const [tab, setTab] = useState<Tab>('train');
@@ -72,6 +73,17 @@ export default function App() {
 	// `none` is filtered out at the point it is stored, so the banner's type
 	// says only what the banner can actually be.
 	const [signIn, setSignIn] = useState<Exclude<SignInResult, { status: 'none' }> | null>(null);
+
+	/*
+	 * THE APP'S ONE "SOMETHING IS HAPPENING" SIGNAL.
+	 *
+	 * Counted in `data/cloudEval`, where every search in the app passes through,
+	 * so no view has to remember to report anything. `useSyncExternalStore` is
+	 * the right hook precisely because the store is not React's — it subscribes
+	 * without a provider above the tree and without re-rendering anything but
+	 * this header.
+	 */
+	const working = useSyncExternalStore(subscribeWorking, isWorking, () => false);
 	useEffect(() => {
 		if (consumed) return;
 		consumed = true;
@@ -109,7 +121,7 @@ export default function App() {
 					{/* Inline rather than an <img>: the mark has to invert with the
 						theme, including a manual override, which no image can see.
 						Same drawing the home-screen icons come from. */}
-					<Mark size={vp.phone ? 34 : 46} />
+					<Mark size={vp.phone ? 34 : 46} spin={working} />
 					<div>
 					<h1 style={{ margin: 0, fontSize: vp.phone ? 24 : undefined }}>Chesshire</h1>
 					{/* The tagline is the first thing to go when the screen is the
@@ -175,6 +187,9 @@ export default function App() {
 				<TabButton compact={vp.phone} active={tab === 'play'} onClick={() => setTab('play')}>
 					Play
 				</TabButton>
+				<TabButton compact={vp.phone} active={tab === 'puzzles'} onClick={() => setTab('puzzles')}>
+					Puzzles
+				</TabButton>
 				<TabButton compact={vp.phone} active={tab === 'quiz'} onClick={() => setTab('quiz')}>
 					Mistakes
 				</TabButton>
@@ -184,14 +199,7 @@ export default function App() {
 				<TabButton compact={vp.phone} active={tab === 'progress'} onClick={() => setTab('progress')}>
 					Progress
 				</TabButton>
-				{/* Not on a phone. Six labels no longer cross a 360px screen, and
-					the Lab is unusable there anyway — it is six tables and a FEN
-					field. Absent where it cannot work beats present and broken. */}
-				{!vp.phone && (
-					<TabButton active={tab === 'lab'} onClick={() => setTab('lab')}>
-						Lab
-					</TabButton>
-				)}
+
 				<TabButton compact={vp.phone} active={tab === 'settings'} onClick={() => setTab('settings')}>
 					Settings
 				</TabButton>
@@ -207,6 +215,21 @@ export default function App() {
 				{tab === 'play' && (
 					<Play handoff={handoff} onHandoffUsed={() => setHandoff(null)} />
 				)}
+
+				{/*
+				  * PUZZLES TOOK THE LAB'S PLACE IN THE BAR, and the Lab went to
+				  * Settings → Instruments where the other instruments already live.
+				  *
+				  * Will: "redesign the dev only 'Lab' tab to a proper user facing
+				  * Puzzle tab … or make a new tab with that functionality."
+				  *
+				  * Neither, quite: the Lab is not a puzzle trainer with a bad coat of
+				  * paint — it is detectors, per-ply notes and a file-linked notebook,
+				  * all of it there so the app's own analysis can be distrusted. That
+				  * does not become a learner's screen by renaming it. What it CAN give
+				  * up is the slot, which keeps the bar at seven.
+				  */}
+				{tab === 'puzzles' && <Puzzles />}
 
 				{tab === 'quiz' && (
 					<Quiz
@@ -227,7 +250,7 @@ export default function App() {
 					rather than as the only door to a hidden screen. */}
 				{tab === 'progress' && <Progress onOpenReview={() => setTab('review')} />}
 
-				{tab === 'lab' && <Lab />}
+
 
 				{tab === 'settings' && <Settings onImported={() => setDataVersion((v) => v + 1)} />}
 			</main>

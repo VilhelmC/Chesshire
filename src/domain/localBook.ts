@@ -190,3 +190,28 @@ export function localBook(
 export function inLocalBook(fen: string): boolean {
 	return (bookIndex().get(positionKey(fen))?.edges.size ?? 0) > 0;
 }
+
+/**
+ * Does a named line go this way?
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "theory does not care how frequent a move is and book is defined by
+ * theory not move frequency."
+ *
+ * This is that definition, and it is the reason the bundled table earns its
+ * keep even when the explorer is available. The explorer answers "how many
+ * games went this way", which is a fact about players; only a named-lines table
+ * answers "is this written down", which is what book MEANS. A move played in
+ * 0.2% of games is theory if it has a name, and a move played in 40% of them is
+ * not if nobody has written it down.
+ *
+ * Keyed by POSITION, so a transposition into a named line is theory however it
+ * was reached — see `bookIndex`.
+ * ---------------------------------------------------------------------------
+ */
+export function namesTheory(fen: string, uci: string): boolean {
+	const node = bookIndex().get(positionKey(fen));
+	if (!node) return false;
+	for (const e of node.edges.values()) if (e.uci === uci) return true;
+	return false;
+}

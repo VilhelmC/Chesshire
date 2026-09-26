@@ -68,20 +68,35 @@ import type { ExplorerMove, ExplorerResponse } from './types';
 export type Strictness = 'bestBook' | 'bookSound' | 'free' | 'bestEngine';
 
 export const STRICTNESS: { id: Strictness; label: string; note: string }[] = [
+	/*
+	 * ---------------------------------------------------------------------------
+	 * THESE NOTES SAID "REAL GAMES PLAY HERE", AND THAT STOPPED BEING TRUE.
+	 *
+	 * Will: "theory does not care how frequent a move is and book is defined by
+	 * theory not move frequency." Once `verdict` came from a named-lines book
+	 * instead of from a frequency bar, two of the four descriptions were
+	 * describing the rule they used to implement — which is the worst kind of
+	 * stale comment, because these are not comments. They are the words on the
+	 * screen next to the radio buttons, so a reader choosing between the rungs
+	 * was being told the old rule while the new one judged them.
+	 *
+	 * "Real games play here" is `popular` in the move table, and nowhere else.
+	 * ---------------------------------------------------------------------------
+	 */
 	{
 		id: 'bestBook',
 		label: 'Best book move',
-		note: 'The strongest move anybody actually plays here. Ties count — anything within a third of a pawn of it is the same move as far as this is concerned.',
+		note: 'The strongest move theory names here — however often or rarely people play it. Ties count: anything within a third of a pawn of the best is the same move as far as this is concerned.',
 	},
 	{
 		id: 'bookSound',
 		label: 'Engine-approved book',
-		note: 'A move real games play here, that the engine also has no objection to. Theory, minus the dubious parts of it.',
+		note: 'Any move a named line goes through, that the engine also has no objection to. Theory, minus the dubious parts of it. Near the first move that is most of what is legal, so pin an opening if you want a narrower drill.',
 	},
 	{
 		id: 'free',
 		label: 'Anything sound',
-		note: 'Only moves that actually cost something are wrong. Popularity is ignored, so a good rarity is accepted and told you it is rare.',
+		note: 'Only moves that actually cost something are wrong. Whether a move has a name is ignored here, so an unwritten idea is accepted on its merits.',
 	},
 	{
 		id: 'bestEngine',
@@ -163,6 +178,35 @@ export type ClassifyOptions = {
 	/** Centipawns behind best, keyed by uci. Missing entries leave cpLoss null. */
 	losses?: Map<string, number>;
 	minFreq?: number;
+	/**
+	 * IS THIS MOVE THEORY? Answered by the caller, from a book.
+	 *
+	 * -------------------------------------------------------------------------
+	 * Will: "you're conflating move frequency with whether it is 'book' — that's
+	 * why I'm objecting to 0.2% reason. Theory does not care how frequent a move
+	 * is and book is defined by theory not move frequency."
+	 *
+	 * He is right, and the conflation was load-bearing rather than cosmetic:
+	 * `verdict` was assigned `'book'` when `freq >= minFreq` and `'sound'`
+	 * otherwise, `isTheory` reads `verdict`, and BOTH book rungs of the
+	 * strictness ladder are built on `isTheory`. So a slider labelled "how
+	 * mainstream your opponent is" — which says in its own help text that it
+	 * "does not judge your own moves" — was deciding what counted as a right
+	 * answer. The interface was already telling the truth and the code disagreed
+	 * with it.
+	 *
+	 * The definition that does not reference frequency was already in the
+	 * repository: 1821 named ECO lines. A move is theory when a named line goes
+	 * that way, however rare it is, and a move nobody has written down is not
+	 * theory however popular. Supplied as a CALLBACK rather than imported so this
+	 * module stays free of the book it is classifying against — `domain/localBook`
+	 * imports from here, and the dependency must not run both ways.
+	 *
+	 * Absent means "no book to ask", and then nothing is theory — which is the
+	 * honest answer past where the book reaches, and the premise of the app.
+	 * -------------------------------------------------------------------------
+	 */
+	isTheory?: (uci: string) => boolean;
 };
 
 /**
@@ -176,7 +220,16 @@ export function classifyBook(
 	data: ExplorerResponse,
 	opts: ClassifyOptions = {},
 ): BookMove[] {
-	const minFreq = opts.minFreq ?? DEFAULT_MIN_FREQ;
+	/*
+	 * `minFreq` IS NOT READ HERE ANY MORE, and that is the change.
+	 *
+	 * It decided `verdict`, and `verdict` decides what the strictness ladder
+	 * accepts — so a setting about the OPPONENT was judging the reader's moves.
+	 * It still governs which replies the opponent draws from (`opponentBook`,
+	 * `punishable`), which is a genuine question about what people play. The
+	 * option stays in the type because those callers pass it through the same
+	 * object.
+	 */
 	const total = data.moves.reduce((s, m) => s + gamesOf(m), 0);
 	if (!total) return [];
 
@@ -187,12 +240,23 @@ export function classifyBook(
 		return { m, games, freq, cpLoss };
 	});
 
-	// The most-played sound move is the one labelled 'main'. That is a fact about
-	// the book — it is what the display calls the main line — and nothing in
-	// `acceptable` reads it any more: the rungs sort by SCORE, not by popularity,
-	// which is the whole point of the revision.
+	/*
+	 * WHAT IS THEORY HERE — the caller's book, or nothing.
+	 *
+	 * The explorer's own naming counts too: when it attaches an opening name to a
+	 * move it is saying that move has a name, which is the same claim the ECO
+	 * table makes and is available deeper than the bundled one reaches.
+	 */
+	const theory = (uci: string, named: boolean): boolean =>
+		named || (opts.isTheory?.(uci) ?? false);
+
+	// The most-played THEORY move is the one labelled 'main'. Popularity picks
+	// which of the named lines is the main one, which is a frequency question and
+	// legitimately so — but it can no longer promote a move into the book, only
+	// rank moves already in it. Nothing in `acceptable` reads the label anyway:
+	// the rungs sort by SCORE.
 	const popularSound = [...rows]
-		.filter((r) => (r.cpLoss ?? 0) <= SOUND_CP)
+		.filter((r) => (r.cpLoss ?? 0) <= SOUND_CP && theory(r.m.uci, !!r.m.opening?.name))
 		.sort((a, b) => b.freq - a.freq)[0];
 
 	return rows.map((r) => {
@@ -201,9 +265,10 @@ export function classifyBook(
 		if (loss >= BLUNDER_CP) verdict = 'blunder';
 		else if (loss > SOUND_CP) verdict = 'inaccuracy';
 		else if (popularSound && r.m.uci === popularSound.m.uci) verdict = 'main';
-		else if (r.freq >= minFreq) verdict = 'book';
-		// Sound but seldom played. NOT an error — see `acceptable`. Rarity is a
-		// fact about other people, not about the move.
+		else if (theory(r.m.uci, !!r.m.opening?.name)) verdict = 'book';
+		// Sound, and not a move anybody has named. NOT an error — see
+		// `acceptable`. Being unwritten is a fact about the literature, not about
+		// the move.
 		else verdict = 'sound';
 
 		return {

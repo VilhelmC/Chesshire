@@ -192,6 +192,8 @@ export function Board({
 	apiRefRef.current = apiRef;
 
 	const lastFen = useRef<string>('');
+	/** The walk most recently animated, so no journey is replayed. See below. */
+	const walked = useRef<BoardProps['via']>(null);
 	const lastVersion = useRef<number>(-1);
 	const lastMoveKey = lastMove ? lastMove.join('') : '';
 	const arrowsKey = arrows.map((a) => `${a.orig}${a.dest}${a.brush}${a.label ?? ''}`).join(',');
@@ -304,10 +306,30 @@ export function Board({
 				animation: { duration: ANIM_MS },
 			});
 
-		// A walk this caller asked for, for THIS position — see `via`. A value
-		// left over from an earlier transition names a different destination and
-		// is ignored rather than replayed at the wrong moment.
-		const through = via && via.to === fen ? via.through : [];
+		/*
+		 * A walk this caller asked for, for THIS position — see `via`. A value
+		 * left over from an earlier transition names a different destination and
+		 * is ignored rather than replayed at the wrong moment.
+		 *
+		 * AND EACH ONE IS WALKED ONCE.
+		 *
+		 * Will: "after 'new reply', if next move is a mistake, the animation
+		 * reversing the moves from the replay are repeated again even though it
+		 * doesn't pertain to the current situation."
+		 *
+		 * The destination check was not enough, because a REFUSED move does not
+		 * advance the run — so `fen` is still the walk's destination — while
+		 * `version` is bumped to put the dropped piece back. This effect depends
+		 * on `version`, so it re-ran and replayed a journey that had already
+		 * happened, over a board that had not moved.
+		 *
+		 * Identity, not equality: every walk is a fresh object from `walkThrough`
+		 * or `walkBack`, so doing the same jump twice really does animate twice
+		 * while re-rendering for any other reason does not.
+		 */
+		const fresh = via !== walked.current;
+		walked.current = via;
+		const through = via && fresh && via.to === fen ? via.through : [];
 		if (!through.length || reducedMotion()) {
 			land();
 			return;
@@ -359,6 +381,7 @@ export function Board({
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [fen, lastMoveKey, version, via]);
+
 
 	useEffect(() => {
 		const cg = api.current;

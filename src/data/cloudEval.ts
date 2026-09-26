@@ -19,6 +19,7 @@
 // ---------------------------------------------------------------------------
 
 import { db } from './db';
+import { startWorking } from './working';
 import { engine, toWhitePov } from '../engine/stockfish';
 import { sideToMove } from '../domain/chess';
 
@@ -157,7 +158,23 @@ export function analysePosition(
 		return result;
 	};
 
-	const p = run().finally(() => inflight.delete(key));
+	/*
+	 * THE ONE PLACE THAT CANNOT BE WRONG ABOUT WHETHER THE APP IS THINKING.
+	 *
+	 * Every search in the app arrives here — the classifier, the bar, the move
+	 * table, the punishment, the scorer — so counting them here means no view has
+	 * to remember to report anything, and a view that forgets cannot make the
+	 * header lie. See `data/working`.
+	 *
+	 * Outside the cache hit deliberately: a result already on disk is not work,
+	 * and flickering the mark for a synchronous read would make the signal mean
+	 * nothing.
+	 */
+	const done = startWorking();
+	const p = run().finally(() => {
+		inflight.delete(key);
+		done();
+	});
 	inflight.set(key, p);
 	return p;
 }

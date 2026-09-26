@@ -24,6 +24,7 @@ import { ImportGames } from './ImportGames';
 import { Build } from './Build';
 import { Coverage } from './Coverage';
 import { Drills } from './Drills';
+import { Lab } from './Lab';
 import { Section, Disclosure, Note } from '../ui/primitives';
 import { ThemeControl } from '../ui/ThemeControl';
 import { space } from '../ui/theme';
@@ -83,6 +84,25 @@ export function Settings({ onImported }: { onImported: () => void }) {
 					note="Ranks positions by punishment gap against how often they occur — the research tool the drill pipeline was built from."
 				>
 					<Drills />
+				</Disclosure>
+
+				{/*
+				  * THE LAB, which used to be a tab.
+				  *
+				  * It gave its place in the bar to Puzzles — see `App` — and this is
+				  * where it belongs anyway: it is a diagnostic, and the note at the
+				  * top of this section is already the right description of it. A
+				  * screen that "exists to be distrusted" sitting between Mistakes and
+				  * Review implied it was part of the training.
+				  *
+				  * Inside a Disclosure, so none of its six tables or its engine work
+				  * start until it is opened.
+				  */}
+				<Disclosure
+					summary="The Lab"
+					note="Lichess puzzles with every lens the app has, turned off by default. Where the analysis is checked against positions nobody here chose."
+				>
+					<Lab />
 				</Disclosure>
 			</Section>
 

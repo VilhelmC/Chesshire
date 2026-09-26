@@ -15,6 +15,8 @@ import { analysePosition, toColourPov } from '../data/cloudEval';
 import { applyUci, applySan, positionKey, sideToMove, sameMove, INITIAL_FEN } from '../domain/chess';
 import { weightFor, itemKey, type MemoryStore } from '../domain/scheduler';
 import { detectMotifs } from './motifs';
+import { signed } from '../domain/annotate';
+import { punishOutcome } from '../domain/punish';
 import { scoreMove } from './score';
 import {
 	classifyBook,
@@ -29,7 +31,7 @@ import {
 	type BookMove,
 	type Strictness,
 } from '../domain/book';
-import { localBook } from '../domain/localBook';
+import { localBook, namesTheory } from '../domain/localBook';
 import { activeRoots } from '../domain/practice';
 import type { PracticeConfig } from '../domain/practice';
 import { nameForPath } from '../domain/openings';
@@ -39,6 +41,15 @@ import { materialBalance as balanceOf, describeBalance } from '../domain/materia
 
 const EVAL_DEPTH = 20;
 const ACCEPT_MARGIN = 60;
+/**
+ * Below this, "something was better" is noise.
+ *
+ * Two evaluations of the same position at the same budget still differ by a few
+ * centipawns, and a trainer that stops to report a tenth of a pawn teaches the
+ * reader to dismiss it. The same threshold the move list already uses to
+ * underline a move as worth another look.
+ */
+const BETTER_CP = 10;
 const MISTAKE_CP = 60;
 /**
  * How far below the line move an off-book move may sit and still not be an error.
@@ -56,8 +67,6 @@ const MISTAKE_CP = 60;
  */
 const NOVELTY_TOLERANCE = 10;
 const BLUNDER_CP = 120;
-/** Our moves demanded after a mistake before the run is called won. */
-const MAX_PUNISH_PLIES = 3;
 /** Evaluation at which the punishment is judged complete. */
 const WIN_CP = 250;
 
@@ -165,6 +174,39 @@ export type RunState = {
 	lastOpponent: OpponentMove | null;
 	motifs: Motif[];
 	evalNow: number | null;
+	/**
+	 * What the opponent handed over, and what it was worth when they did.
+	 *
+	 * -------------------------------------------------------------------------
+	 * THREE FACTS, BECAUSE THE PHASE IS JUDGED ON ALL THREE.
+	 *
+	 * Will: "they already did blunder — the premise of the punishment feature is
+	 * that the opponent just blundered in their last move. You're measuring when
+	 * the punishment is complete wrong. A better measure would probably be
+	 * something like the punishment is complete when user moves are past giving
+	 * back the advantage created by opponent."
+	 *
+	 * Which corrects two things at once. The first is that `gift` was being read
+	 * off the absolute evaluation — `Math.max(0, base)` — so "what they gave you"
+	 * and "how good your position is" were the same number. They are not: a
+	 * blunder that takes you from −2.0 to −0.5 is a gift of 1.5 in a position you
+	 * are still losing, and the old reading called that gift zero.
+	 *
+	 * The second is what COMPLETE means. It was `ev >= WIN_CP`, an absolute bar,
+	 * which can never be reached in that same −0.5 position however perfectly you
+	 * punish. The question is not "are you winning" but "did you keep what they
+	 * gave you", and answering it needs the size of the gift and the material on
+	 * the board when it arrived.
+	 * -------------------------------------------------------------------------
+	 */
+	punishment: {
+		/** Evaluation right after their mistake — where the punishment starts. */
+		base: number;
+		/** Centipawns their mistake cost them. What there is to take. */
+		gift: number;
+		/** Material balance when the phase began, so banking it is detectable. */
+		material: number;
+	} | null;
 	punishPlies: number;
 	finished: null | 'line-complete' | 'punished' | 'abandoned' | 'resigned';
 	note: string | null;
@@ -237,6 +279,31 @@ export type MoveOutcome = {
 	/** Engine reply to a wrong move — the consequence to show. */
 	refutation: string[];
 	played: string;
+	/**
+	 * REFUSED BY THE RUNG, BUT NOT AN ERROR.
+	 *
+	 * Will, issue #3 ("Wrong injunction"): "the explanation for why my move is
+	 * rejected is in red text even though move is judged sound by engine."
+	 *
+	 * The app was already saying so in words — every one of these messages begins
+	 * "sound, but …" — and painting it in the failure colour anyway. Red is read
+	 * before the sentence is, so the sentence was arguing with itself.
+	 *
+	 * Distinct from `novelty`, which is the narrower claim that the move is as
+	 * good as the line. This one only says the engine does not object; it may
+	 * still be measurably worse and still be refused for a reason the rung owns.
+	 */
+	sound?: boolean;
+	/**
+	 * A move the engine would rather have played, with the line after it.
+	 *
+	 * Set whenever the move was ACCEPTED and something measurably better
+	 * existed — at every rung, which is the point. The strictness ladder decides
+	 * what is allowed; whether something was better is a fact about the position
+	 * and does not change with the setting. Absent when the played move was the
+	 * engine's, or when nothing could be measured.
+	 */
+	better?: { uci: string; san: string; line: string[] };
 	/**
 	 * OFF THE LINE, AND NOT A MISTAKE.
 	 *
@@ -312,7 +379,14 @@ async function classifyAt(
 		.map((m) => m.uci);
 	const losses = opts.withEvals ? await costOf(fen, mover, top) : new Map<string, number>();
 
-	return { moves: classifyBook(data, { losses, minFreq }), ...naming };
+	return {
+		// THEORY IS ASKED OF A BOOK, not inferred from the game counts this very
+		// response carries — see `ClassifyOptions.isTheory`. The explorer's own
+		// move naming is consulted too, inside `classifyBook`, because it reaches
+		// deeper than the bundled table.
+		moves: classifyBook(data, { losses, minFreq, isTheory: (uci) => namesTheory(fen, uci) }),
+		...naming,
+	};
 }
 
 /**
@@ -416,6 +490,46 @@ async function bookAt(
 }
 
 /** A bounded evaluation from the mover's side, or null if it could not be had. */
+/**
+ * The engine's own choice here, and the line it sees after it.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "when there is a better engine move we should always get the
+ * notification a better move exists, regardless of strictness … when user is
+ * alerted to better move they should be offered to see the sequence on the
+ * board the same way we do for when a move is an error."
+ *
+ * The second half is why this returns a LINE and not a move. A refuted mistake
+ * already gets "show it on the board", and the reason that works is that the
+ * consequence is a sequence — you see why. "Bc4 was better" with nothing after
+ * it is an assertion; the line is the argument.
+ *
+ * SAME ARGUMENTS AS `evalOf`, deliberately. `analysePosition` keys its cache on
+ * fen, depth, PV count and movetime, so asking for the position's best line
+ * costs nothing once its evaluation has been asked for — which it always has by
+ * this point, because that is what fills the bar.
+ */
+async function bestLineAt(
+	fen: string,
+	mover: 'w' | 'b',
+): Promise<{ uci: string; san: string; line: string[]; cp: number } | null> {
+	try {
+		const a = await analysePosition(fen, CLASSIFY_DEPTH, 1, CLASSIFY_MOVETIME_MS);
+		const pv = a.pvs[0];
+		if (!pv?.pv.length) return null;
+		return {
+			uci: pv.pv[0],
+			san: sanOf(fen, pv.pv[0]),
+			// Four plies: long enough to show the idea, short enough that the board
+			// is still recognisably the position you are being told about.
+			line: pv.pv.slice(0, 4),
+			cp: toColourPov(pv.cpWhite, mover),
+		};
+	} catch {
+		return null;
+	}
+}
+
 async function evalOf(fen: string, mover: 'w' | 'b'): Promise<number | null> {
 	try {
 		const a = await analysePosition(fen, CLASSIFY_DEPTH, 1, CLASSIFY_MOVETIME_MS);
@@ -451,6 +565,7 @@ export async function startRun(cfg: SessionConfig): Promise<RunState> {
 		lastOpponent: null,
 		motifs: [],
 		evalNow: null,
+		punishment: null,
 		punishPlies: 0,
 		finished: null,
 		note: null,
@@ -793,9 +908,13 @@ export async function submitMove(
 				/* naming still works without an evaluation */
 			}
 
+			// The classifier already measured this move; if it did not object, the
+			// refusal is the RUNG's and must not be dressed as a blunder.
+			const known = state.bookHere.find((m) => sameMove(state.fen, m.uci, uci));
 			return {
 				state,
 				correct: false,
+				...(known && (known.cpLoss ?? 0) <= SOUND_CP ? { sound: true } : {}),
 				cpLoss: loss,
 				// WHICH BASELINE the cost was measured against, so the sentence can
 				// say. `lineCp` is the best accepted move searched at the same budget;
@@ -820,21 +939,89 @@ export async function submitMove(
 		const loss = (state.evalNow ?? got) - got;
 
 		if (loss > ACCEPT_MARGIN) {
-			// Deliberately does NOT name the right move. Handing over the answer on
-			// the first miss removes the retrieval attempt, which is the part that
-			// builds the memory. The caller reveals it on request.
+			/*
+			 * Deliberately does NOT name the right move. Handing over the answer on
+			 * the first miss removes the retrieval attempt, which is the part that
+			 * builds the memory. The caller reveals it on request.
+			 *
+			 * IT DOES SAY WHAT THE BAR IS. Will, issue #2: "this punishment asks
+			 * for a move that is outside the current strictness setting … there is
+			 * no clear way to discover that." Punishing does not use the rung at
+			 * all — it accepts anything within `ACCEPT_MARGIN` of the engine's
+			 * best, which is a wider target than "the one move" it reads as, and
+			 * saying the number turns "why was that refused" into an answerable
+			 * question.
+			 */
 			return {
 				state,
 				correct: false,
 				cpLoss: Math.round(loss),
-				message: `${withGlyph(san, state.ourColour)} gives up ${Math.round(loss)}cp. Try again.`,
+				message: `${withGlyph(san, state.ourColour)} gives up ${Math.round(loss)}cp — more than the ${(ACCEPT_MARGIN / 100).toFixed(1)} allowed while punishing, where your strictness setting does not apply. Try again.`,
 				refutation: a.pvs[0]?.pv.slice(0, 4) ?? [],
 				played: san,
 			};
 		}
 
 		cpLoss = Math.max(0, Math.round(loss));
-		altNote = describeAlternative(san, state.expected[0]?.san, cpLoss, state.ourColour);
+	}
+
+	/*
+	 * ---------------------------------------------------------------------------
+	 * WAS SOMETHING BETTER? ASKED AT EVERY RUNG.
+	 *
+	 * Will: "when there is a better engine move we should always get the
+	 * notification a better move exists, regardless of strictness."
+	 *
+	 * It was not being asked at all on the path that matters most. An ACCEPTED
+	 * book move left `cpLoss` at zero and computed no alternative, so at any
+	 * loose rung — where most of the book is accepted — playing the fourth-best
+	 * move in the position was met with silence. The comparison only ever ran on
+	 * the punish and free-play branch.
+	 *
+	 * The two halves come from different places and both are already paid for.
+	 * WHAT IT COST is `bookHere`, which carries a measured `cpLoss` per move from
+	 * the classifier. WHAT WAS BETTER is the position's own best line, which
+	 * shares a cache entry with the evaluation behind the bar. So this costs one
+	 * lookup and no new search on the common path.
+	 *
+	 * The old `describeAlternative(…, state.expected[0]?.san, …)` named the first
+	 * ACCEPTED move, which at 'free' is whatever the explorer happened to list
+	 * first — not the best one. Naming a move that is not actually better was
+	 * worse than saying nothing.
+	 * ---------------------------------------------------------------------------
+	 */
+	let better: MoveOutcome['better'];
+	const best = await bestLineAt(state.fen, state.ourColour);
+	if (accepted) {
+		const here = state.bookHere.find((m) => sameMove(state.fen, m.uci, uci));
+		/*
+		 * UNMEASURED IS NOT ZERO, AND THAT MATTERS MOST HERE.
+		 *
+		 * `bookHere` carries a cost only for the `CLASSIFY_TOP` most-played moves
+		 * — four of them — so an offbeat accepted move arrives with `cpLoss` null.
+		 * Defaulting that to zero said "nothing was better" about precisely the
+		 * moves most likely to have something better, and it did so silently: the
+		 * first thing tried after this was written was 1.a3, which is exactly the
+		 * case, and the trainer answered "Correct."
+		 *
+		 * `acceptable` treats an unmeasured move as best ON PURPOSE — refusing a
+		 * good move because nobody has paid for a search is the worse failure. But
+		 * that is a rule about what to ACCEPT, and reusing it for what to REPORT
+		 * inverted its meaning. So this measures, once, at the classifier's own
+		 * budget so the two numbers are comparable, and only when the move was not
+		 * scored already.
+		 */
+		let loss = here?.cpLoss ?? null;
+		if (loss === null && best) {
+			const after = safePlay(state.fen, uci);
+			const got = after ? await evalOf(after, state.ourColour) : null;
+			if (got !== null) loss = Math.max(0, best.cp - got);
+		}
+		cpLoss = Math.max(0, Math.round(loss ?? 0));
+	}
+	if (cpLoss > BETTER_CP && best && !sameMove(state.fen, best.uci, uci)) {
+		better = { uci: best.uci, san: best.san, line: best.line };
+		altNote = describeAlternative(san, best.san, cpLoss, state.ourColour);
 	}
 
 	// Accepted — play it, then let them reply.
@@ -850,8 +1037,53 @@ export async function submitMove(
 		const a = await analysePosition(next.fen, EVAL_DEPTH, 1);
 		const ev = toColourPov(a.pvs[0]?.cpWhite ?? 0, next.ourColour);
 		next.evalNow = ev;
-		if (ev >= WIN_CP || next.punishPlies >= MAX_PUNISH_PLIES) {
-			const reason = ev >= WIN_CP ? 'threshold' : 'plies';
+		const p = next.punishment ?? { base: ev, gift: 0, material: balanceOf(next.fen, next.ourColour) };
+		/*
+		 * ---------------------------------------------------------------------
+		 * IT ENDS ON AN OUTCOME, AND THE OUTCOME IS ABOUT THE GIFT.
+		 *
+		 * Will: "the punishment is complete when user moves are past giving back
+		 * the advantage created by opponent."
+		 *
+		 * So the test is not "are you winning" — that is a question about the
+		 * whole position, most of which the blunder did not create and some of
+		 * which no punishment can reach. It is "is what they gave you still
+		 * yours, and is it yours for good".
+		 *
+		 * REALIZED, three ways, all of them meaning the gift cannot be handed
+		 * back any more:
+		 *
+		 *   BANKED — material has changed in your favour since the blunder, and
+		 *     the evaluation has not fallen. A piece on the board is the one form
+		 *     of advantage that cannot evaporate, which is what "past giving it
+		 *     back" means in the ordinary case: they hung it, you took it, done.
+		 *
+		 *   DOUBLED — the evaluation has risen by as much again as the gift.
+		 *     Covers the punishment that wins nothing material — a shattered king,
+		 *     a bind — where there is no capture to bank and the conversion is
+		 *     real all the same.
+		 *
+		 *   DECISIVE — past `WIN_CP` outright, whatever the gift was worth. A
+		 *     position this won is not going to be given back by accident.
+		 *
+		 * SQUANDERED is the other ending, and it now measures against the REAL
+		 * gift rather than against the absolute score. The rule is
+		 * `missedTheChance`'s, which Review already uses to decide a chance went
+		 * by — one definition of "you gave it back", so the trainer and the review
+		 * cannot disagree about the same moment.
+		 *
+		 * Nothing caps a long conversion. Every ply still has to be within
+		 * `ACCEPT_MARGIN` of best, so it is the engine's line being played out,
+		 * and `restart` is the first control in the strip throughout.
+		 * ---------------------------------------------------------------------
+		 */
+		const base = p.base;
+		// The arithmetic is `domain/punish`'s — eight lines that could only be
+		// reached by driving a whole run against a live engine were eight lines
+		// nothing tested, which is how they came to be measuring the wrong thing.
+		const outcome = punishOutcome(p, ev, balanceOf(next.fen, next.ourColour));
+		if (outcome !== 'running') {
+			const reason = outcome;
 			return {
 				state: {
 					...next,
@@ -863,6 +1095,12 @@ export async function submitMove(
 						ev,
 						reason,
 						a.pvs[0]?.pv ?? [],
+						base,
+						// How long it took. `punishPlies` used to exist only to be
+						// compared against the cap, and with the cap gone it would have
+						// been a field written on every move and read by nothing — so it
+						// says the one thing it actually knows.
+						next.punishPlies,
 					),
 				},
 				correct: true,
@@ -870,6 +1108,7 @@ export async function submitMove(
 				message: altNote ?? 'Punished.',
 				refutation: [],
 				played: san,
+				...(better ? { better } : {}),
 			};
 		}
 	}
@@ -881,11 +1120,13 @@ export async function submitMove(
 		state: next,
 		correct: true,
 		cpLoss,
-		message: accepted
-			? 'Correct.'
-			: (altNote ?? `${withGlyph(san, state.ourColour)} works too.`),
+		// "Correct." on its own is right only when nothing was better. When
+		// something was, saying so IS the lesson — and at a loose rung that is
+		// most of what the drill has to teach.
+		message: altNote ?? (accepted ? 'Correct.' : `${withGlyph(san, state.ourColour)} works too.`),
 		refutation: [],
 		played: san,
+		...(better ? { better } : {}),
 	};
 }
 
@@ -981,20 +1222,30 @@ async function describeBookMistake(
 				? 'sound, but you are drilling the strongest book move here'
 				: cfg.practice.strictness === 'bestEngine'
 					? 'sound, but you are looking for the best move here'
-				: here.verdict === 'sound' && here.source !== 'variations'
-					? `sound, but only played ${(here.freq * 100).toFixed(1)}% here`
-					/*
-					 * NO PERCENTAGE OFF THE BUNDLED BOOK.
-					 *
-					 * Its `freq` is the share of named VARIATIONS branching this way,
-					 * not the share of games — see `domain/localBook`. "Only played
-					 * 4.2% here" is a claim about other players, and offline there is
-					 * nothing to make it from. The rarity itself is still worth
-					 * saying; the number is not.
-					 */
-					: here.verdict === 'sound'
-						? 'sound, but a side line rather than main theory'
-						: 'sound, but outside what you are practising';
+				/*
+				 * NO PERCENTAGE, BECAUSE FREQUENCY IS NOT THE REASON.
+				 *
+				 * Will: "you're conflating move frequency with whether it is 'book'
+				 * — that's why I'm objecting to 0.2% reason."
+				 *
+				 * It was the reason, and it should not have been: `verdict` came from
+				 * `freq >= minFreq`, so a named line played rarely was refused for
+				 * being rare. Now `verdict === 'sound'` means no book names this
+				 * move, which is a claim about the literature and has no percentage
+				 * in it. See `ClassifyOptions.isTheory`.
+				 */
+				: here.verdict === 'sound'
+					? 'sound, but not a move theory names here'
+					: 'sound, but outside what you are practising';
+	/*
+	 * TWO BRANCHES BECAME ONE.
+	 *
+	 * There was a second `verdict === 'sound'` case for the offline book, saying
+	 * "a side line rather than main theory" — written to avoid quoting a
+	 * percentage that meant something different offline. With `verdict` no longer
+	 * derived from frequency at all, the two books give the same answer for the
+	 * same reason, so there is one sentence and it is true in both.
+	 */
 		return `${move}${named} — ${why}. Try again.`;
 	}
 
@@ -1106,6 +1357,20 @@ async function opponentMove(
 			punishPlies: 0,
 			motifs: detail.motifs,
 			evalNow: detail.evalAfter,
+			/*
+			 * What there is to punish, recorded where it is known.
+			 *
+			 * `picked.cpLoss` is what their move gave up, measured by the
+			 * classifier against this very position — so the gift is read off
+			 * THEIR move rather than inferred from how good the result looks. That
+			 * is the difference between "they hung a rook" and "you were winning
+			 * anyway", which the absolute evaluation cannot tell apart.
+			 */
+			punishment: {
+				base: detail.evalAfter,
+				gift: Math.max(0, Math.round(picked.cpLoss ?? 0)),
+				material: balanceOf(next.fen, next.ourColour),
+			},
 		};
 		return {
 			...punished,
@@ -1238,8 +1503,17 @@ export function describeAdvantage(
 	fen: string,
 	ourColour: 'w' | 'b',
 	cp: number,
-	reason: 'threshold' | 'plies',
+	reason: 'realized' | 'squandered',
 	pv: string[] = [],
+	/**
+	 * Where the punishment started — the evaluation right after their mistake.
+	 *
+	 * Omitted by callers that have no baseline, and then the sentence falls back
+	 * to describing the position, which is what it always did.
+	 */
+	base: number | null = null,
+	/** Moves spent on the punishment, when the caller counted them. */
+	plies = 0,
 ): string {
 	const now = balanceOf(fen, ourColour);
 	const settled = balanceOf(settle(fen, pv), ourColour);
@@ -1249,22 +1523,87 @@ export function describeAdvantage(
 	// that a material sentence would misdescribe. Say only what is certain.
 	const trustMaterial = settled >= 1 && cp > 0;
 
+	/*
+	 * ---------------------------------------------------------------------------
+	 * IT USED TO CLAIM AN ADVANTAGE IT HAD NOT CHECKED FOR.
+	 *
+	 * Will, issue #1 ("punishment error"): "App is telling me my position is much
+	 * better but I'm losing and clearly my queen will be captured on white's next
+	 * move."
+	 *
+	 * Exactly what it did. "Your position is much better" was the ELSE of
+	 * `trustMaterial`, and `trustMaterial` is false whenever `cp <= 0` — so every
+	 * losing position fell into it. The sentence was written for the one path
+	 * that reaches here with a win (`reason === 'threshold'`, which tests
+	 * `cp >= WIN_CP`) and then reused for the other, which is the ply cap and
+	 * fires at ANY evaluation. The number was printed right beside the claim it
+	 * contradicted.
+	 *
+	 * The shape of the bug is worth naming: a function that is correct for its
+	 * first caller, given a second caller that does not meet its unstated
+	 * precondition. The precondition is now in the code rather than in the head
+	 * of whoever wrote the first call.
+	 * ---------------------------------------------------------------------------
+	 */
 	let what: string;
 	if (trustMaterial && settled === now) {
 		what = describeBalance(settled);
 	} else if (trustMaterial) {
 		// The count on the board is not the count you will keep.
 		what = `${describeBalance(settled)} once the exchange finishes`;
-	} else {
+	} else if (cp >= WIN_CP) {
 		what = 'Your position is much better';
+	} else if (cp > 0) {
+		what = 'You are a little better';
+	} else if (cp > -WIN_CP) {
+		what = 'The position is about level';
+	} else {
+		what = 'You are worse here';
 	}
 
-	const why =
-		reason === 'threshold'
-			? `That is enough to call the punishment complete.`
-			: `That is as far as the drill goes — the rest is ordinary chess.`;
+	/*
+	 * ---------------------------------------------------------------------------
+	 * WHAT THE PUNISHMENT CHANGED, not what the position is worth.
+	 *
+	 * Will: "at the end of punishment the text is reporting the current score
+	 * 'You are +1.6…'. But that makes no sense — it should be reporting the delta
+	 * caused by the punishment, so how much the position shifted not the absolute
+	 * advantage."
+	 *
+	 * The absolute number is mostly a report on THEIR move: the blunder is what
+	 * produced the advantage, and the drill begins after it. Ending with "+1.6"
+	 * credits the reader with a position they were handed, and — worse — reads
+	 * identically whether they doubled it or halved it.
+	 *
+	 * So the shift leads, with both ends shown. `+0.8 → +3.1` is a sentence
+	 * anybody can check against the bar they were watching, and it is the only
+	 * form that can say "you gave some back" at all.
+	 * ---------------------------------------------------------------------------
+	 */
+	const swing =
+		base === null
+			? evalText
+			: `${signed(base)} → ${signed(cp)}, ${
+					cp >= base
+						? `you added ${((cp - base) / 100).toFixed(1)}`
+						: `you gave back ${((base - cp) / 100).toFixed(1)}`
+				}`;
 
-	return `${what} (${evalText}). ${why}`;
+	// "in 3 moves" rather than "in 6 plies": the reader counts their own moves,
+	// and every other number on this screen is a move number.
+	const took = plies > 0 ? ` in ${Math.ceil(plies / 2)} ${plies <= 2 ? 'move' : 'moves'}` : '';
+
+	const why =
+		reason === 'realized'
+			? // Not "you are winning" — you may not be. What is being reported is
+				// that what they gave you is yours for good. See the punish branch.
+				`The chance is taken${took} — what they gave away is yours now.`
+			: // The advantage has been handed back — see `missedTheChance`. This is
+				// a real ending and a more useful one than a clock, because it can say
+				// what went wrong.
+				`The chance has gone — there is nothing left to punish with.`;
+
+	return `${what} (${swing}). ${why}`;
 }
 
 // One implementation of "who is up material", shared with the board readout —
@@ -1510,6 +1849,7 @@ export async function playFrom(
 		lastOpponent: null,
 		motifs: [],
 		evalNow: null,
+		punishment: null,
 		punishPlies: 0,
 		finished: null,
 		note: null,

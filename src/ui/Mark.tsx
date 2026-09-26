@@ -14,7 +14,27 @@
 import { MARK_INNER, MARK_BOX } from './markPaths';
 import { color } from './theme';
 
-export function Mark({ size = 40, rounded = true }: { size?: number; rounded?: boolean }) {
+export function Mark({
+	size = 40,
+	rounded = true,
+	/**
+	 * Turn while the app is thinking.
+	 *
+	 * Will: "let's also make the app icon in the page header rotate while
+	 * loading." The mark is the only thing on the page that is always visible and
+	 * never means anything else, which makes it the honest place for "something
+	 * is happening" — a claim about the whole app rather than about one panel.
+	 *
+	 * The TILE stays still and the drawing inside it turns. Spinning the rounded
+	 * square would read as the page itself having come loose; spinning the cat
+	 * inside its frame reads as a mechanism running.
+	 */
+	spin = false,
+}: {
+	size?: number;
+	rounded?: boolean;
+	spin?: boolean;
+}) {
 	// The drawing is placed by its measured extent, not by its own coordinate
 	// box, so the padding means the same thing here as it does on the icons.
 	const pad = 0.1;
@@ -38,13 +58,35 @@ export function Mark({ size = 40, rounded = true }: { size?: number; rounded?: b
 				rx={rounded ? size * 0.19 : 0}
 				fill={color.page}
 			/>
+			{/*
+				TWO GROUPS, because the two transforms are about different things.
+				The outer one spins about the tile's centre; the inner one places the
+				drawing. Combining them would make the rotation orbit the drawing's
+				own origin, which is off to one side — the cat would swing around the
+				corner of the tile rather than turn on the spot.
+
+				`transform-box: fill-box` is deliberately NOT used: it is the obvious
+				way to centre an SVG rotation and Safari has been unreliable about it
+				for long enough that a measured centre is the cheaper certainty.
+			*/}
 			<g
-				transform={`translate(${dx.toFixed(2)} ${dy.toFixed(2)}) scale(${scale.toFixed(4)})`}
-				fill={color.ink}
-				// The source paths carry fill="#000000" as a presentation attribute,
-				// which loses to any inherited value set this way.
-				dangerouslySetInnerHTML={{ __html: withoutFills(MARK_INNER) }}
-			/>
+				style={
+					spin
+						? {
+								transformOrigin: `${size / 2}px ${size / 2}px`,
+								animation: 'mark-spin 1.4s linear infinite',
+							}
+						: undefined
+				}
+			>
+				<g
+					transform={`translate(${dx.toFixed(2)} ${dy.toFixed(2)}) scale(${scale.toFixed(4)})`}
+					fill={color.ink}
+					// The source paths carry fill="#000000" as a presentation attribute,
+					// which loses to any inherited value set this way.
+					dangerouslySetInnerHTML={{ __html: withoutFills(MARK_INNER) }}
+				/>
+			</g>
 		</svg>
 	);
 }

@@ -81,6 +81,8 @@ export type ViewState = {
 	 * trainer is set to", which is where the cards came from.
 	 */
 	quizStrictness?: string;
+	/** The puzzle theme being drilled, or '' for the whole corpus. */
+	puzzleTheme?: string;
 	/**
 	 * WHERE YOU WERE IN THE DECK.
 	 *

@@ -1021,7 +1021,6 @@ export function Quiz({
 						// change on this tab is one ply, or a new card, which is a jump.
 						via={lineOverlay.via}
 						actions={actions()}
-						busy={busy}
 						// BOTH KINDS OF HELP CAN BE ON SCREEN AT ONCE, and the solution is
 						// drawn last so it sits on top of the weighted options rather than
 						// being replaced by them. This used to be an either/or, which is

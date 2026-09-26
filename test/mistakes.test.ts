@@ -159,8 +159,12 @@ describe('categories', () => {
 	});
 
 	it('covers every phase a card can have', () => {
+		// `puzzle` joined them when the Puzzles tab landed — Will: "failed puzzles
+		// into the Mistakes deck". This test is the reason that could not be done
+		// halfway: a phase with no category is a card filed where no filter can
+		// reach it, which looks exactly like the deck having lost it.
 		const ids = CATEGORIES.map((c) => c.id).sort();
-		expect(ids).toEqual(['book', 'freeplay', 'game', 'punish']);
+		expect(ids).toEqual(['book', 'freeplay', 'game', 'punish', 'puzzle']);
 	});
 });
 

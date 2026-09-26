@@ -683,7 +683,6 @@ export function Play({
 					version={boardVersion}
 					via={lineOverlay.via ?? back.via}
 					actions={actions()}
-					busy={busy}
 				>
 					<PositionStack
 						popover={

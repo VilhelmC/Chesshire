@@ -57,7 +57,6 @@ import { EvalBar } from './EvalBar';
 import { MaterialBar } from './MaterialBar';
 import { Toolbar, type ToolbarAction } from './Toolbar';
 import { PositionCaption, type CaptionProps } from './PositionCaption';
-import { Thinking } from './Thinking';
 import { useMeasure, useViewport, clamp } from './useViewport';
 import type { Colour } from '../domain/material';
 
@@ -109,8 +108,6 @@ export function BoardPanel({
 	via,
 	caption,
 	actions = [],
-	/** True while the engine is working: shows the pulsing indicator. */
-	busy = false,
 	/** Optional words beside the indicator. */
 	note,
 	/** Everything below the controls — steps 3 to 6 of the order above. */
@@ -167,7 +164,6 @@ export function BoardPanel({
 	 */
 	caption?: CaptionProps;
 	actions?: ToolbarAction[];
-	busy?: boolean;
 	note?: string;
 	children?: React.ReactNode;
 }) {
@@ -222,8 +218,27 @@ export function BoardPanel({
 							flexWrap: 'wrap',
 						}}
 					>
+						{/*
+							THE PULSE THAT WAS HERE HAS MOVED TO THE HEADER.
+
+							Will: "we now show loading animation in two places right next
+							to each other: above the 'Your move' text and in the 'your move
+							text'. Let's keep only in 'Your move' text since that is what's
+							being calculated."
+
+							Right, and which to keep follows from what each could honestly
+							mean. The one in the verdict block says WHAT is being worked out
+							and sits where the answer will appear; this one said only that
+							something, somewhere, was happening — which is a fact about the
+							whole app, and now lives in the app's own chrome. See
+							`data/working` and `ui/Mark`.
+
+							The `busy` PROP went with it. Nothing else here read it — each
+							control carries its own `disabled` — so what was left was a prop
+							three views passed and this component ignored, which is a
+							smaller lie than a duplicate spinner and still a lie.
+						*/}
 						<Toolbar actions={actions} labelled={vp.touch || vp.phone} />
-						<Thinking show={busy} />
 						{note && <span style={{ fontSize: 12, opacity: 0.6 }}>{note}</span>}
 					</div>
 				)}

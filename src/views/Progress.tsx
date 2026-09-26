@@ -12,7 +12,9 @@ import { loadPractice, savePractice } from '../domain/practice';
 import { nameForPath } from '../domain/openings';
 import { estimate, ratingSeries, type RatingPoint } from '../domain/rating';
 import { loadProgress, clearProgress } from '../data/progress';
-import { db } from '../data/db';
+import { attempts } from '../data/puzzleHistory';
+import { puzzleSeries, streaks } from '../domain/puzzleProgress';
+import { db, type PuzzleAttempt } from '../data/db';
 import { loadMistakes } from '../data/mistakes';
 import {
 	transferReport,
@@ -75,7 +77,7 @@ const SERIES = color.accent;
  * people — was the one thing neither label said. The new pair says WHERE each
  * came from, which is the whole distinction.
  */
-export type RatingSource = 'games' | 'freeplay';
+export type RatingSource = 'games' | 'freeplay' | 'puzzles';
 
 const SOURCES: { id: RatingSource; label: string; title: string }[] = [
 	{
@@ -87,6 +89,25 @@ const SOURCES: { id: RatingSource; label: string; title: string }[] = [
 		id: 'freeplay',
 		label: 'Chesshire free play',
 		title: 'Played on against the bot here, after a punished mistake',
+	},
+	/*
+	 * A THIRD SOURCE, NOT A THIRD CHART.
+	 *
+	 * Will: "puzzle rating over time perhaps is just an option on existing graph
+	 * in 'Progress' tab?" It is, and it is the cheapest of the three to add
+	 * because nothing has to be recomputed — every attempt stored the rating that
+	 * came out of it.
+	 *
+	 * It is NOT comparable with the other two and the chart does not pretend
+	 * otherwise: each series sets its own vertical scale, and this one plots a
+	 * Glicko rating on the puzzles' scale while those two plot an estimate
+	 * derived from centipawn loss. Same axis label, different measurements — the
+	 * segmented control is what keeps them from being read as one line.
+	 */
+	{
+		id: 'puzzles',
+		label: 'Puzzles',
+		title: 'Your puzzle rating, from the Puzzles tab',
 	},
 ];
 const CRITICAL = color.bad;
@@ -100,6 +121,7 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 	const [pinned, setPinned] = useState<string | null>(null);
 	const [source, setSource] = useState<RatingSource>('games');
 	const [played, setPlayed] = useState<PlayedGame[]>([]);
+	const [puzzleRows, setPuzzleRows] = useState<PuzzleAttempt[]>([]);
 	/** The same games, kept whole, for the accuracy measurement. */
 	const [rawGames, setRawGames] = useState<MeasurableGame[]>([]);
 	/**
@@ -113,6 +135,10 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 		const d = await loadProgress();
 		setAnswers(d.answers);
 		setRuns(d.runs);
+		// Its own read, and its own failure: `attempts` already swallows a broken
+		// table and returns nothing, so a missing puzzle history must not take the
+		// rest of this page down with it.
+		setPuzzleRows(await attempts(2000));
 		// Real games, plus where in each one a mistake was made — the two halves
 		// the transfer measurement needs. Cards carry the path; games carry the
 		// moves that say whether the position was even reached.
@@ -223,6 +249,8 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 		() => ratingSeries(gameLossRows(live.counted, bookDepth)),
 		[live],
 	);
+	const puzzleSeriesPoints = useMemo(() => puzzleSeries(puzzleRows), [puzzleRows]);
+	const puzzleStreak = useMemo(() => streaks(puzzleRows), [puzzleRows]);
 	/** A readable label for a position with no name of its own. */
 	function nameFor(node: TreeNode): string {
 		return (
@@ -347,7 +375,9 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 					Two measurements of two different things, kept apart on purpose. Both skip the
 					opening: recalling a memorised move measures memory, so counting it would show the
 					number climbing every time you revised. Correspondence games are left out for the
-					same reason — with an analysis board open, the moves are not yours alone.
+					same reason — with an analysis board open, the moves are not yours alone. The graph
+					can also plot your puzzle rating, which is measured a third way again — by which
+					puzzles you solve, on the Puzzles tab — so read each line on its own.
 				</p>
 
 				<div style={{ display: 'flex', gap: 32, flexWrap: 'wrap', marginBottom: 4 }}>
@@ -370,15 +400,41 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 				</div>
 
 				{(() => {
-					const plotted = source === 'games' ? gameSeries : freeSeries;
-					const unit = source === 'games' ? 'game' : 'run';
-					const other = source === 'games' ? freeSeries : gameSeries;
+					const series: Record<
+						RatingSource,
+						{ points: RatingPoint[]; unit: string; faint: string; empty: string }
+					> = {
+						games: {
+							points: gameSeries,
+							unit: 'game',
+							faint: 'per game',
+							empty: 'No analysed games yet. Import some on the Settings tab.',
+						},
+						freeplay: {
+							points: freeSeries,
+							unit: 'run',
+							faint: 'per run',
+							empty: 'No free play yet. Punish a mistake, then use play on.',
+						},
+						puzzles: {
+							points: puzzleSeriesPoints,
+							unit: 'puzzle',
+							// NOT "per puzzle", which would claim the faint line is an estimate
+							// of you from one puzzle. It is the puzzle's own rating — the
+							// difficulty you were handed — and mislabelling it would make the
+							// two lines look like a noisy and a smooth version of one thing.
+							faint: 'difficulty met',
+							empty: 'No rated puzzle attempts yet. Solve some on the Puzzles tab.',
+						},
+					};
+					const { points: plotted, unit, faint, empty } = series[source];
+					const anywhere = Object.values(series).some((s) => s.points.length >= 2);
 					return (
 						<>
 							{/* Only offered when there is a second thing to switch TO. A
 								control whose alternative is empty is a control that punishes
 								you for trying it. */}
-							{(plotted.length >= 2 || other.length >= 2) && (
+							{anywhere && (
 								<div style={{ marginTop: space.gap }}>
 									<Segmented
 										label="Which rating to plot"
@@ -389,14 +445,18 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 								</div>
 							)}
 							{plotted.length >= 2 ? (
-								<RatingChart series={plotted} unit={unit} />
+								<RatingChart series={plotted} unit={unit} faint={faint} />
 							) : (
 								<p style={{ fontSize: type.body, color: INK_2, marginTop: space.snug }}>
-									{plotted.length === 1
-										? `One ${unit} so far — a trend needs at least two.`
-										: source === 'games'
-											? 'No analysed games yet. Import some on the Settings tab.'
-											: 'No free play yet. Punish a mistake, then use play on.'}
+									{plotted.length === 1 ? `One ${unit} so far — a trend needs at least two.` : empty}
+								</p>
+							)}
+							{source === 'puzzles' && puzzleStreak.best > 0 && (
+								<p style={{ fontSize: type.note, color: INK_2, margin: `${space.snug}px 0 0` }}>
+									{puzzleStreak.current > 1
+										? `${puzzleStreak.current} solved in a row right now`
+										: 'No streak running'}{' '}
+									· best {puzzleStreak.best}. Helped solves are skipped, not counted against you.
 								</p>
 							)}
 						</>
@@ -667,7 +727,24 @@ function Estimate({
  * it is the noisy one, and drawing both at equal weight would invite reading
  * run-to-run swings as real movement.
  */
-function RatingChart({ series, unit }: { series: RatingPoint[]; unit: string }) {
+function RatingChart({
+	series,
+	unit,
+	faint,
+}: {
+	series: RatingPoint[];
+	unit: string;
+	/**
+	 * What the faint line IS, in the caller's words.
+	 *
+	 * It was hard-coded as `per ${unit}` back when both sources were cp-loss
+	 * estimates and the faint line really was "the same estimate, from one item".
+	 * The puzzle series breaks that: its faint line is the difficulty it served
+	 * you, which is not an estimate of you at all. A legend that says otherwise is
+	 * worse than no legend.
+	 */
+	faint: string;
+}) {
 	/*
 	 * THE WIDTH IS MEASURED, NOT ASSUMED.
 	 *
@@ -710,7 +787,7 @@ function RatingChart({ series, unit }: { series: RatingPoint[]; unit: string }) 
 				viewBox={`0 0 ${W} ${H}`}
 				style={{ maxWidth: '100%', display: 'block' }}
 				role="img"
-				aria-label="Estimated rating over time"
+				aria-label={`Rating over time, one point per ${unit}`}
 			>
 				{[lo, (lo + hi) / 2, hi].map((v) => (
 					<g key={v}>
@@ -727,8 +804,8 @@ function RatingChart({ series, unit }: { series: RatingPoint[]; unit: string }) 
 				{series.map((p, i) => (
 					<circle key={p.runId} cx={x(i)} cy={y(p.cumulative)} r={4} fill={SERIES}>
 						<title>
-							{new Date(p.ts).toLocaleDateString()} — {unit} {p.elo}, overall {p.cumulative} (
-							{p.moves} moves)
+							{new Date(p.ts).toLocaleDateString()} — {faint} {p.elo}, overall {p.cumulative}
+							{p.moves > 1 ? ` (${p.moves} moves)` : ''}
 						</title>
 					</circle>
 				))}
@@ -763,7 +840,7 @@ function RatingChart({ series, unit }: { series: RatingPoint[]; unit: string }) 
 							marginRight: 4,
 						}}
 					/>
-					per {unit}
+					{faint}
 				</span>
 			</figcaption>
 		</figure>

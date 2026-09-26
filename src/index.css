@@ -276,11 +276,24 @@ input[type='number'] {
  * Anyone who has asked their system not to animate things means it. The
  * indicator still appears and still says "working" — it simply holds still.
  */
+@keyframes mark-spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.schackal-dot,
 	.schackal-sweep {
 		animation: none !important;
 		opacity: 0.7;
+	}
+	/*
+	 * The mark simply stops turning. Nothing is lost: the verdict block still
+	 * says what is being worked out, which is the indicator that carries the
+	 * information — this one only ever said "something is happening".
+	 */
+	svg g[style*="mark-spin"] {
+		animation: none !important;
 	}
 }
 

@@ -48,7 +48,7 @@ import { useCommentary } from '../hooks/useCommentary';
 import { Commentary } from '../components/CommentaryPanel';
 import { lineFromUci, stepAt, type Line } from '../domain/line';
 import { walkBack, walkBackTo, walkThrough } from '../domain/walk';
-import { color, space, text } from '../ui/theme';
+import { color, space, text, verdictColor } from '../ui/theme';
 import { markTraining } from '../data/autoImport';
 import { Button, Note, Select, Toggle } from '../ui/primitives';
 import type { ToolbarAction } from '../components/Toolbar';
@@ -58,7 +58,7 @@ import { useMoveTableToggle } from '../hooks/useMoveTableToggle';
 import { PositionStack } from '../components/PositionStack';
 import type { Shape } from '../components/Board';
 import { Move, MoveLine } from '../components/Move';
-import { other, colourAtPly, colourOfFen } from '../domain/notation';
+import { other, colourAtPly, colourOfFen, withGlyph } from '../domain/notation';
 import { MoveList, MoveListHeader, MoveListLegend, type MoveChip } from '../components/MoveList';
 import { brushForGrade, type Candidate } from '../engine/candidates';
 import { BOT_LEVELS, levelFor, estimate, type Estimate } from '../domain/rating';
@@ -110,6 +110,17 @@ export function Train({
 	const [error, setError] = useState<string | null>(null);
 	const [feedback, setFeedback] = useState<{
 		correct: boolean;
+		/*
+		 * THREE OUTCOMES, THREE COLOURS.
+		 *
+		 * Will, issue #3: "the explanation for why my move is rejected is in red
+		 * text even though move is judged sound by engine." There were two tones
+		 * and three things to say — right, refused-but-sound, and wrong — so one
+		 * of the three had to borrow a colour, and the one that borrowed was the
+		 * one where the colour does the most damage. Red is read before the
+		 * sentence, and the sentence began "sound, but".
+		 */
+		tone: 'good' | 'warn' | 'bad';
 		message: string;
 		refutation: string[];
 		fen: string;
@@ -117,6 +128,8 @@ export function Train({
 		playedUci: string;
 		explanation: string;
 		arrows: Arrow[];
+		/** The engine's choice here, when it differs — see `MoveOutcome.better`. */
+		better?: { uci: string; san: string; line: string[] };
 	} | null>(null);
 	const [stats, setStats] = useState<Stats>(EMPTY);
 	const [practice, setPractice] = useState<PracticeConfig>(() => loadPractice());
@@ -830,6 +843,7 @@ export function Train({
 				// A novelty is not `out.correct` — the run has not moved — but it must
 				// not be shown in the failure tone either. See `MoveOutcome.novelty`.
 				correct: out.correct || !!out.novelty,
+				tone: out.correct ? 'good' : out.novelty || out.sound ? 'warn' : 'bad',
 				message: out.message,
 				refutation: out.refutation,
 				fen: before.fen,
@@ -837,6 +851,7 @@ export function Train({
 				playedUci: uci,
 				explanation: explained.text,
 				arrows,
+				...(out.better ? { better: out.better } : {}),
 			});
 			// A novelty does not count as a failed attempt. Attempts drive the
 			// escalating help, and escalating help at someone who just played a move
@@ -869,11 +884,28 @@ export function Train({
 			 * move, and the position on screen is still the one the arrows refer to
 			 * because `setState(out.state)` is further down.
 			 */
-			const wasExact = before.expected.some((e) => e.uci === uci);
-			if (out.correct && !wasExact && out.cpLoss > 10 && before.expected[0]) {
+			/*
+			 * AT EVERY RUNG, and pointing at the ENGINE's move.
+			 *
+			 * Will: "when there is a better engine move we should always get the
+			 * notification a better move exists, regardless of strictness."
+			 *
+			 * This used to require the move to be off the accepted set
+			 * (`!wasExact`), which is the opposite of "regardless of strictness":
+			 * the looser the rung, the more moves it accepted and the less often
+			 * it said anything. At 'free' it was silent almost always, which is
+			 * exactly where a beginner most needs telling. `out.better` is set by
+			 * the session whenever something measurably better existed, whatever
+			 * the rung — see `MoveOutcome.better`.
+			 *
+			 * The green arrow was `expected[0]`, the first ACCEPTED move, which at
+			 * a loose rung is whatever the explorer happened to list first and is
+			 * not the better move at all.
+			 */
+			if (out.correct && out.better) {
 				setHint([
 					{ orig: uci.slice(0, 2), dest: uci.slice(2, 4), brush: 'blue' },
-					arrowFor(before.expected[0].uci, 'green'),
+					arrowFor(out.better.uci, 'green'),
 				]);
 				await new Promise<void>((resolve) => setHolding(() => resolve));
 				setHolding(null);
@@ -937,7 +969,21 @@ export function Train({
 				moves: s.moves + (out.novelty ? 0 : 1),
 				// A move you were shown is not a move you recalled.
 				correct: s.correct + (out.correct && !opts.revealed ? 1 : 0),
-				punished: s.punished + (out.state.finished === 'punished' ? 1 : 0),
+				/*
+				 * A PUNISHMENT THAT DID NOT COME OFF IS NOT A PUNISHMENT.
+				 *
+				 * Will, issue #1: the drill ends on its ply cap whatever the
+				 * evaluation, and `finished: 'punished'` was set on both paths — so
+				 * a run that ran out of moves while LOSING was counted in the tally
+				 * of punishments taken. The session line then reported a success
+				 * rate built partly from failures.
+				 *
+				 * Measured on the evaluation rather than on the label, because the
+				 * label is the thing that was wrong.
+				 */
+				punished:
+					s.punished +
+					(out.state.finished === 'punished' && (out.state.evalNow ?? 0) > 0 ? 1 : 0),
 				missed:
 					s.missed + (!out.correct && before.mode === 'drill' && before.phase === 'punish' ? 1 : 0),
 			}));
@@ -1510,8 +1556,23 @@ export function Train({
 						// Train's two, which no other screen has: the drill has gone off
 						// book and is now asking for the strongest move, and — failing
 						// that — how much book there is to pick from here.
+						/*
+						 * SAYS THAT THE RUNG DOES NOT APPLY HERE.
+						 *
+						 * Will, issue #2 ("punishment outside strictness setting"):
+						 * "this punishment asks for a move that is outside the current
+						 * strictness setting … there is no clear way to discover that."
+						 *
+						 * There was not, and the rule is real: `withExpected` sets the
+						 * punish phase's expected move from the ENGINE's best line and
+						 * never consults `practice.strictness`. That is right — you are
+						 * off book, so there is no book to be strict about — but the
+						 * setting is visible on the same screen and says otherwise by
+						 * implication. A rule that only exists in the code is a rule the
+						 * reader is entitled to think is a bug.
+						 */
 						state && !state.finished && state.mode === 'drill' && state.phase === 'punish'
-							? 'off book — find the strongest continuation'
+							? 'off book — find the strongest move (strictness does not apply here)'
 							: null,
 						state && !state.finished && state.phase !== 'punish' && !state.opening && state.bookHere?.length
 							? `${state.bookHere.filter((m) => m.verdict === 'main' || m.verdict === 'book').length} book replies here`
@@ -1560,7 +1621,6 @@ export function Train({
 				 */
 				via={lineOverlay.via ?? via}
 				actions={toolbarActions()}
-				busy={busy}
 			>
 				<PositionStack
 					popover={
@@ -1635,8 +1695,8 @@ export function Train({
 										style={{
 											marginTop: 8,
 											fontSize: 14,
-											color: feedback.correct ? color.good : color.bad,
-											borderLeft: `3px solid ${feedback.correct ? color.good : color.bad}`,
+											color: verdictColor(feedback.tone),
+											borderLeft: `3px solid ${verdictColor(feedback.tone)}`,
 											paddingLeft: 8,
 										}}
 									>
@@ -1668,7 +1728,42 @@ export function Train({
 										  * respected it could never be pressed.
 										  */}
 										{holding && (
-											<div style={{ marginTop: space.tight }}>
+											<div
+												style={{
+													marginTop: space.tight,
+													display: 'flex',
+													gap: space.snug,
+													flexWrap: 'wrap',
+												}}
+											>
+												{/*
+												  * THE SAME DOOR A REFUTED MISTAKE GETS.
+												  *
+												  * Will: "when user is alerted to better move they
+												  * should be offered to see the sequence on the board
+												  * the same way we do for when a move is an error."
+												  *
+												  * Right, and for the same reason: "Bc4 was better" is
+												  * an assertion, and the line after it is the argument.
+												  * A reader who cannot see WHY cannot learn anything
+												  * from being told.
+												  *
+												  * The run stays held while the line is walked — the
+												  * explainer borrows the board and the move list, and
+												  * pressing on below hands them back.
+												  */}
+												{feedback?.better && feedback.better.line.length > 1 && (
+													<Button
+														onClick={() =>
+															setExplain({
+																line: lineFromUci(feedback.fen, feedback.better!.line),
+																label: `Why ${withGlyph(feedback.better!.san, state?.ourColour ?? 'w')} was better`,
+															})
+														}
+													>
+														Show it on the board
+													</Button>
+												)}
 												<Button onClick={() => holding()}>Got it — play on</Button>
 											</div>
 										)}
