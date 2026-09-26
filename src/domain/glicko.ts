@@ -146,12 +146,27 @@ export function band(rating: Rating, hard = 0): { low: number; high: number } {
 	return { low: centre - width, high: centre + width };
 }
 
-/** "1450 ± 180", or "about 1450" once it has settled enough to stop saying. */
-export function describeRating(rating: Rating): string {
+/**
+ * The rating and what it admits about itself, as two values.
+ *
+ * Two rather than one sentence because they are drawn at two sizes: a headline
+ * that reads "1500 — still finding your level (±350)" in one 30px run is 400
+ * points of text, and in a column narrower than that it breaks mid-phrase.
+ * `describeRating` still assembles the sentence for anywhere that wants one.
+ */
+export function ratingParts(rating: Rating): { value: number; qualifier: string | null } {
 	// The one place the rounding belongs — see `rate`.
-	const r = Math.round(rating.r);
+	const value = Math.round(rating.r);
 	const rd = Math.round(rating.rd);
-	if (rd >= 150) return `${r} — still finding your level (±${rd})`;
-	if (rd >= 80) return `${r} ± ${rd}`;
-	return `${r}`;
+	if (rd >= 150) return { value, qualifier: `still finding your level (±${rd})` };
+	if (rd >= 80) return { value, qualifier: `± ${rd}` };
+	return { value, qualifier: null };
+}
+
+/** "1450 ± 180", or just "1450" once it has settled enough to stop saying. */
+export function describeRating(rating: Rating): string {
+	const { value, qualifier } = ratingParts(rating);
+	if (!qualifier) return `${value}`;
+	// A bare tolerance follows the number; a phrase needs a dash before it.
+	return qualifier.startsWith('±') ? `${value} ${qualifier}` : `${value} — ${qualifier}`;
 }

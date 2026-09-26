@@ -12,8 +12,9 @@ import { loadPractice, savePractice } from '../domain/practice';
 import { nameForPath } from '../domain/openings';
 import { estimate, ratingSeries, type RatingPoint } from '../domain/rating';
 import { loadProgress, clearProgress } from '../data/progress';
-import { attempts } from '../data/puzzleHistory';
-import { puzzleSeries, streaks } from '../domain/puzzleProgress';
+import { attempts, loadRating } from '../data/puzzleHistory';
+import { puzzleSeries, rated, streaks } from '../domain/puzzleProgress';
+import { ratingParts, type Rating } from '../domain/glicko';
 import { db, type PuzzleAttempt } from '../data/db';
 import { loadMistakes } from '../data/mistakes';
 import {
@@ -122,6 +123,14 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 	const [source, setSource] = useState<RatingSource>('games');
 	const [played, setPlayed] = useState<PlayedGame[]>([]);
 	const [puzzleRows, setPuzzleRows] = useState<PuzzleAttempt[]>([]);
+	/**
+	 * The puzzle rating, or null when nothing has been rated.
+	 *
+	 * Null rather than `START`: `loadRating` answers 1500 for a reader who has
+	 * never solved anything — which is correct as a prior and would read here as a
+	 * measurement of them.
+	 */
+	const [puzzleRating, setPuzzleRating] = useState<Rating | null>(null);
 	/** The same games, kept whole, for the accuracy measurement. */
 	const [rawGames, setRawGames] = useState<MeasurableGame[]>([]);
 	/**
@@ -138,7 +147,9 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 		// Its own read, and its own failure: `attempts` already swallows a broken
 		// table and returns nothing, so a missing puzzle history must not take the
 		// rest of this page down with it.
-		setPuzzleRows(await attempts(2000));
+		const puzzles = await attempts(2000);
+		setPuzzleRows(puzzles);
+		setPuzzleRating(rated(puzzles).length ? await loadRating() : null);
 		// Real games, plus where in each one a mistake was made — the two halves
 		// the transfer measurement needs. Cards carry the path; games carry the
 		// moves that say whether the position was even reached.
@@ -380,7 +391,18 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 					puzzles you solve, on the Puzzles tab — so read each line on its own.
 				</p>
 
-				<div style={{ display: 'flex', gap: 32, flexWrap: 'wrap', marginBottom: 4 }}>
+				{/* A GRID, NOT A WRAPPED FLEX — see `Estimate`. `auto-fit` with a
+					minimum puts three across a wide column, two on a tablet and one on a
+					phone, with every tile the same width instead of each one as wide as
+					its own longest sentence. */}
+				<div
+					style={{
+						display: 'grid',
+						gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+						gap: space.gap,
+						marginBottom: 4,
+					}}
+				>
 					<Estimate
 						label="Imported games"
 						note={
@@ -396,6 +418,25 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 						note="played on against the bot after a mistake"
 						e={rating}
 						empty="Punish a mistake, then use play on."
+					/>
+					{/* The third number the graph can plot, so the row and the chart agree
+						about what exists. Measured by which puzzles you solve rather than
+						by centipawn loss, which is why it says something else underneath. */}
+					<Estimate
+						label="Puzzles"
+						note="which puzzles you solve, on the Puzzles tab"
+						e={{
+							elo: puzzleRating === null ? null : ratingParts(puzzleRating).value,
+							acpl: null,
+							sample: puzzleRows.length,
+							confident: true,
+						}}
+						detail={
+							puzzleRating
+								? `${ratingParts(puzzleRating).qualifier ?? 'settled'} · ${puzzleSeriesPoints.length} rated`
+								: undefined
+						}
+						empty="Solve a few on the Puzzles tab."
 					/>
 				</div>
 
@@ -687,31 +728,54 @@ export function Progress({ onOpenReview }: { onOpenReview?: () => void } = {}) {
 	);
 }
 
-/** One estimate, said the same way wherever it appears. */
+/**
+ * One estimate, said the same way wherever it appears.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "the ratings row is not formatted nicely - line break, because it does
+ * not fit screen width."
+ *
+ * Two of these sat in a `flex` with `gap: 32` and nothing bounding the text, so
+ * each tile grew to whatever its longest note needed — one of them a sentence
+ * about set-aside correspondence games — and the pair then broke onto separate
+ * lines with the note itself wrapping mid-phrase. The row is a grid now (see
+ * the call site) and each tile declares that it may be as narrow as the grid
+ * makes it: `minWidth: 0` is what lets a grid item shrink at all, and the
+ * detail line is allowed to wrap on its own terms rather than by stretching
+ * the column.
+ * ---------------------------------------------------------------------------
+ */
 function Estimate({
 	label,
 	note,
 	e,
 	empty,
+	detail,
 }: {
 	label: string;
 	note: string;
 	e: { elo: number | null; acpl: number | null; sample: number; confident: boolean };
 	empty: string;
+	/** Replaces the cp-loss line, for a rating that is not measured that way. */
+	detail?: string;
 }) {
 	return (
-		<div>
+		<div style={{ minWidth: 0 }}>
 			<div style={{ fontSize: 13, color: INK_2 }}>{label}</div>
 			{e.elo === null ? (
-				<div style={{ fontSize: 14, color: INK_2, marginTop: 4, maxWidth: 240 }}>{empty}</div>
+				<div style={{ fontSize: 14, color: INK_2, marginTop: 4 }}>{empty}</div>
 			) : (
 				<>
 					<div style={{ fontSize: 34, fontWeight: 700, color: INK, lineHeight: 1.1 }}>
 						{e.elo}
 					</div>
 					<div style={{ fontSize: 13, color: INK_2 }}>
-						{e.confident ? '' : 'provisional — '}
-						{e.sample} moves · {e.acpl}cp average loss
+						{detail ?? (
+							<>
+								{e.confident ? '' : 'provisional — '}
+								{e.sample} moves · {e.acpl}cp average loss
+							</>
+						)}
 					</div>
 					<div style={{ fontSize: 12, color: INK_2, opacity: 0.75 }}>{note}</div>
 				</>

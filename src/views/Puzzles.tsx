@@ -49,6 +49,7 @@ import {
 	poolNote,
 	solverColour,
 	themeName,
+	themePools,
 	themes,
 	type Puzzle,
 } from '../domain/puzzles';
@@ -61,13 +62,13 @@ import {
 	startSolve,
 	type SolveState,
 } from '../domain/puzzleSolve';
-import { describeRating, type Rating } from '../domain/glicko';
+import { describeRating, ratingParts, type Rating } from '../domain/glicko';
 import { loadRating, record, seenIds, attempts, tally } from '../data/puzzleHistory';
 import { recordMistake } from '../data/mistakes';
 import { positionKey } from '../domain/chess';
 import type { AssistLevel, PuzzleAttempt } from '../data/db';
 import { recall, remember } from '../data/viewState';
-import { Button, Note, Select } from '../ui/primitives';
+import { Button, Chip, Note } from '../ui/primitives';
 import { color, space, text } from '../ui/theme';
 import type { ToolbarAction } from '../components/Toolbar';
 import type { Shape } from '../components/Board';
@@ -92,13 +93,34 @@ export function Puzzles() {
 		setAssist((cur) => (cur === 'moves' || level === 'moves' ? level : cur === 'none' ? level : cur));
 	}, []);
 
-	const [theme, setThemeState] = useState<string | null>(
-		() => (recall('puzzleTheme', (v) => typeof v === 'string') as string) || null,
-	);
-	const setTheme = useCallback((next: string | null) => {
-		setThemeState(next);
-		remember({ puzzleTheme: next ?? '' });
+	/*
+	 * WHICH KINDS OF PUZZLE, AS A UNION.
+	 *
+	 * Will: "puzzle set options should be toggles that signal union (like the
+	 * repertoire but for puzzle categories)." So this is a list, and empty means
+	 * everything — the rule the Mistakes deck already uses, so that clearing every
+	 * chip cannot present as an empty set.
+	 *
+	 * The single-theme key it replaces is still read once, so a selection made by
+	 * the previous build is carried over instead of quietly reset. Validated on
+	 * the way out like every other restored value: a theme the corpus no longer
+	 * carries is dropped rather than left selecting nothing.
+	 */
+	const [selected, setSelectedState] = useState<string[]>(() => {
+		const known = new Set(themes().map((t) => t.id));
+		const many = recall(
+			'puzzleThemes',
+			(v) => Array.isArray(v) && v.every((x) => typeof x === 'string'),
+		) as string[] | undefined;
+		const one = recall('puzzleTheme', (v) => typeof v === 'string') as string | undefined;
+		return (many ?? (one ? [one] : [])).filter((t) => known.has(t));
+	});
+	const setSelected = useCallback((next: string[]) => {
+		setSelectedState(next);
+		remember({ puzzleThemes: next });
 	}, []);
+	/** A stable dependency for "the drill changed", since the array is rebuilt. */
+	const themeKey = selected.join(' ');
 
 	const moveTable = useMoveTableToggle();
 	const lineOverlay = useLineOverlay();
@@ -124,7 +146,7 @@ export function Puzzles() {
 			try {
 				const now = r ?? (await loadRating());
 				const seen = await seenIds();
-				const p = pickPuzzle(now, { theme, seen });
+				const p = pickPuzzle(now, { themes: selected, seen });
 				setRating(now);
 				setPuzzle(p);
 				setSolve(p ? startSolve(p) : null);
@@ -140,7 +162,7 @@ export function Puzzles() {
 			}
 		},
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[theme],
+		[themeKey],
 	);
 
 	useEffect(() => {
@@ -161,7 +183,7 @@ export function Puzzles() {
 		}
 		void next();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [theme]);
+	}, [themeKey]);
 
 	async function onMove(uci: string) {
 		if (!solve || !puzzle || !rating || solve.status !== 'solving' || lineOverlay.overlay) return;
@@ -246,7 +268,36 @@ export function Puzzles() {
 				{ id: 'forward', title: 'Next move', icon: 'forward', onClick: () => lineOverlay.step(1) },
 				{ id: 'resign', title: 'Stop showing the solution', icon: 'resign', onClick: lineOverlay.close },
 			];
-		const over = solve?.status !== 'solving';
+		/*
+		 * TWO BUTTONS, AND WHICH TWO DEPENDS ON WHETHER IT IS OVER.
+		 *
+		 * ------------------------------------------------------------------------
+		 * Will: "the buttons don't make sense."
+		 *
+		 * They did not. There were four, two of which — try again, show solution —
+		 * can only do anything AFTER the attempt ends, so half the strip sat greyed
+		 * out for the whole time you were actually solving; and the fourth was
+		 * "skip" and "next" sharing one slot, which put a button that RECORDS A
+		 * FAILURE exactly where the harmless one would be a moment later.
+		 *
+		 * So: while solving, the only two things there are to do — ask for help, or
+		 * give up. Once it is over, one thing — the next puzzle. Try again and show
+		 * solution moved into the column beside the verdict, which is where the
+		 * result is already being read and where a choice about the puzzle you just
+		 * finished belongs.
+		 * ------------------------------------------------------------------------
+		 */
+		if (solve?.status !== 'solving')
+			return [
+				{
+					id: 'skip',
+					title: 'Next puzzle',
+					caption: 'next',
+					icon: 'skip',
+					accent: true,
+					onClick: () => void next(rating ?? undefined),
+				},
+			];
 		return [
 			{
 				id: 'options',
@@ -256,49 +307,37 @@ export function Puzzles() {
 				onClick: moveTable.press,
 			},
 			{
-				id: 'branch',
-				title: 'Try this one again — it will not be rated',
-				caption: 'try again',
-				icon: 'branch',
-				onClick: () => {
-					if (!puzzle) return;
-					setSolve(startSolve(puzzle));
-					setShowing(false);
-					setBoardVersion((v) => v + 1);
-				},
-				disabled: !over,
-			},
-			{
-				id: 'playon',
-				title: 'Show the rest of the solution on the board',
-				caption: 'solution',
-				icon: 'playon',
-				accent: showing,
+				id: 'giveup',
+				title: 'Give up on this one — it counts as a failure',
+				caption: 'give up',
+				icon: 'resign',
 				onClick: () => {
 					if (!solve) return;
-					const rest = remainingLine(solve);
-					if (!rest.length) return;
-					setShowing(true);
-					raise('moves');
-					lineOverlay.show(lineFromUci(solve.fen, rest), 'The solution');
-				},
-				disabled: !over || !remainingLine(solve ?? startSolve(puzzle!)).length,
-			},
-			{
-				id: 'skip',
-				title: over ? 'Next puzzle' : 'Skip this one — it counts as a failure',
-				caption: over ? 'next' : 'skip',
-				icon: 'skip',
-				onClick: () => {
-					if (over) return void next(rating ?? undefined);
-					if (!solve) return;
-					// Skipping is failing — see `giveUp`.
+					// Giving up is failing — see `giveUp`.
 					const before = solve;
 					setSolve(giveUp(before));
 					void finish(before, false, null);
 				},
 			},
 		];
+	}
+
+	/** Show the rest of the line on the board. Only meaningful once it is over. */
+	function showSolution() {
+		if (!solve) return;
+		const rest = remainingLine(solve);
+		if (!rest.length) return;
+		setShowing(true);
+		raise('moves');
+		lineOverlay.show(lineFromUci(solve.fen, rest), 'The solution');
+	}
+
+	/** Put the position back. Deliberately unrated — the answer has been seen. */
+	function tryAgain() {
+		if (!puzzle) return;
+		setSolve(startSolve(puzzle));
+		setShowing(false);
+		setBoardVersion((v) => v + 1);
 	}
 
 	const arrows = useMemo<Shape[]>(() => {
@@ -317,7 +356,8 @@ export function Puzzles() {
 	const at = progress(solve);
 	const counts = tally(history);
 	const streak = streaks(history);
-	const pool = poolNote(rating, theme);
+	const pool = poolNote(rating, selected);
+	const pools = themePools(rating);
 	const solvedNow = solve.status === 'solved';
 	const failedNow = solve.status === 'failed';
 
@@ -346,7 +386,18 @@ export function Puzzles() {
 						ply: 0,
 						also: [
 							`rated ${puzzle.rating}`,
-							at.total > 1 ? `${at.total} moves to find` : 'one move to find',
+							/*
+							 * HOW DEEP IT GOES IS NOT OURS TO SAY.
+							 *
+							 * Will: "we can't write out the number of moves - that breaks the
+							 * puzzle - user can't know the puzzle depth."
+							 *
+							 * Right, and it is worse than a spoiler: told "3 moves to find",
+							 * you can rule out every quiet line and every one-move win before
+							 * looking at the board, which is most of the work. It said the
+							 * count here AND counted you through it in the verdict below.
+							 * Both are gone; `progress` is still used, for what gets recorded.
+							 */
 							// ONLY WHILE IT IS STILL IN DOUBT. After the attempt is recorded
 							// the warning is describing a decision already taken, and it
 							// appears the moment you press "solution" — which is after the
@@ -365,7 +416,11 @@ export function Puzzles() {
 								{solve.status === 'solving' ? (
 									<>
 										<strong>{solverColour(puzzle) === 'w' ? 'White' : 'Black'} to play.</strong>{' '}
-										{at.total > 1 ? `Move ${at.done + 1} of ${at.total}.` : 'Find the move.'}
+										{/* "Move 2 of 3" was here, and it gave the depth away — see
+											the caption. "Keep going" says the line continues without
+											saying how far, which is what you would know from the
+											board anyway once a reply has been made. */}
+										{at.done > 0 ? 'Good — keep going.' : 'Find the best move.'}
 									</>
 								) : solvedNow ? (
 									<span style={{ color: color.good }}>
@@ -466,9 +521,25 @@ export function Puzzles() {
 
 			<div style={{ flex: '1 1 300px', minWidth: 0 }}>
 				<h3 style={{ marginTop: 0 }}>Your puzzle rating</h3>
+				{/*
+				 * THE NUMBER BIG, THE UNCERTAINTY SMALL.
+				 *
+				 * Will: "the ratings row is not formatted nicely - line break, because
+				 * it does not fit screen width." `describeRating` is one sentence —
+				 * "1500 — still finding your level (±350)" — and at 30px that is 400
+				 * points of text in a 300px column, so it broke mid-phrase. The two
+				 * halves are two facts and they are now drawn as two, which needs no
+				 * width at all. `ratingParts` is the split; `describeRating` still
+				 * composes the sentence for the places that want one line.
+				 */}
 				<div style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.1 }}>
-					{describeRating(rating)}
+					{ratingParts(rating).value}
 				</div>
+				{ratingParts(rating).qualifier && (
+					<div style={{ fontSize: text.note, color: color.ink2 }}>
+						{ratingParts(rating).qualifier}
+					</div>
+				)}
 				<Note style={{ marginTop: space.snug }}>
 					{counts.rated.total === 0
 						? 'Solve a few and this settles. It starts wide on purpose — a rating with no evidence behind it should say so.'
@@ -502,15 +573,48 @@ export function Puzzles() {
 				)}
 
 				<h3>What to practise</h3>
-				<Select
-					label="Theme"
-					value={theme ?? ''}
-					onChange={(v) => setTheme(v || null)}
-					options={[
-						{ id: '', label: 'Everything' },
-						...themes().map((t) => ({ id: t.id, label: `${themeName(t.id)} (${t.count})` })),
-					]}
-				/>
+				{/*
+				 * TOGGLES, AND THEY UNION.
+				 *
+				 * Will: "puzzle set options should be toggles that signal union (like
+				 * the repertoire but for puzzle categories)." A `<select>` could only
+				 * ever mean one, and one is the wrong shape for this: a puzzle carries
+				 * two or three themes, so "forks and pins" is a real drill while the
+				 * intersection of them is a handful in the whole corpus.
+				 *
+				 * The same `Chip` the deck's categories and the move table's filters
+				 * use — pressing them has to feel the same because it means the same
+				 * thing. Nothing selected is EVERYTHING, so clearing the last chip
+				 * cannot look like an empty set.
+				 *
+				 * Each chip carries two numbers: how many of that theme sit near your
+				 * rating, of how many exist. That is the honest thing to show beside a
+				 * filter whose cost is invisible — see the note below it.
+				 */}
+				<div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+					{pools.map((t) => {
+						const on = selected.includes(t.id);
+						return (
+							<Chip
+								key={t.id}
+								on={on}
+								onClick={() =>
+									setSelected(on ? selected.filter((s) => s !== t.id) : [...selected, t.id])
+								}
+								title={`${themeName(t.id)} — ${t.near} of ${t.count} sit near your rating.`}
+							>
+								{themeName(t.id)} <span style={{ opacity: 0.7 }}>{t.near}</span>
+							</Chip>
+						);
+					})}
+				</div>
+				{selected.length > 0 && (
+					<div style={{ marginTop: space.snug }}>
+						<Button kind="quiet" onClick={() => setSelected([])}>
+							Every kind of puzzle
+						</Button>
+					</div>
+				)}
 				{/*
 				 * MEASURED, NOT WARNED-ABOUT IN GENERAL.
 				 *
@@ -530,18 +634,36 @@ export function Puzzles() {
 					</Note>
 				)}
 
-				{failedNow && (
-					<div style={{ marginTop: space.card }}>
+				{/*
+				 * WHAT TO DO WITH THE ONE YOU JUST FINISHED.
+				 *
+				 * Two identical `Next puzzle` blocks used to sit here, one per outcome,
+				 * which is two chances to change one of them. And the other two choices
+				 * — try again, show solution — were greyed-out icons in the board strip
+				 * the whole time you were solving. They are here now, beside the verdict
+				 * that makes them mean something, and only once there is a verdict.
+				 */}
+				{(solvedNow || failedNow) && (
+					<div
+						style={{
+							marginTop: space.card,
+							display: 'flex',
+							gap: space.snug,
+							flexWrap: 'wrap',
+							alignItems: 'center',
+						}}
+					>
 						<Button kind="primary" onClick={() => void next(rating)}>
 							Next puzzle
 						</Button>
-					</div>
-				)}
-				{solvedNow && (
-					<div style={{ marginTop: space.card }}>
-						<Button kind="primary" onClick={() => void next(rating)}>
-							Next puzzle
+						<Button kind="quiet" onClick={tryAgain}>
+							Try it again
 						</Button>
+						{remainingLine(solve).length > 0 && (
+							<Button kind="quiet" onClick={showSolution}>
+								{showing ? 'Showing the solution' : 'Show the solution'}
+							</Button>
+						)}
 					</div>
 				)}
 

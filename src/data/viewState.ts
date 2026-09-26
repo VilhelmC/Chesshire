@@ -81,8 +81,24 @@ export type ViewState = {
 	 * trainer is set to", which is where the cards came from.
 	 */
 	quizStrictness?: string;
-	/** The puzzle theme being drilled, or '' for the whole corpus. */
+	/**
+	 * The puzzle theme being drilled, or '' for the whole corpus.
+	 *
+	 * SUPERSEDED BY `puzzleThemes`, and kept so that a selection made by the
+	 * build before it is not silently dropped — see `puzzleThemes`. Nothing
+	 * writes this any more.
+	 */
 	puzzleTheme?: string;
+	/**
+	 * Puzzle themes being drilled. Empty means the whole corpus.
+	 *
+	 * Will: "puzzle set options should be toggles that signal union (like the
+	 * repertoire but for puzzle categories)." A set rather than one, so the stored
+	 * shape had to change; `string[]` for the same reason as `quizCategories` —
+	 * this module is the boundary with storage, and a theme an older build wrote
+	 * may not exist any more, so the caller narrows on the way out.
+	 */
+	puzzleThemes?: string[];
 	/**
 	 * WHERE YOU WERE IN THE DECK.
 	 *

@@ -20,6 +20,7 @@ import {
 	band,
 	decayed,
 	describeRating,
+	ratingParts,
 	expected,
 	rate,
 } from '../src/domain/glicko';
@@ -148,6 +149,28 @@ describe('what it admits to', () => {
 
 	it('stops qualifying once it is settled', () => {
 		expect(describeRating({ r: 1450, rd: MIN_RD, at: now })).toBe('1450');
+	});
+
+	it('splits into a number and a qualifier, and the sentence is built from them', () => {
+		// The headline draws the two halves at two sizes — one 30px sentence did not
+		// fit a 300px column and broke mid-phrase. `describeRating` must stay exactly
+		// what it was, so it is composed from the same parts rather than written
+		// twice: one definition, two readers.
+		for (const rd of [MIN_RD, 80, 120, 149, 150, 350]) {
+			const r = { r: 1450, rd, at: now };
+			const parts = ratingParts(r);
+			expect(parts.value).toBe(1450);
+			expect(describeRating(r)).toContain(String(parts.value));
+			if (parts.qualifier) expect(describeRating(r)).toContain(parts.qualifier);
+			else expect(describeRating(r)).toBe('1450');
+		}
+	});
+
+	it('rounds the number and the spread, because both are drawn', () => {
+		// The rating is stored unrounded on purpose — see `rate`.
+		const parts = ratingParts({ r: 1449.6, rd: 119.7, at: now });
+		expect(parts.value).toBe(1450);
+		expect(parts.qualifier).toBe('± 120');
 	});
 });
 

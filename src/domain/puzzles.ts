@@ -101,9 +101,32 @@ export function themeName(id: string): string {
 	return THEME_NAMES[id] ?? id.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
 }
 
+/**
+ * Puzzles carrying ANY of these themes — the union, not the intersection.
+ *
+ * ---------------------------------------------------------------------------
+ * Will: "puzzle set options should be toggles that signal union (like the
+ * repertoire but for puzzle categories)."
+ *
+ * Union is also the only reading that makes a multi-select worth having here: a
+ * Lichess puzzle carries two or three themes, so an intersection of "fork" and
+ * "back-rank mate" is a handful of puzzles in the whole corpus and most pairs
+ * are empty. Union means "drill these kinds of thing", which is what picking
+ * several is for.
+ *
+ * Empty means the whole corpus — the same rule the Mistakes deck uses for its
+ * categories, so that clearing every chip never presents as an empty set.
+ * ---------------------------------------------------------------------------
+ */
+export function inThemes(p: Puzzle, themes: readonly string[]): boolean {
+	if (!themes.length) return true;
+	const own = p.themes ?? [];
+	return themes.some((t) => own.includes(t));
+}
+
 export type PickOptions = {
-	/** Only puzzles carrying this theme. Null means the whole corpus. */
-	theme?: string | null;
+	/** Only puzzles carrying one of these themes. Empty means the whole corpus. */
+	themes?: readonly string[];
 	/** Puzzle ids to avoid — what you have already been served. */
 	seen?: ReadonlySet<string>;
 	/** Shift the band upwards, for asking to be stretched. */
@@ -132,16 +155,13 @@ export type PickOptions = {
 export function pickPuzzle(rating: Rating, opts: PickOptions = {}): Puzzle | null {
 	const rng = opts.rng ?? Math.random;
 	const seen = opts.seen ?? new Set<string>();
+	const themes = opts.themes ?? [];
 
-	const pool = allPuzzles().filter(
-		(p) => (!opts.theme || (p.themes ?? []).includes(opts.theme)) && !seen.has(p.id),
-	);
+	const pool = allPuzzles().filter((p) => inThemes(p, themes) && !seen.has(p.id));
 	// Everything in the theme has been seen: start it over rather than stop.
 	// Repeating a puzzle you solved months ago is a weaker exercise than a fresh
 	// one and a much stronger one than an empty screen.
-	const usable = pool.length
-		? pool
-		: allPuzzles().filter((p) => !opts.theme || (p.themes ?? []).includes(opts.theme));
+	const usable = pool.length ? pool : allPuzzles().filter((p) => inThemes(p, themes));
 	if (!usable.length) return null;
 
 	const { low, high } = band(rating, opts.harder ?? 0);
@@ -180,10 +200,14 @@ export type Pool = {
 	nearest: number | null;
 };
 
-export function poolNear(rating: Rating, theme: string | null = null, hard = 0): Pool {
+export function poolNear(rating: Rating, themes: readonly string[] = [], hard = 0): Pool {
 	// Deliberately NOT narrowed by `seen`: having solved everything nearby does
 	// not make the theme thin, and `pickPuzzle` recycles rather than stopping.
-	const list = allPuzzles().filter((p) => !theme || (p.themes ?? []).includes(theme));
+	//
+	// Filtered ONCE, which is what makes the union count honest: a puzzle carrying
+	// two of the chosen themes is one puzzle, and counting per theme and adding
+	// would have told you the set was twice the size it is.
+	const list = allPuzzles().filter((p) => inThemes(p, themes));
 	const { low, high } = band(rating, hard);
 	const mid = (low + high) / 2;
 	// The first band `pickPuzzle` tries, which is `band` itself — see the loop
@@ -214,6 +238,40 @@ export function poolNear(rating: Rating, theme: string | null = null, hard = 0):
  */
 export const THIN_POOL = 8;
 
+/**
+ * Every theme with how much of it sits at the reader's level.
+ *
+ * For the chips: a theme's own size says how much of it exists, and `near` says
+ * how much of it is worth being served today. One pass over the corpus rather
+ * than `poolNear` twenty-two times, and the same band as everything else here.
+ */
+export function themePools(rating: Rating, hard = 0): { id: string; count: number; near: number }[] {
+	const { low, high } = band(rating, hard);
+	const mid = (low + high) / 2;
+	const w = (high - low) / 2;
+	const out = new Map<string, { id: string; count: number; near: number }>();
+	for (const p of allPuzzles()) {
+		const isNear = Math.abs(p.rating - mid) <= w;
+		for (const t of p.themes ?? []) {
+			const e = out.get(t) ?? { id: t, count: 0, near: 0 };
+			e.count++;
+			if (isNear) e.near++;
+			out.set(t, e);
+		}
+	}
+	return [...out.values()].sort((a, b) => b.count - a.count);
+}
+
+/** "fork", "fork and pin", "fork, pin and skewer", then "4 themes". */
+export function listThemes(themes: readonly string[]): string {
+	const names = themes.map((t) => themeName(t).toLowerCase());
+	if (names.length === 0) return 'every puzzle';
+	if (names.length === 1) return names[0];
+	if (names.length === 2) return `${names[0]} and ${names[1]}`;
+	if (names.length === 3) return `${names[0]}, ${names[1]} and ${names[2]}`;
+	return `${names.length} themes`;
+}
+
 export type PoolNote = { tone: 'quiet' | 'warn'; text: string };
 
 /**
@@ -222,12 +280,12 @@ export type PoolNote = { tone: 'quiet' | 'warn'; text: string };
  * Nothing is the common case with no theme chosen: the whole corpus covers 399
  * to 3097 and a note saying so every time would be noise.
  */
-export function poolNote(rating: Rating, theme: string | null): PoolNote | null {
-	const p = poolNear(rating, theme);
-	const name = theme ? themeName(theme).toLowerCase() : null;
+export function poolNote(rating: Rating, themes: readonly string[]): PoolNote | null {
+	const p = poolNear(rating, themes);
+	const name = themes.length ? listThemes(themes) : null;
 	const thin = p.near < THIN_POOL;
 
-	if (!theme) {
+	if (!themes.length) {
 		if (!thin) return null;
 		// No filter and still short: the rating has walked off the end of the
 		// corpus, which is the app's limit and not the reader's.
@@ -240,21 +298,28 @@ export function poolNote(rating: Rating, theme: string | null): PoolNote | null 
 		};
 	}
 
+	// Phrased so that it survives `listThemes` collapsing to "4 themes": every
+	// branch puts the name behind a preposition rather than in front of a noun,
+	// because "the 300 4 themes puzzles" is what the obvious wording produces.
 	if (!thin)
 		return {
 			tone: 'quiet',
-			text: `Only ${name}: ${p.near} of ${p.inTheme} sit near your rating.`,
+			text: `${capital(name!)}: ${p.near} of ${p.inTheme} sit near your rating.`,
 		};
 
 	if (p.near === 0)
 		return {
 			tone: 'warn',
-			text: `None of the ${p.inTheme} ${name} puzzles sit near your rating${p.nearest === null ? '.' : ` — the nearest is rated ${p.nearest}, about ${p.gap} points ${p.nearest > rating.r ? 'above' : 'below'} you. Expect this drill to be measured on difficulty you have not chosen.`}`,
+			text: `Nothing in ${name} sits near your rating${p.nearest === null ? '.' : ` — the nearest of the ${p.inTheme} is rated ${p.nearest}, about ${p.gap} points ${p.nearest > rating.r ? 'above' : 'below'} you. Expect difficulty you did not choose.`}`,
 		};
 
 	return {
 		tone: 'warn',
-		text: `Only ${p.near} of the ${p.inTheme} ${name} puzzles sit near your rating, so some will land well off it. Worth knowing before you read a miss as your own.`,
+		text: `Only ${p.near} of the ${p.inTheme} in ${name} sit near your rating, so some will land well off it. Worth knowing before you read a miss as your own.`,
 	};
+}
+
+function capital(s: string): string {
+	return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
