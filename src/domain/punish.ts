@@ -1,107 +1,215 @@
 // When a punishment is finished, and which way.
 //
 // ---------------------------------------------------------------------------
-// Will: "they already did blunder — the premise of the punishment feature is
-// that the opponent just blundered in their last move. You're measuring when
-// the punishment is complete wrong. A better measure would probably be
-// something like the punishment is complete when user moves are past giving
-// back the advantage created by opponent."
+// Will: "we need to reconsider the punishment stop condition because currently
+// the punishments never stop and the arbitrary slip in standing should be
+// cumulative (not a maximum relative loss on a single move). … Since opponent
+// can't actually give pieces to player that means the blunder consists of
+// offering an exploitable gift (that can be realized one or multiple ways).
+// Punishment means realizing that gift instead of squandering it. But how to
+// detect when it has been realized? That would seem to be when material has
+// been won corresponding to the opponents loss in position — so the potential
+// gift has been backed by actual acquisition. … Is remaining exchange played
+// out?"
 //
-// Two corrections in one sentence, and the second is the deeper.
+// That reframing is the whole of this module, and it fixes three things at once.
 //
-// WHAT THE GIFT IS. It was being read off the absolute evaluation, so "what
-// they gave you" and "how good your position is" were the same number. They are
-// not. A blunder that takes you from −2.0 to −0.5 is a gift of 1.5 in a
-// position you are still losing, and the old reading called that gift zero —
-// which meant the one drill where punishing matters most had nothing to
-// measure. The gift is what THEIR move cost, which the classifier already
-// knows, and is passed in rather than inferred.
+// WHY IT NEVER STOPPED. The exits were: material moved, the evaluation rose by
+// the gift AGAIN, or the score passed +2.5 outright. But every punish move has
+// to be within `ACCEPT_MARGIN` of the engine's best, so what is being played IS
+// the engine's line and the evaluation barely moves — which is the condition
+// under which none of those three can fire. A gift with no capture in it had no
+// exit at all. Removing the ply cap was right; it exposed that the realization
+// test could not fire.
 //
-// WHAT COMPLETE MEANS. It was `ev >= WIN_CP`, an absolute bar — unreachable in
-// that same −0.5 position however perfectly you play. The question is not "are
-// you winning" but "is what they gave you still yours, and is it yours for
-// good".
+// WHY MATERIAL, AND WHY SETTLED. A gift is denominated in centipawns and paid in
+// material: the one form of advantage that cannot evaporate. But the count has
+// to be one you get to KEEP, and the old test read the board the instant after
+// the move — so taking a defended knight read as "+3, punished" with the
+// recapture still to come. Hence Will's question, and the answer is yes: the
+// exchange must be played out. Not by playing the engine's line out and counting
+// there — that credits you with a capture you have not made yet — but as a
+// property of the position: if the side to move cannot win material, the balance
+// on the board is a balance you keep. `domain/tactics.harvest` answers exactly
+// that, from the position alone, with no engine call.
+//
+// WHY CUMULATIVE. Giving the gift back cannot happen in one move, because a move
+// that loses more than `ACCEPT_MARGIN` is refused and has to be replayed. So a
+// per-move test for squandering can never fire by construction: the only way to
+// hand back 300cp in 60cp slices is to add the slices up.
 //
 // ---------------------------------------------------------------------------
 // WHY THIS IS ITS OWN MODULE.
 //
 // It was eight lines inside `submitMove`, reachable only by driving a whole run
-// against a live engine — which is to say untestable, which is how it came to
-// be measuring the wrong thing for as long as it did. The same reason
-// `domain/walk` and `domain/cursor` exist: the part worth pinning is the
-// arithmetic, and the arithmetic has nothing to do with sessions or engines.
+// against a live engine — which is to say untestable, which is how it came to be
+// measuring the wrong thing for as long as it did. The same reason `domain/walk`
+// and `domain/cursor` exist: the part worth pinning is the arithmetic, and the
+// arithmetic has nothing to do with sessions or engines.
 // ---------------------------------------------------------------------------
 
 import { EQUAL_CP } from './book';
 import { GIVEBACK_MIN_CP, GIVEBACK_SHARE } from './annotate';
-import { WIN_THRESHOLD } from './classify';
+import { MATE_SCORE } from './playedGames';
 
-/** What the opponent handed over, recorded when they did. */
+/** One pawn, in the engine's units. The bridge between a gift and a capture. */
+export const PAWN_CP = 100;
+
+/**
+ * How much of the gift has to arrive as material before it is realized.
+ *
+ * Will chose two thirds with a floor of a pawn, and both halves earn their
+ * place. A SHARE, because the two numbers are measured on different scales: a
+ * bishop is 330 to the engine and 300 on the board, and a fork that wins a
+ * knight at the cost of a pawn collects 200 of a 250 gift while leaving nothing
+ * further to collect — demanding the whole gift would leave that phase running
+ * forever. A FLOOR, because a share of a queen blunder is still a queen: winning
+ * a pawn must not be allowed to close a drill that offered 900.
+ */
+export const COLLECT_SHARE = 2 / 3;
+export const COLLECT_MIN_CP = PAWN_CP;
+
+/**
+ * Below this a move's loss is measurement noise, not a slip.
+ *
+ * Two searches of the same position at the same budget differ by a few
+ * centipawns, and the slips are now ADDED UP — so without a floor a ten-move
+ * conversion accumulates fifty centipawns of jitter and reports itself as
+ * squandered. The same threshold the move list uses to decide something is worth
+ * another look.
+ */
+export const SLIP_NOISE_CP = 10;
+
+/** Quiet moves with nothing left to take, before a held gift counts as kept. */
+export const QUIET_MOVES = 2;
+
+/** What the opponent handed over, and what has become of it. */
 export type Punishment = {
 	/** Evaluation right after their mistake — where the punishment starts. */
 	base: number;
 	/** Centipawns their mistake cost them. What there is to take. */
 	gift: number;
-	/** Material balance when the phase began, so banking it is detectable. */
+	/**
+	 * Material balance when the phase began, our point of view, in pawns.
+	 *
+	 * The board as it stood, NOT the engine's line played out. Settling the line
+	 * here would already include the capture the line is about to make, so the
+	 * baseline would count the gift as collected before a move had been played
+	 * and `won` would be zero for the rest of the phase.
+	 */
 	material: number;
+	/** Centipawns handed back so far, added up across our moves. */
+	given: number;
+	/** Consecutive moves of ours with nothing left to take — see `QUIET_MOVES`. */
+	quiet: number;
 };
 
-export type PunishOutcome = 'running' | 'realized' | 'squandered';
+/** A fresh record of a gift, before anything has been done with it. */
+export function offered(args: { base: number; gift: number; material: number }): Punishment {
+	return { base: args.base, gift: Math.max(0, Math.round(args.gift)), material: args.material, given: 0, quiet: 0 };
+}
 
-/** Past this the position is won outright, whatever the gift was worth. */
-export const DECISIVE_CP = 250;
+/** Where things stand after one of our moves. */
+export type Standing = {
+	/** Evaluation now, our point of view. */
+	ev: number;
+	/** Material balance now, our point of view, in pawns. */
+	material: number;
+	/**
+	 * Nothing is pending: the side to move cannot win material.
+	 *
+	 * `tactics.harvest(position).value <= 0` — and because `harvest` is net of the
+	 * recapture chain, this is the guarantee the stop condition needs. They cannot
+	 * IMPROVE the balance, so the balance on the board is a balance we keep.
+	 */
+	quiet: boolean;
+	/** No material changes hands in the next several plies of the engine's line. */
+	nothingLeft: boolean;
+};
+
+export type PunishOutcome = 'running' | 'realized' | 'kept' | 'squandered';
+
+/** Material that has to arrive for the gift to count as collected. */
+export function collectNeeded(gift: number): number {
+	return Math.max(COLLECT_MIN_CP, Math.round(gift * COLLECT_SHARE));
+}
+
+/** Give-back that means there is nothing left to punish with. */
+export function giveBackLimit(gift: number): number {
+	// `domain/annotate`'s rule, which Review already uses to decide a chance went
+	// by. One definition of "you gave it back", so the trainer and the review
+	// cannot disagree about the same moment.
+	return Math.max(GIVEBACK_MIN_CP, Math.round(gift * GIVEBACK_SHARE));
+}
+
+/** What one move's loss adds to the running total. Noise adds nothing. */
+export function slip(loss: number): number {
+	return loss > SLIP_NOISE_CP ? Math.round(loss) : 0;
+}
+
+/** The record, updated for a move that cost `loss` and landed in `now`. */
+export function afterMove(p: Punishment, loss: number, now: Standing): Punishment {
+	return {
+		...p,
+		given: p.given + slip(loss),
+		// Reset rather than decay: two quiet moves IN A ROW is the claim, and one
+		// tactical flurry in the middle means the position was not done.
+		quiet: now.quiet && now.nothingLeft ? p.quiet + 1 : 0,
+	};
+}
 
 /**
  * Where the punishment stands.
  *
- * @param ev        evaluation now, our point of view
- * @param material  material balance now, our point of view
+ * Nothing here reads the absolute evaluation as an achievement. "Are you
+ * winning" is a question about the whole position, most of which the blunder did
+ * not create and some of which no punishment can reach; the question is whether
+ * what they handed over is now yours for good.
  */
-export function punishOutcome(p: Punishment, ev: number, material: number): PunishOutcome {
+export function punishOutcome(p: Punishment, now: Standing): PunishOutcome {
 	/*
-	 * HELD — the evaluation has not fallen since the blunder. A tolerance,
-	 * because two searches of the same position at different depths differ by a
-	 * few centipawns and a drill that ended on measurement noise would be
-	 * indistinguishable from one that ended on a mistake. `EQUAL_CP` is the
-	 * number the rest of the app already means by "the same".
+	 * HELD — the evaluation has not fallen since the blunder, within the
+	 * tolerance the rest of the app already means by "the same". A gift you have
+	 * banked while walking into a mating net is not a punishment taken.
 	 */
-	const held = ev >= p.base - EQUAL_CP;
+	const held = now.ev >= p.base - EQUAL_CP;
+
+	// Mate is the one realization that owes nothing to material: there is no
+	// capture to bank and the gift could not be more completely collected.
+	if (now.ev >= MATE_SCORE) return 'realized';
 
 	/*
-	 * BANKED — material has changed in your favour AND the evaluation held.
+	 * REALIZED — the gift has been collected, and the collection is settled.
 	 *
-	 * This is "past giving it back" in the ordinary case: they hung something,
-	 * you took it, and a piece on the board is the one form of advantage that
-	 * cannot evaporate. Both halves are needed — winning a pawn while walking
-	 * into a mating net is not a punishment taken.
+	 * Both halves matter. `quiet` without the material is a position you have
+	 * simply not converted; the material without `quiet` is a number that is
+	 * about to change.
 	 */
-	const banked = material > p.material && held;
+	const won = (now.material - p.material) * PAWN_CP;
+	if (now.quiet && held && won >= collectNeeded(p.gift)) return 'realized';
 
 	/*
-	 * DOUBLED — the evaluation has risen by as much again as the gift.
-	 *
-	 * For the punishment that wins nothing material: a shattered king, a bind, a
-	 * piece trapped rather than captured. There is no capture to bank and the
-	 * conversion is real all the same, and without this such a phase could only
-	 * end by being squandered.
+	 * SQUANDERED — enough of it has gone back, added up, that there is nothing
+	 * left to punish with. See the header on why this cannot be a per-move test.
 	 */
-	const doubled = p.gift > 0 && ev >= p.base + p.gift;
-
-	if (banked || doubled || ev >= DECISIVE_CP) return 'realized';
+	if (p.given >= giveBackLimit(p.gift)) return 'squandered';
 
 	/*
-	 * SQUANDERED — enough of the gift has gone back that there is nothing left
-	 * to punish with.
+	 * KEPT — you still have what they gave you, and there is nothing further to
+	 * take.
 	 *
-	 * The same rule `domain/annotate` uses to decide a chance went by in a
-	 * reviewed game, inlined here rather than imported as a function because
-	 * this needs the verdict and that one needs a boolean about a different
-	 * question. The constants are shared, which is the part that must not drift:
-	 * the trainer and the review may not disagree about the same moment.
+	 * Will: end the no-material gifts "when it goes quiet". They wreck their own
+	 * king, lock a bishop in, accept doubled pawns: the gift is real, there may
+	 * never be a capture, and converting it is a whole game rather than a drill.
+	 * So the phase ends when the position has gone quiet with nothing coming and
+	 * the gift has held — recorded as finished, and NOT as realized, because
+	 * nothing was collected and a number that counted this as a success would be
+	 * measuring patience.
+	 *
+	 * This is also what makes the phase well-founded: every punishment now ends,
+	 * by collecting, by giving back, or by running out of things to convert.
 	 */
-	if (ev >= WIN_THRESHOLD) return 'running';
-	const gaveBack = p.base - ev;
-	if (gaveBack >= Math.max(GIVEBACK_MIN_CP, p.gift * GIVEBACK_SHARE)) return 'squandered';
+	if (held && p.quiet >= QUIET_MOVES) return 'kept';
 
 	return 'running';
 }

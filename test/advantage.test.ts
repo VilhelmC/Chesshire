@@ -112,3 +112,24 @@ describe('the evaluation and the words agree', () => {
 		}
 	}
 });
+
+describe('the third ending', () => {
+	it('says what was kept and does not claim anything was taken', () => {
+		// Will chose this ending for a gift with no capture in it: "end as kept when
+		// it goes quiet". The sentence has to be honest about a conversion that has
+		// not happened — saying "the chance is taken" of a position where nothing was
+		// collected is the same class of wrong as issue #1.
+		const said = describeAdvantage(LEVEL, 'w', 70, 'kept', [], 60, 6);
+		expect(said).toMatch(/kept what they gave you/i);
+		expect(said).not.toMatch(/chance is taken/i);
+		// Still the delta, and still the move count — both are what the reader was
+		// watching while it ran.
+		expect(said).toContain('+0.6');
+		expect(said).toContain('+0.7');
+		expect(said).toMatch(/3 moves/);
+	});
+
+	it('does not read as a failure either', () => {
+		expect(describeAdvantage(LEVEL, 'w', 70, 'kept', [], 60, 6)).not.toMatch(/chance has gone/i);
+	});
+});

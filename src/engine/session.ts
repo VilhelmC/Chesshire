@@ -12,11 +12,26 @@
 
 import { fetchExplorer, getToken } from '../data/explorer';
 import { analysePosition, toColourPov } from '../data/cloudEval';
-import { applyUci, applySan, positionKey, sideToMove, sameMove, INITIAL_FEN } from '../domain/chess';
+import {
+	applyUci,
+	applySan,
+	positionFromFen,
+	positionKey,
+	sideToMove,
+	sameMove,
+	INITIAL_FEN,
+} from '../domain/chess';
 import { weightFor, itemKey, type MemoryStore } from '../domain/scheduler';
 import { detectMotifs } from './motifs';
 import { signed } from '../domain/annotate';
-import { punishOutcome } from '../domain/punish';
+import {
+	afterMove,
+	offered,
+	punishOutcome,
+	type Punishment,
+	type Standing,
+} from '../domain/punish';
+import { harvest } from '../domain/tactics';
 import { scoreMove } from './score';
 import {
 	classifyBook,
@@ -197,16 +212,18 @@ export type RunState = {
 	 * punish. The question is not "are you winning" but "did you keep what they
 	 * gave you", and answering it needs the size of the gift and the material on
 	 * the board when it arrived.
+	 *
+	 * AND TWO MORE, ADDED WHEN THE PHASE TURNED OUT NEVER TO END.
+	 *
+	 * Will: "the punishments never stop and the arbitrary slip in standing should
+	 * be cumulative (not a maximum relative loss on a single move)." So the record
+	 * also carries the running total of what has been handed back and how long the
+	 * position has been quiet — both histories of the phase, neither recoverable
+	 * from the position in front of you. `domain/punish` owns the shape and the
+	 * arithmetic; this field is that type rather than a copy of it.
 	 * -------------------------------------------------------------------------
 	 */
-	punishment: {
-		/** Evaluation right after their mistake — where the punishment starts. */
-		base: number;
-		/** Centipawns their mistake cost them. What there is to take. */
-		gift: number;
-		/** Material balance when the phase began, so banking it is detectable. */
-		material: number;
-	} | null;
+	punishment: Punishment | null;
 	punishPlies: number;
 	finished: null | 'line-complete' | 'punished' | 'abandoned' | 'resigned';
 	note: string | null;
@@ -1037,51 +1054,65 @@ export async function submitMove(
 		const a = await analysePosition(next.fen, EVAL_DEPTH, 1);
 		const ev = toColourPov(a.pvs[0]?.cpWhite ?? 0, next.ourColour);
 		next.evalNow = ev;
-		const p = next.punishment ?? { base: ev, gift: 0, material: balanceOf(next.fen, next.ourColour) };
+		const pv = a.pvs[0]?.pv ?? [];
 		/*
 		 * ---------------------------------------------------------------------
-		 * IT ENDS ON AN OUTCOME, AND THE OUTCOME IS ABOUT THE GIFT.
+		 * IT ENDS WHEN THE GIFT HAS BEEN COLLECTED, GIVEN BACK, OR RUN OUT.
 		 *
-		 * Will: "the punishment is complete when user moves are past giving back
-		 * the advantage created by opponent."
+		 * Will: "the punishments never stop … the blunder consists of offering an
+		 * exploitable gift … Punishment means realizing that gift instead of
+		 * squandering it … that would seem to be when material has been won
+		 * corresponding to the opponents loss in position … Is remaining exchange
+		 * played out?"
 		 *
-		 * So the test is not "are you winning" — that is a question about the
-		 * whole position, most of which the blunder did not create and some of
-		 * which no punishment can reach. It is "is what they gave you still
-		 * yours, and is it yours for good".
+		 * The rule is `domain/punish`'s and the reasoning is its header. What
+		 * belongs here is the three MEASUREMENTS it needs, and the last of them is
+		 * the answer to that question.
 		 *
-		 * REALIZED, three ways, all of them meaning the gift cannot be handed
-		 * back any more:
+		 * MATERIAL, RAW. The board as it stands, not the engine's line played out.
+		 * Settling the line first looks more careful and is wrong in both
+		 * directions: it credits you with the capture the line is about to make,
+		 * and at the start of the phase it would fold the whole gift into the
+		 * baseline.
 		 *
-		 *   BANKED — material has changed in your favour since the blunder, and
-		 *     the evaluation has not fallen. A piece on the board is the one form
-		 *     of advantage that cannot evaporate, which is what "past giving it
-		 *     back" means in the ordinary case: they hung it, you took it, done.
+		 * QUIET. `harvest` is "the most material the side to move can take",
+		 * already netted against the recapture chain by `see`. We have just moved,
+		 * so it is asked of THEM: at zero or below they cannot improve the balance,
+		 * which makes the raw count above a count we keep. This is what "is the
+		 * remaining exchange played out" means as a property of the position rather
+		 * than of a line — and it is pure chessops, so it costs no search.
 		 *
-		 *   DOUBLED — the evaluation has risen by as much again as the gift.
-		 *     Covers the punishment that wins nothing material — a shattered king,
-		 *     a bind — where there is no capture to bank and the conversion is
-		 *     real all the same.
-		 *
-		 *   DECISIVE — past `WIN_CP` outright, whatever the gift was worth. A
-		 *     position this won is not going to be given back by accident.
-		 *
-		 * SQUANDERED is the other ending, and it now measures against the REAL
-		 * gift rather than against the absolute score. The rule is
-		 * `missedTheChance`'s, which Review already uses to decide a chance went
-		 * by — one definition of "you gave it back", so the trainer and the review
-		 * cannot disagree about the same moment.
-		 *
-		 * Nothing caps a long conversion. Every ply still has to be within
-		 * `ACCEPT_MARGIN` of best, so it is the engine's line being played out,
-		 * and `restart` is the first control in the strip throughout.
+		 * NOTHING LEFT. Whether material changes hands at all in the next stretch
+		 * of the engine's line. Used only to end a gift that never had a capture in
+		 * it, and only in the conservative direction: if anything is coming, the
+		 * phase keeps running.
 		 * ---------------------------------------------------------------------
 		 */
+		const material = balanceOf(next.fen, next.ourColour);
+		const standing: Standing = {
+			ev,
+			material,
+			quiet: harvest(positionFromFen(next.fen)).value <= 0,
+			nothingLeft: balanceOf(settle(next.fen, pv, LOOKAHEAD_PLIES), next.ourColour) === material,
+		};
+		/*
+		 * A PHASE WITH NO RECORD USED TO BE A PHASE THAT COULD NOT END.
+		 *
+		 * This fallback rebuilt the record from the CURRENT position on every move,
+		 * so the baseline moved with the board: material never differed from its own
+		 * baseline, the gift was zero, and the evaluation never differed from a base
+		 * recomputed one line earlier. Every outcome read `running`, forever. It is
+		 * written back now, so the first move of such a phase fixes the baseline and
+		 * the phase behaves like any other.
+		 */
+		const p0 = next.punishment ?? offered({ base: ev, gift: 0, material });
+		const p = afterMove(p0, cpLoss, standing);
+		next = { ...next, punishment: p };
 		const base = p.base;
 		// The arithmetic is `domain/punish`'s — eight lines that could only be
 		// reached by driving a whole run against a live engine were eight lines
 		// nothing tested, which is how they came to be measuring the wrong thing.
-		const outcome = punishOutcome(p, ev, balanceOf(next.fen, next.ourColour));
+		const outcome = punishOutcome(p, standing);
 		if (outcome !== 'running') {
 			const reason = outcome;
 			return {
@@ -1366,11 +1397,11 @@ async function opponentMove(
 			 * is the difference between "they hung a rook" and "you were winning
 			 * anyway", which the absolute evaluation cannot tell apart.
 			 */
-			punishment: {
+			punishment: offered({
 				base: detail.evalAfter,
-				gift: Math.max(0, Math.round(picked.cpLoss ?? 0)),
+				gift: picked.cpLoss ?? 0,
 				material: balanceOf(next.fen, next.ourColour),
-			},
+			}),
 		};
 		return {
 			...punished,
@@ -1471,6 +1502,17 @@ function sanOf(fen: string, uci: string): string {
  */
 const SETTLE_PLIES = 8;
 
+/**
+ * How far down the engine's line to look for "is anything still coming".
+ *
+ * Longer than `SETTLE_PLIES`, and for the opposite purpose: that one describes
+ * the position in front of the reader, this one decides whether a gift with no
+ * capture in it is really out of material. Six moves is past any forced
+ * sequence a drill is going to contain, and looking further would start ending
+ * phases on the engine's speculation rather than on its line.
+ */
+const LOOKAHEAD_PLIES = 12;
+
 /** The position once the engine's forced sequence has played out. */
 export function settle(fen: string, pv: string[], plies = SETTLE_PLIES): string {
 	let out = fen;
@@ -1503,7 +1545,7 @@ export function describeAdvantage(
 	fen: string,
 	ourColour: 'w' | 'b',
 	cp: number,
-	reason: 'realized' | 'squandered',
+	reason: 'realized' | 'kept' | 'squandered',
 	pv: string[] = [],
 	/**
 	 * Where the punishment started — the evaluation right after their mistake.
@@ -1598,10 +1640,21 @@ export function describeAdvantage(
 			? // Not "you are winning" — you may not be. What is being reported is
 				// that what they gave you is yours for good. See the punish branch.
 				`The chance is taken${took} — what they gave away is yours now.`
-			: // The advantage has been handed back — see `missedTheChance`. This is
-				// a real ending and a more useful one than a clock, because it can say
-				// what went wrong.
-				`The chance has gone — there is nothing left to punish with.`;
+			: reason === 'kept'
+				? /*
+					 * THE THIRD ENDING, and it says less on purpose.
+					 *
+					 * A gift with no capture in it — a wrecked king, a bishop locked in,
+					 * doubled pawns — is real and may never pay in material. Will: end
+					 * those "when it goes quiet". So this reports what it can honestly
+					 * report: you did not give it back, and there is nothing further here
+					 * to take. It deliberately does not say "taken", because nothing was.
+					 */
+					`Nothing left to take${took} — you kept what they gave you, and converting it from here is a game rather than a drill.`
+				: // The advantage has been handed back — see `missedTheChance`. This is
+					// a real ending and a more useful one than a clock, because it can say
+					// what went wrong.
+					`The chance has gone — there is nothing left to punish with.`;
 
 	return `${what} (${swing}). ${why}`;
 }
